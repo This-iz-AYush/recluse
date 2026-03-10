@@ -9,28 +9,20 @@ class Database(commands.Cog):
         self.bot.loop.create_task(self.init_db())
 
     async def init_db(self):
-        # Retrieve the MongoDB connection string from your .env file
         mongo_uri = os.getenv("MONGO_URI")
         if not mongo_uri:
             print("❌ Configuration Error: MONGO_URI is missing from your .env file!")
             return
 
         try:
-            # Connect to MongoDB cluster asynchronously
             self.bot.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
-            
-            # Create or select the specific database named 'recluse_db'
             self.bot.db = self.bot.mongo_client['recluse_db']
-            
-            # Ping the database to ensure the connection works
             await self.bot.mongo_client.admin.command('ping')
             print("✅ Successfully connected to MongoDB!")
-            
         except Exception as e:
             print(f"❌ Failed to connect to MongoDB: {e}")
 
     async def cog_unload(self):
-        # Safely close the database connection if the cog is unloaded
         if hasattr(self.bot, 'mongo_client'):
             self.bot.mongo_client.close()
 
