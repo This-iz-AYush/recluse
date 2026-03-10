@@ -1,0 +1,6 @@
+discord.py
+jikanpy-v4
+aiohttp
+python-dotenv
+motor
+quart
