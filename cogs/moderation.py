@@ -166,12 +166,23 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="clean", description="Cleans up the bot's own responses.")
     @commands.has_permissions(manage_messages=True)
     async def clean(self, ctx, limit: int = 50):
-        if limit <= 0 or limit > 100: return await ctx.send("❌ Limit 1-100.")
+        if limit <= 0 or limit > 100: 
+            return await ctx.send("❌ Limit 1-100.")   
         await ctx.defer(ephemeral=True)
+        count = 0
+        def is_me(m):
+            nonlocal count           
+            if count >= limit:
+                return False               
+            if m.author == self.bot.user:
+                count += 1
+                return True
+            return False            
         try:
-            deleted = await ctx.channel.purge(limit=limit, check=lambda m: m.author == self.bot.user)
+            deleted = await ctx.channel.purge(limit=200, check=is_me)
             await ctx.send(f"✅ Swept away {len(deleted)} of my own messages.", ephemeral=True, delete_after=5)
-        except Exception: await ctx.send("❌ **Error:** Failed to clean.", ephemeral=True)
+        except Exception: 
+            await ctx.send("❌ **Error:** Failed to clean.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
