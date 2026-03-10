@@ -41,7 +41,6 @@ class Recluse(commands.Bot):
     async def on_ready(self):
         print(f'System Online: Authenticated to Gateway as {self.user}')
 
-
     # --- GLOBAL ERROR LOGGING ---
     async def log_system_error(self, ctx_or_msg, error, is_command=True):
         channel = self.get_channel(ERROR_LOG_CHANNEL_ID)
@@ -50,7 +49,7 @@ class Recluse(commands.Bot):
         embed = discord.Embed(title="⚠️ System Exception Caught", color=discord.Color.red())
         
         if is_command:
-            embed.add_field(name="Command Route", value=f"`{ctx_or_msg.command.name if ctx_or_msg.command else 'Unknown'}`", inline=True)
+            embed.add_field(name="Command Route", value=f"`{ctx_or_msg.command.name if getattr(ctx_or_msg, 'command', None) else 'Unknown'}`", inline=True)
             embed.add_field(name="Invoker", value=f"{ctx_or_msg.author} (`{ctx_or_msg.author.id}`)", inline=True)
         else:
             embed.add_field(name="Event Source", value="`on_message` Automaton", inline=True)
@@ -63,15 +62,17 @@ class Recluse(commands.Bot):
         embed.add_field(name="Traceback Details", value=f"{code_block}py\n{traceback_str[:1000]}\n{code_block}", inline=False)
         embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
         
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except discord.HTTPException:
+            print(f"CRITICAL: Failed to log error to channel. \n{traceback_str}")
 
     async def on_command_error(self, ctx, error):
+        # 1. Handle explicit permission and state errors first
         if isinstance(error, commands.NotOwner):
             return await ctx.send("❌ **Access Denied:** You must be the bot developer to execute this command.", ephemeral=True)
         if isinstance(error, commands.CommandOnCooldown):
             return await ctx.send(f"⏳ **Chill out!** You can use this command again in `{error.retry_after:.1f}s`.", ephemeral=True)
-        if isinstance(error, commands.CommandNotFound):
-            return
         if isinstance(error, commands.MissingRequiredArgument):
             return await ctx.send(f"❌ **Missing Argument:** You forgot to include `{error.param.name}`. Use `/help` for syntax.", ephemeral=True)
         if isinstance(error, commands.BadArgument):
@@ -80,18 +81,41 @@ class Recluse(commands.Bot):
             return await ctx.send("❌ **Access Denied:** You lack the necessary permissions to execute this command.", ephemeral=True)
         if isinstance(error, commands.BotMissingPermissions):
             return await ctx.send("❌ **Execution Blocked:** I don't have the necessary Discord permissions.", ephemeral=True)
+        
+        # 2. Quietly ignore commands that don't exist
+        if isinstance(error, commands.CommandNotFound):
+            return
+            
+        # 3. Quietly ignore generic CheckFailures. 
+        # (Our dashboard cog_checks already send the user a warning message, so we just stop execution here without logging an error)
+        if isinstance(error, commands.CheckFailure):
+            return
 
+        # 4. If it's none of the above, it's a real bug. Log it and notify the user.
         await self.log_system_error(ctx, error)
-        await ctx.send("❌ An unexpected system error occurred. A telemetry report has been dispatched.", ephemeral=True)
+        try:
+            await ctx.send("❌ An unexpected system error occurred. A telemetry report has been dispatched.", ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+        # Extract the original error if it's wrapped
+        if isinstance(error, discord.app_commands.errors.CommandInvokeError):
+            error = error.original
+
+        # 1. Handle Slash Command specific errors
         if isinstance(error, discord.app_commands.errors.CommandOnCooldown):
             return await interaction.response.send_message(f"⏳ **Chill out!** You can use this command again in `{error.retry_after:.1f}s`.", ephemeral=True)
         if isinstance(error, discord.app_commands.errors.MissingPermissions):
             return await interaction.response.send_message("❌ **Access Denied:** You lack the necessary permissions.", ephemeral=True)
         if isinstance(error, discord.app_commands.errors.BotMissingPermissions):
              return await interaction.response.send_message("❌ **Execution Blocked:** I don't have the necessary permissions.", ephemeral=True)
+             
+        # 2. Catch the dashboard toggle CheckFailures 
+        if isinstance(error, discord.app_commands.errors.CheckFailure):
+            return
         
+        # 3. Log actual application bugs
         class MockCtx:
             def __init__(self, interaction):
                 self.command = interaction.command
@@ -99,6 +123,7 @@ class Recluse(commands.Bot):
                 self.guild = interaction.guild
                 
         await self.log_system_error(MockCtx(interaction), error)
+        
         msg = "❌ An unexpected routing error occurred. A report has been filed."
         try:
             if not interaction.response.is_done():
