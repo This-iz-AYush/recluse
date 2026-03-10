@@ -26,7 +26,7 @@ class Dashboard(commands.Cog):
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
             web.post('/api/ip_action', self.handle_ip_action),
-            web.post('/api/verify_visitor', self.verify_visitor) # Verification Endpoint
+            web.post('/api/verify_visitor', self.verify_visitor)
         ])
         
         self.runner = None
@@ -40,23 +40,18 @@ class Dashboard(commands.Cog):
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
         request['visitor_ip'] = ip
 
-        # 1. Enforce IP Bans immediately
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             is_banned = await self.bot.db.ip_bans.find_one({"ip": ip})
             if is_banned:
                 return web.Response(text="403 Forbidden: Your IP address has been permanently restricted from accessing this network.", status=403)
 
-        # 2. Allow API verification route to pass through without checking cookies
         if request.path == '/api/verify_visitor':
             return await handler(request)
 
-        # 3. Check for Security Verification Cookie
         is_verified = request.cookies.get("recluse_verified")
         if not is_verified:
-            # Generate a random Ray ID for aesthetics
             ray_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
             
-            # Serve the simulated Cloudflare-style verification page
             verify_html = f"""
             <!DOCTYPE html>
             <html lang="en">
@@ -95,7 +90,6 @@ class Dashboard(commands.Cog):
                 </div>
 
                 <script>
-                    // Wait 3.5 seconds to simulate a deep browser check, then verify via API and reload
                     setTimeout(async () => {{
                         try {{
                             await fetch('/api/verify_visitor', {{ method: 'POST' }});
@@ -110,7 +104,6 @@ class Dashboard(commands.Cog):
             """
             return web.Response(text=verify_html, content_type='text/html')
 
-        # 4. If verified, log the IP and Username (like before)
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             session_id = request.cookies.get("recluse_session")
             discord_username = None
@@ -133,9 +126,7 @@ class Dashboard(commands.Cog):
         return await handler(request)
 
     async def verify_visitor(self, request):
-        """API Endpoint that drops the secure cookie after the JS challenge."""
         response = web.json_response({"success": True})
-        # Set a cookie valid for 7 days so they don't have to verify on every click
         response.set_cookie('recluse_verified', 'true', max_age=86400*7, httponly=True)
         return response
 
@@ -321,7 +312,6 @@ class Dashboard(commands.Cog):
         member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
         loaded_cogs = ", ".join(self.bot.cogs.keys())
 
-        # --- FETCH IP DATA ---
         visitor_html = ""
         banned_html = ""
         
@@ -419,7 +409,7 @@ class Dashboard(commands.Cog):
 
                 <div class="glass-panel p-6 rounded-2xl border border-white/5">
                     <h2 class="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                        <i class="fa-solid fa-shield-halved text-red-500"></i> Network Firewall (IP Access)
+                        <i class="fa-solid fa-shield text-red-500"></i> Network Firewall (IP Access)
                     </h2>
                     
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -635,7 +625,7 @@ class Dashboard(commands.Cog):
                         <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleMod">
                             <div class="flex justify-between items-start mb-6">
                                 <div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                                    <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+                                    <i class="fa-solid fa-shield text-emerald-400"></i>
                                 </div>
                                 <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
                                     <input type="checkbox" id="toggleMod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
