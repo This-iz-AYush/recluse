@@ -24,7 +24,7 @@ class Recluse(commands.Bot):
         self.tree.on_error = self.on_app_command_error
         
         # Start the console reader task
-        self.loop.create_task(self.console_reader())
+        #self.loop.create_task(self.console_reader())
 
         # Dynamically load all cogs
         for filename in os.listdir('./cogs'):
@@ -41,17 +41,6 @@ class Recluse(commands.Bot):
     async def on_ready(self):
         print(f'System Online: Authenticated to Gateway as {self.user}')
 
-    async def console_reader(self):
-        await self.wait_until_ready()
-        while not self.is_closed():
-            try:
-                message = await self.loop.run_in_executor(None, input)
-                if message:
-                    channel = self.get_channel(CONSOLE_CHANNEL_ID)
-                    if channel:
-                        await channel.send(message)
-            except Exception as e:
-                print(f"Console Input Error: {e}")
 
     # --- GLOBAL ERROR LOGGING ---
     async def log_system_error(self, ctx_or_msg, error, is_command=True):
