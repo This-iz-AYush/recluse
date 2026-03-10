@@ -12,14 +12,14 @@ class Dashboard(commands.Cog):
         self.bot = bot
         self.app = web.Application()
         
-        # Registering our new dynamic web routes!
+        # Registering our dynamic web routes
         self.app.add_routes([
             web.get('/', self.home),
             web.get('/login', self.login),
             web.get('/callback', self.callback),
             web.get('/logout', self.logout),
             web.get('/manage/{guild_id}', self.manage_server),
-            web.post('/api/settings/{guild_id}', self.update_settings) # NEW: Internal API for toggles
+            web.post('/api/settings/{guild_id}', self.update_settings)
         ])
         
         self.runner = None
@@ -27,13 +27,11 @@ class Dashboard(commands.Cog):
         self.bot.loop.create_task(self.start_server())
 
     async def get_user_session(self, request):
-        """Helper function to securely fetch a logged-in user from the database using their cookie."""
         session_id = request.cookies.get("recluse_session")
         if not session_id or not hasattr(self.bot, 'db'):
             return None
             
         session = await self.bot.db.sessions.find_one({"session_id": session_id})
-        # Check if session exists and isn't expired (24 hours)
         if session and (datetime.datetime.utcnow().timestamp() - session['created_at'] < 86400):
             return session
         return None
@@ -41,7 +39,7 @@ class Dashboard(commands.Cog):
     async def home(self, request):
         user_session = await self.get_user_session(request)
         
-        # --- SCENARIO 1: USER IS NOT LOGGED IN (Show Landing Page) ---
+        # --- SCENARIO 1: USER IS NOT LOGGED IN ---
         if not user_session:
             landing_html = """
             <!DOCTYPE html>
@@ -76,12 +74,11 @@ class Dashboard(commands.Cog):
             """
             return web.Response(text=landing_html, content_type='text/html')
 
-        # --- SCENARIO 2: USER IS LOGGED IN (Show Server Picker) ---
+        # --- SCENARIO 2: USER IS LOGGED IN ---
         bot_name = self.bot.user.name if self.bot.user else "Recluse"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
 
-        # Fetch the user's servers using their stored Discord access token
         user_guilds = []
         access_token = user_session.get("access_token")
         
@@ -92,13 +89,12 @@ class Dashboard(commands.Cog):
                     if resp.status == 200:
                         user_guilds = await resp.json()
 
-        # Filter: Only show servers where the user has Administrator (0x8) or Manage Server (0x20)
+        # Filter for Admin / Manage Server
         admin_guilds = [
             g for g in user_guilds 
             if (int(g.get('permissions', 0)) & 0x8) == 0x8 or (int(g.get('permissions', 0)) & 0x20) == 0x20
         ]
 
-        # Generate HTML for the server cards
         bot_guild_ids = [g.id for g in self.bot.guilds]
         client_id = os.getenv("DISCORD_CLIENT_ID", "")
         
@@ -190,30 +186,25 @@ class Dashboard(commands.Cog):
         return web.Response(text=dashboard_html, content_type='text/html')
 
     async def manage_server(self, request):
-        """The actual Dyno-style control panel for a specific server."""
         user_session = await self.get_user_session(request)
         if not user_session:
             return web.HTTPFound('/login')
             
         guild_id = request.match_info.get('guild_id')
         
-        # Ensure it's a valid ID
         try:
             guild_id_int = int(guild_id)
         except ValueError:
             return web.Response(text="Invalid Server ID.", status=400)
             
         guild = self.bot.get_guild(guild_id_int)
-        
         if not guild:
             return web.Response(text="Recluse is not in this server. Please invite the bot first.", status=404)
             
-        # Security: Double check if the user is actually in this server and has Admin/Manage Server
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.Response(text="Access Denied: You do not have permission to manage this server.", status=403)
 
-        # Variables for the UI
         bot_name = self.bot.user.name if self.bot.user else "Recluse"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
@@ -222,16 +213,24 @@ class Dashboard(commands.Cog):
         # --- FETCH SAVED SETTINGS FROM DATABASE ---
         ai_enabled = True
         automod_enabled = False
+        default_ai_model = "nexusify"
+        banned_words = []
         
         if hasattr(self.bot, 'db'):
-            # Look up this guild's settings document
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
             if settings:
                 ai_enabled = settings.get("ai_enabled", True)
                 automod_enabled = settings.get("automod_enabled", False)
+                default_ai_model = settings.get("default_ai_model", "nexusify")
+                banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"])
                 
         ai_checked = "checked" if ai_enabled else ""
         mod_checked = "checked" if automod_enabled else ""
+        
+        nexusify_checked = "checked" if default_ai_model == "nexusify" else ""
+        gemini_checked = "checked" if default_ai_model == "gemini" else ""
+        sarvam_checked = "checked" if default_ai_model == "sarvam" else ""
+        banned_words_str = ", ".join(banned_words)
 
         manage_html = """
         <!DOCTYPE html>
@@ -248,7 +247,7 @@ class Dashboard(commands.Cog):
                 .toggle-checkbox:checked + .toggle-label { background-color: #8b5cf6; box-shadow: 0 0 10px rgba(139, 92, 246, 0.5); }
             </style>
         </head>
-        <body class="bg-[#09090b] text-zinc-300 font-sans min-h-screen flex flex-col selection:bg-violet-500 selection:text-white">
+        <body class="bg-[#09090b] text-zinc-300 font-sans min-h-screen flex flex-col selection:bg-violet-500 selection:text-white relative">
 
             <!-- Top Navigation -->
             <nav class="glass-panel sticky top-0 z-50 px-6 py-4 flex justify-between items-center border-b border-white/5">
@@ -301,7 +300,7 @@ class Dashboard(commands.Cog):
                             </p>
                             
                             <div class="flex gap-3">
-                                <button class="px-5 py-2.5 rounded-xl bg-white text-black font-semibold hover:bg-zinc-200 transition">
+                                <button onclick="openModal('aiModal')" class="px-5 py-2.5 rounded-xl bg-white text-black font-semibold hover:bg-zinc-200 transition">
                                     Configure Models
                                 </button>
                             </div>
@@ -320,7 +319,7 @@ class Dashboard(commands.Cog):
                             </div>
                             <h3 class="text-lg font-bold text-white mb-2">Automod & Safety</h3>
                             <p class="text-sm text-zinc-400 mb-6 flex-1">Advanced warnings, timed mutes, dynamic purges, and channel locks.</p>
-                            <button class="w-full py-2 rounded-lg bg-[#18181b] border border-white/10 hover:border-white/20 transition text-sm font-medium text-white">
+                            <button onclick="openModal('modModal')" class="w-full py-2 rounded-lg bg-[#18181b] border border-white/10 hover:border-white/20 transition text-sm font-medium text-white">
                                 Edit Rules
                             </button>
                         </div>
@@ -335,10 +334,109 @@ class Dashboard(commands.Cog):
                 </div>
             </main>
 
-            <!-- API Connection Script -->
+            <!-- AI Configuration Modal -->
+            <div id="aiModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-violet-500/30 shadow-2xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-white">Configure AI Brain</h3>
+                        <button onclick="closeModal('aiModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times text-xl"></i></button>
+                    </div>
+                    <p class="text-zinc-400 text-sm mb-4">Select the default generative AI model for your server. (Users can still override this individually using /choose_ai)</p>
+                    
+                    <div class="space-y-3 mb-6">
+                        <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
+                            <input type="radio" name="ai_model" value="nexusify" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __NEXUSIFY_CHECKED__>
+                            <span class="text-white font-medium">Nexusify (Kimi-k2.5)</span>
+                        </label>
+                        <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
+                            <input type="radio" name="ai_model" value="gemini" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __GEMINI_CHECKED__>
+                            <span class="text-white font-medium">Google Gemini (Flash 2.5)</span>
+                        </label>
+                        <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
+                            <input type="radio" name="ai_model" value="sarvam" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __SARVAM_CHECKED__>
+                            <span class="text-white font-medium">Sarvam AI (Text Only)</span>
+                        </label>
+                    </div>
+                    
+                    <div class="flex justify-end gap-3">
+                        <button onclick="closeModal('aiModal')" class="px-4 py-2 rounded-xl text-zinc-400 hover:text-white font-medium transition">Cancel</button>
+                        <button id="saveAIBtn" onclick="saveAIModel()" class="px-5 py-2 rounded-xl bg-violet-500 hover:bg-violet-600 shadow-lg shadow-violet-500/20 text-white font-semibold transition">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Automod Configuration Modal -->
+            <div id="modModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-emerald-500/30 shadow-2xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-white">Edit Automod Lexicon</h3>
+                        <button onclick="closeModal('modModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times text-xl"></i></button>
+                    </div>
+                    <p class="text-zinc-400 text-sm mb-4">Enter words or phrases that should be automatically deleted. Separate each word with a comma.</p>
+                    
+                    <div class="mb-6">
+                        <textarea id="banned_words_input" rows="4" class="w-full bg-[#18181b] border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-emerald-500 transition resize-none placeholder-zinc-600" placeholder="e.g. badword, spamlink, anotherbadword">__BANNED_WORDS__</textarea>
+                    </div>
+                    
+                    <div class="flex justify-end gap-3">
+                        <button onclick="closeModal('modModal')" class="px-4 py-2 rounded-xl text-zinc-400 hover:text-white font-medium transition">Cancel</button>
+                        <button id="saveModBtn" onclick="saveAutomod()" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 text-white font-semibold transition">Save Rules</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Interactive Logic Script -->
             <script>
+                // Modal specific UI controls
+                function openModal(id) {
+                    document.getElementById(id).classList.remove('hidden');
+                }
+                function closeModal(id) {
+                    document.getElementById(id).classList.add('hidden');
+                }
+
+                // AI Model Save Function
+                async function saveAIModel() {
+                    const selectedModel = document.querySelector('input[name="ai_model"]:checked').value;
+                    const btn = document.getElementById('saveAIBtn');
+                    btn.innerText = 'Saving...';
+                    try {
+                        const response = await fetch(`/api/settings/__GUILD_ID__`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'update_ai_model', model: selectedModel })
+                        });
+                        if (response.ok) {
+                            closeModal('aiModal');
+                        }
+                    } catch (error) {
+                        console.error("Error saving AI model:", error);
+                    }
+                    btn.innerText = 'Save Changes';
+                }
+
+                // Automod Save Function
+                async function saveAutomod() {
+                    const words = document.getElementById('banned_words_input').value;
+                    const btn = document.getElementById('saveModBtn');
+                    btn.innerText = 'Saving...';
+                    try {
+                        const response = await fetch(`/api/settings/__GUILD_ID__`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'update_automod', words: words })
+                        });
+                        if (response.ok) {
+                            closeModal('modModal');
+                        }
+                    } catch (error) {
+                        console.error("Error saving Automod rules:", error);
+                    }
+                    btn.innerText = 'Save Rules';
+                }
+
+                // Main Toggle logic
                 document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
-                    // Function to handle the styling of the card based on toggle state
                     const updateVisuals = (element) => {
                         const card = document.getElementById('card-' + element.id);
                         const label = element.nextElementSibling;
@@ -359,10 +457,8 @@ class Dashboard(commands.Cog):
                         }
                     };
 
-                    // Run on initial load to match database state
                     updateVisuals(toggle);
 
-                    // Add listener to fire API request when clicked
                     toggle.addEventListener('change', async function() {
                         updateVisuals(this);
                         
@@ -374,18 +470,16 @@ class Dashboard(commands.Cog):
                             const response = await fetch(`/api/settings/${guildId}`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ module: moduleName, enabled: isEnabled })
+                                body: JSON.stringify({ action: 'toggle', module: moduleName, enabled: isEnabled })
                             });
                             
                             if (!response.ok) {
                                 console.error("Server rejected the save request.");
-                                // Revert visual state if save failed
                                 this.checked = !isEnabled;
                                 updateVisuals(this);
                             }
                         } catch (error) {
                             console.error("Network error saving setting:", error);
-                            // Revert visual state if network failed
                             this.checked = !isEnabled;
                             updateVisuals(this);
                         }
@@ -402,13 +496,18 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__USER_NAME__", str(user_name))
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
         manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
+        
+        # Injecting States
         manage_html = manage_html.replace("__AI_CHECKED__", ai_checked)
         manage_html = manage_html.replace("__MOD_CHECKED__", mod_checked)
+        manage_html = manage_html.replace("__NEXUSIFY_CHECKED__", nexusify_checked)
+        manage_html = manage_html.replace("__GEMINI_CHECKED__", gemini_checked)
+        manage_html = manage_html.replace("__SARVAM_CHECKED__", sarvam_checked)
+        manage_html = manage_html.replace("__BANNED_WORDS__", banned_words_str)
         
         return web.Response(text=manage_html, content_type='text/html')
 
     async def update_settings(self, request):
-        """NEW: API Endpoint that receives data from the toggles and saves it to MongoDB"""
         user_session = await self.get_user_session(request)
         if not user_session:
             return web.json_response({"error": "Unauthorized"}, status=401)
@@ -423,45 +522,62 @@ class Dashboard(commands.Cog):
         if not guild:
             return web.json_response({"error": "Recluse is not in this server"}, status=404)
             
-        # Security Verification
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.json_response({"error": "Forbidden: Missing Permissions"}, status=403)
             
         try:
-            # Parse the incoming JSON data from the browser
             data = await request.json()
-            module = data.get('module')
-            enabled = data.get('enabled')
+            action = data.get('action')
             
-            if module not in ['toggleAI', 'toggleMod']:
-                return web.json_response({"error": "Invalid module name"}, status=400)
+            if action == 'update_ai_model':
+                model = data.get('model')
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {"default_ai_model": model}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
                 
-            # Map the HTML ID to our MongoDB field name
-            db_field = "ai_enabled" if module == 'toggleAI' else "automod_enabled"
+            elif action == 'update_automod':
+                words_string = data.get('words', '')
+                words_list = [w.strip().lower() for w in words_string.split(',') if w.strip()]
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {"banned_words": words_list}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+                
+            elif action == 'toggle':
+                module = data.get('module')
+                enabled = data.get('enabled')
+                
+                if module not in ['toggleAI', 'toggleMod']:
+                    return web.json_response({"error": "Invalid module name"}, status=400)
+                    
+                db_field = "ai_enabled" if module == 'toggleAI' else "automod_enabled"
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {db_field: enabled}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
             
-            # Upsert the new setting into MongoDB
-            if hasattr(self.bot, 'db'):
-                await self.bot.db.guild_settings.update_one(
-                    {"guild_id": guild_id_int},
-                    {"$set": {db_field: enabled}},
-                    upsert=True
-                )
-            
-            # Send success back to the browser!
-            return web.json_response({"success": True})
+            return web.json_response({"error": "Invalid action"}, status=400)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
     async def login(self, request):
-        """Redirects the user to the official Discord authorization page."""
         client_id = os.getenv("DISCORD_CLIENT_ID")
         redirect_uri = os.getenv("REDIRECT_URI")
         
         if not client_id or not redirect_uri:
             return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing in Render.", status=500)
 
-        # Discord OAuth2 URL
         oauth_url = (
             f"https://discord.com/api/oauth2/authorize?client_id={client_id}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
@@ -470,7 +586,6 @@ class Dashboard(commands.Cog):
         raise web.HTTPFound(oauth_url)
 
     async def callback(self, request):
-        """Discord sends the user back here with a secret 'code'. We exchange it for their info."""
         code = request.query.get("code")
         if not code:
             return web.Response(text="Login failed. No code provided by Discord.", status=400)
@@ -479,7 +594,6 @@ class Dashboard(commands.Cog):
         client_secret = os.getenv("DISCORD_CLIENT_SECRET")
         redirect_uri = os.getenv("REDIRECT_URI")
 
-        # 1. Exchange the code for an Access Token
         data = {
             "client_id": client_id,
             "client_secret": client_secret,
@@ -497,12 +611,10 @@ class Dashboard(commands.Cog):
                 token_data = await resp.json()
                 access_token = token_data.get("access_token")
 
-            # 2. Use the Access Token to get the user's Discord profile
             user_headers = {"Authorization": f"Bearer {access_token}"}
             async with session.get("https://discord.com/api/users/@me", headers=user_headers) as resp:
                 user_data = await resp.json()
 
-        # 3. Create a secure session in MongoDB
         session_id = str(uuid.uuid4())
         
         if hasattr(self.bot, 'db'):
@@ -513,20 +625,18 @@ class Dashboard(commands.Cog):
                         "session_id": session_id,
                         "username": user_data.get("username", "Unknown"),
                         "avatar": user_data.get("avatar", ""),
-                        "access_token": access_token, # SAVING TOKEN FOR FETCHING SERVERS LATER
+                        "access_token": access_token,
                         "created_at": datetime.datetime.utcnow().timestamp()
                     }
                 },
                 upsert=True
             )
 
-        # 4. Give the user a cookie and redirect them to the home page!
         response = web.HTTPFound('/')
         response.set_cookie('recluse_session', session_id, max_age=86400, httponly=True)
         return response
 
     async def logout(self, request):
-        """Logs the user out by destroying their session cookie."""
         session_id = request.cookies.get("recluse_session")
         if session_id and hasattr(self.bot, 'db'):
             await self.bot.db.sessions.delete_one({"session_id": session_id})
