@@ -294,7 +294,7 @@ class AI(commands.Cog):
             
         api_key = api_key.strip().replace('"', '').replace("'", "")
 
-        domain = "[https://generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)"
+        domain = "https://generativelanguage.googleapis.com"
         path = "/v1beta/models/gemini-2.5-flash:generateContent"
         url = f"{domain}{path}?key={api_key}"
         
@@ -468,7 +468,7 @@ class AI(commands.Cog):
         )
         wait_msg = await ctx.send(embed=embed_wait)
 
-        url = "[https://api.nexusify.co/v1/generate-image](https://api.nexusify.co/v1/generate-image)"
+        url = "https://api.nexusify.co/v1/generate-image"
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -508,7 +508,7 @@ class AI(commands.Cog):
                                 
                         else:
                             if image_url.startswith("/"):
-                                image_url = "[https://api.nexusify.co](https://api.nexusify.co)" + image_url
+                                image_url = "https://api.nexusify.co" + image_url
                                 
                             try:
                                 async with session.get(image_url) as img_response:
