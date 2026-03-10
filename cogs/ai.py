@@ -65,19 +65,36 @@ class AI(commands.Cog):
         
         content_lower = message.content.lower()
         
-        if any(restricted in content_lower for restricted in self.RESTRICTED_LEXICON):
-            try:
-                await message.delete()
-                warning = await message.channel.send(f"⚠️ {message.author.mention}, the usage of that terminology is strictly prohibited.")
-                await warning.delete(delay=5)
-            except discord.Forbidden:
-                pass 
-            return # Stop execution so the bot doesn't reply to deleted bad words
+        # --- FETCH SETTINGS FROM DATABASE ---
+        ai_enabled = True
+        automod_enabled = False
+        
+        if message.guild and hasattr(self.bot, 'db'):
+            # Look up this specific server's preferences
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
+            if settings:
+                ai_enabled = settings.get("ai_enabled", True)
+                automod_enabled = settings.get("automod_enabled", False)
+
+        # --- AUTOMOD CHECK ---
+        if automod_enabled:
+            if any(restricted in content_lower for restricted in self.RESTRICTED_LEXICON):
+                try:
+                    await message.delete()
+                    warning = await message.channel.send(f"⚠️ {message.author.mention}, the usage of that terminology is strictly prohibited.")
+                    await warning.delete(delay=5)
+                except discord.Forbidden:
+                    pass 
+                return # Stop execution so the bot doesn't reply to deleted bad words
         
         if "status trigger" in content_lower:
             await message.channel.send("Automated evaluation response successfully actuated.")
         
         if self.bot.user in message.mentions:
+            # --- AI TOGGLE CHECK ---
+            if not ai_enabled:
+                return # AI is disabled in this server, so ignore mentions silently
+                
             clean_prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             
             if clean_prompt or message.reference or message.attachments:
@@ -235,7 +252,7 @@ class AI(commands.Cog):
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload, timeout=60) as response:
+                async with session.post(url, headers=headers, json=payload, timeout=120) as response:
                     if response.status == 200:
                         try:
                             data = await response.json()
@@ -271,7 +288,7 @@ class AI(commands.Cog):
             
         api_key = api_key.strip().replace('"', '').replace("'", "")
 
-        domain = "https://generativelanguage.googleapis.com"
+        domain = "[https://generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)"
         path = "/v1beta/models/gemini-2.5-flash:generateContent"
         url = f"{domain}{path}?key={api_key}"
         
@@ -419,6 +436,7 @@ class AI(commands.Cog):
         app_commands.Choice(name="GPT Image (AI-Assisted Prompting)", value="gptimage")
     ])
     async def imagine(self, ctx, prompt: str, model: app_commands.Choice[str] = None):
+        # Instantly bypass and wipe the cooldown if the user running it is the bot owner
         if await self.bot.is_owner(ctx.author):
             ctx.command.reset_cooldown(ctx)
             
@@ -445,7 +463,7 @@ class AI(commands.Cog):
         )
         wait_msg = await ctx.send(embed=embed_wait)
 
-        url = "https://api.nexusify.co/v1/generate-image"
+        url = "[https://api.nexusify.co/v1/generate-image](https://api.nexusify.co/v1/generate-image)"
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -485,7 +503,7 @@ class AI(commands.Cog):
                                 
                         else:
                             if image_url.startswith("/"):
-                                image_url = "https://api.nexusify.co" + image_url
+                                image_url = "[https://api.nexusify.co](https://api.nexusify.co)" + image_url
                                 
                             try:
                                 async with session.get(image_url) as img_response:
@@ -524,7 +542,6 @@ class AI(commands.Cog):
         except Exception as e:
              await self.bot.log_system_error(ctx, e)
              await wait_msg.edit(content=f"❌ **Network Error:** `{type(e).__name__}` occurred while contacting the Nexusify image server.", embed=None)
-
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
