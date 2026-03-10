@@ -18,7 +18,8 @@ class Dashboard(commands.Cog):
             web.get('/login', self.login),
             web.get('/callback', self.callback),
             web.get('/logout', self.logout),
-            web.get('/manage/{guild_id}', self.manage_server) # NEW: Server Management Route
+            web.get('/manage/{guild_id}', self.manage_server),
+            web.post('/api/settings/{guild_id}', self.update_settings) # NEW: Internal API for toggles
         ])
         
         self.runner = None
@@ -218,6 +219,20 @@ class Dashboard(commands.Cog):
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
 
+        # --- FETCH SAVED SETTINGS FROM DATABASE ---
+        ai_enabled = True
+        automod_enabled = False
+        
+        if hasattr(self.bot, 'db'):
+            # Look up this guild's settings document
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
+            if settings:
+                ai_enabled = settings.get("ai_enabled", True)
+                automod_enabled = settings.get("automod_enabled", False)
+                
+        ai_checked = "checked" if ai_enabled else ""
+        mod_checked = "checked" if automod_enabled else ""
+
         manage_html = """
         <!DOCTYPE html>
         <html lang="en">
@@ -262,7 +277,7 @@ class Dashboard(commands.Cog):
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         
                         <!-- AI Engine Module -->
-                        <div class="lg:col-span-2 glass-panel rounded-2xl p-6 border border-violet-500/30 relative overflow-hidden">
+                        <div class="lg:col-span-2 glass-panel rounded-2xl p-6 border border-violet-500/30 relative overflow-hidden transition-all duration-300" id="card-toggleAI">
                             <div class="absolute top-0 right-0 w-64 h-64 bg-violet-500/5 rounded-full blur-3xl -z-10"></div>
                             
                             <div class="flex justify-between items-start mb-6">
@@ -276,7 +291,7 @@ class Dashboard(commands.Cog):
                                     </div>
                                 </div>
                                 <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" checked class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
+                                    <input type="checkbox" id="toggleAI" __AI_CHECKED__ class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
                                     <label class="toggle-label block overflow-hidden h-6 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300 shadow-[0_0_10px_rgba(139,92,246,0.5)]"></label>
                                 </div>
                             </div>
@@ -293,13 +308,13 @@ class Dashboard(commands.Cog):
                         </div>
 
                         <!-- Auto Mod Module -->
-                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5">
+                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleMod">
                             <div class="flex justify-between items-start mb-6">
                                 <div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
                                     <i class="fa-solid fa-shield-halved text-emerald-400"></i>
                                 </div>
                                 <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" checked class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
+                                    <input type="checkbox" id="toggleMod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
                                     <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
                                 </div>
                             </div>
@@ -310,15 +325,73 @@ class Dashboard(commands.Cog):
                             </button>
                         </div>
                         
-                        <!-- Notice -->
-                        <div class="lg:col-span-3 mt-4 p-4 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-300 text-sm flex items-center gap-3">
-                            <i class="fa-solid fa-circle-info text-violet-400 text-lg"></i>
-                            <p><strong>Developer Note:</strong> This is the Phase 3 visual layout. Database integration for saving toggled states per-server will be unlocked in the next module!</p>
+                        <!-- Success Notice -->
+                        <div class="lg:col-span-3 mt-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-3">
+                            <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
+                            <p><strong>Database Sync Active:</strong> Changes made here are automatically saved to your MongoDB cluster and applied to the server in real-time.</p>
                         </div>
 
                     </div>
                 </div>
             </main>
+
+            <!-- API Connection Script -->
+            <script>
+                document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
+                    // Function to handle the styling of the card based on toggle state
+                    const updateVisuals = (element) => {
+                        const card = document.getElementById('card-' + element.id);
+                        const label = element.nextElementSibling;
+                        if(element.checked) {
+                            element.style.left = 'auto';
+                            element.style.right = '0';
+                            element.style.borderColor = '#8b5cf6';
+                            label.style.backgroundColor = '#8b5cf6';
+                            label.style.boxShadow = '0 0 10px rgba(139, 92, 246, 0.5)';
+                            card.style.opacity = '1';
+                        } else {
+                            element.style.right = 'auto';
+                            element.style.left = '0';
+                            element.style.borderColor = '#52525b';
+                            label.style.backgroundColor = '#52525b';
+                            label.style.boxShadow = 'none';
+                            card.style.opacity = '0.6';
+                        }
+                    };
+
+                    // Run on initial load to match database state
+                    updateVisuals(toggle);
+
+                    // Add listener to fire API request when clicked
+                    toggle.addEventListener('change', async function() {
+                        updateVisuals(this);
+                        
+                        const moduleName = this.id;
+                        const isEnabled = this.checked;
+                        const guildId = "__GUILD_ID__";
+
+                        try {
+                            const response = await fetch(`/api/settings/${guildId}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ module: moduleName, enabled: isEnabled })
+                            });
+                            
+                            if (!response.ok) {
+                                console.error("Server rejected the save request.");
+                                // Revert visual state if save failed
+                                this.checked = !isEnabled;
+                                updateVisuals(this);
+                            }
+                        } catch (error) {
+                            console.error("Network error saving setting:", error);
+                            // Revert visual state if network failed
+                            this.checked = !isEnabled;
+                            updateVisuals(this);
+                        }
+                    });
+                });
+            </script>
         </body>
         </html>
         """
@@ -328,8 +401,57 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__BOT_NAME__", str(bot_name))
         manage_html = manage_html.replace("__USER_NAME__", str(user_name))
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
+        manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
+        manage_html = manage_html.replace("__AI_CHECKED__", ai_checked)
+        manage_html = manage_html.replace("__MOD_CHECKED__", mod_checked)
         
         return web.Response(text=manage_html, content_type='text/html')
+
+    async def update_settings(self, request):
+        """NEW: API Endpoint that receives data from the toggles and saves it to MongoDB"""
+        user_session = await self.get_user_session(request)
+        if not user_session:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+            
+        guild_id = request.match_info.get('guild_id')
+        try:
+            guild_id_int = int(guild_id)
+        except ValueError:
+            return web.json_response({"error": "Invalid Server ID"}, status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild:
+            return web.json_response({"error": "Recluse is not in this server"}, status=404)
+            
+        # Security Verification
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.json_response({"error": "Forbidden: Missing Permissions"}, status=403)
+            
+        try:
+            # Parse the incoming JSON data from the browser
+            data = await request.json()
+            module = data.get('module')
+            enabled = data.get('enabled')
+            
+            if module not in ['toggleAI', 'toggleMod']:
+                return web.json_response({"error": "Invalid module name"}, status=400)
+                
+            # Map the HTML ID to our MongoDB field name
+            db_field = "ai_enabled" if module == 'toggleAI' else "automod_enabled"
+            
+            # Upsert the new setting into MongoDB
+            if hasattr(self.bot, 'db'):
+                await self.bot.db.guild_settings.update_one(
+                    {"guild_id": guild_id_int},
+                    {"$set": {db_field: enabled}},
+                    upsert=True
+                )
+            
+            # Send success back to the browser!
+            return web.json_response({"success": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def login(self, request):
         """Redirects the user to the official Discord authorization page."""
