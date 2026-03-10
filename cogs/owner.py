@@ -94,6 +94,23 @@ class Owner(commands.Cog):
                 try: await target.send(message); success_count += 1
                 except discord.Forbidden: pass
         await ctx.send(f"📢 Broadcast delivered to `{success_count}/{len(self.bot.guilds)}` servers.", ephemeral=True)
+   
+    @commands.hybrid_command(name="echo", description="[Dev] Forces the bot to echo a message in the current or specified channel.")
+    @commands.is_owner()
+    async def echo(self, ctx, channel: discord.TextChannel = None, *, message: str):
+        """
+        Usage: 
+        /echo <message> (Sends in current channel)
+        /echo <#channel> <message> (Sends in specific channel)
+        """
+        target_channel = channel or ctx.channel       
+        try:
+            await target_channel.send(message)
+            await ctx.send(f"✅ Message silently sent to {target_channel.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await ctx.send("❌ I do not have permission to send messages in that channel.", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"❌ Failed to send message.\n{self.cb}py\n{e}\n{self.cb}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Owner(bot))
