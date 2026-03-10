@@ -868,7 +868,7 @@ class Dashboard(commands.Cog):
         return response
 
     async def start_server(self):
-        await self.bot.wait_until_ready()
+        # We start the web server immediately to satisfy Render's port scanner!
         port = int(os.getenv("PORT", 8080))
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -879,6 +879,8 @@ class Dashboard(commands.Cog):
             print(f"🌐 Web dashboard successfully started on port {port}!")
         except Exception as e:
             print(f"❌ Failed to start web server: {e}")
+            
+        await self.bot.wait_until_ready()
 
     async def cog_unload(self):
         if self.runner:
