@@ -6,13 +6,15 @@ import urllib.parse
 import aiohttp
 import uuid
 import datetime
+import random
+import string
 
 class Dashboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # Initialize aiohttp Application with our custom IP Blocker Middleware
-        self.app = web.Application(middlewares=[self.ip_block_middleware])
+        # Initialize aiohttp Application with our custom IP Blocker & Verification Middleware
+        self.app = web.Application(middlewares=[self.security_middleware])
         
         # Registering our dynamic web routes
         self.app.add_routes([
@@ -23,7 +25,8 @@ class Dashboard(commands.Cog):
             web.get('/manage/{guild_id}', self.manage_server),
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
-            web.post('/api/ip_action', self.handle_ip_action)
+            web.post('/api/ip_action', self.handle_ip_action),
+            web.post('/api/verify_visitor', self.verify_visitor) # Verification Endpoint
         ])
         
         self.runner = None
@@ -31,30 +34,92 @@ class Dashboard(commands.Cog):
         self.bot.loop.create_task(self.start_server())
 
     @web.middleware
-    async def ip_block_middleware(self, request, handler):
-        """Intercepts all traffic to log IPs, associate Discord usernames, and enforce bans."""
+    async def security_middleware(self, request, handler):
+        """Intercepts traffic for IP logging, ban enforcement, and Anti-Bot Verification."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
-        
         request['visitor_ip'] = ip
 
+        # 1. Enforce IP Bans immediately
         if hasattr(self.bot, 'db') and ip != 'Unknown':
-            # 1. Check if the IP is banned
             is_banned = await self.bot.db.ip_bans.find_one({"ip": ip})
             if is_banned:
                 return web.Response(text="403 Forbidden: Your IP address has been permanently restricted from accessing this network.", status=403)
+
+        # 2. Allow API verification route to pass through without checking cookies
+        if request.path == '/api/verify_visitor':
+            return await handler(request)
+
+        # 3. Check for Security Verification Cookie
+        is_verified = request.cookies.get("recluse_verified")
+        if not is_verified:
+            # Generate a random Ray ID for aesthetics
+            ray_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
             
-            # 2. Check if this visitor has a Discord Session cookie to grab their username
+            # Serve the simulated Cloudflare-style verification page
+            verify_html = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Recluse.OS | Security Verification</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+                <style>
+                    body {{ background-color: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; min-height: 100vh; }}
+                    .spinner {{ border: 3px solid rgba(255,255,255,0.1); width: 24px; height: 24px; border-radius: 50%; border-left-color: #fff; animation: spin 1s linear infinite; }}
+                    @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+                </style>
+            </head>
+            <body class="items-center justify-center p-6 sm:p-12">
+                <div class="max-w-4xl w-full mx-auto flex flex-col items-start gap-4 mt-20">
+                    <h1 class="text-3xl font-medium tracking-wide mb-1">Recluse.OS</h1>
+                    <h2 class="text-xl text-zinc-200">Performing security verification</h2>
+                    <p class="text-zinc-400 text-sm mb-6 max-w-2xl">This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.</p>
+                    
+                    <div class="border border-zinc-800 rounded flex items-center justify-between p-4 w-72 bg-[#0a0a0a]">
+                        <div class="flex items-center gap-3">
+                            <div class="spinner"></div>
+                            <span class="text-sm font-medium">Verifying...</span>
+                        </div>
+                        <div class="text-[10px] text-zinc-500 text-right leading-tight">
+                            <span class="font-bold text-violet-500 text-xs">RECLUSE</span><br>
+                            Security
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-auto pt-8 max-w-4xl w-full mx-auto border-t border-zinc-800 text-center text-xs text-zinc-500">
+                    Ray ID: <span class="font-mono">{ray_id}</span><br>
+                    Performance and Security by Recluse.OS
+                </div>
+
+                <script>
+                    // Wait 3.5 seconds to simulate a deep browser check, then verify via API and reload
+                    setTimeout(async () => {{
+                        try {{
+                            await fetch('/api/verify_visitor', {{ method: 'POST' }});
+                            window.location.reload();
+                        }} catch (e) {{
+                            console.error("Verification failed", e);
+                        }}
+                    }}, 3500);
+                </script>
+            </body>
+            </html>
+            """
+            return web.Response(text=verify_html, content_type='text/html')
+
+        # 4. If verified, log the IP and Username (like before)
+        if hasattr(self.bot, 'db') and ip != 'Unknown':
             session_id = request.cookies.get("recluse_session")
             discord_username = None
             
             if session_id:
                 session = await self.bot.db.sessions.find_one({"session_id": session_id})
-                # Verify the session hasn't expired
                 if session and (datetime.datetime.utcnow().timestamp() - session.get('created_at', 0) < 86400):
                     discord_username = session.get("username")
 
-            # 3. Log the visit (only update username if we found one, leaving past associations intact!)
             update_data = {"last_visit": datetime.datetime.utcnow().timestamp()}
             if discord_username:
                 update_data["last_user"] = discord_username
@@ -66,6 +131,13 @@ class Dashboard(commands.Cog):
             )
 
         return await handler(request)
+
+    async def verify_visitor(self, request):
+        """API Endpoint that drops the secure cookie after the JS challenge."""
+        response = web.json_response({"success": True})
+        # Set a cookie valid for 7 days so they don't have to verify on every click
+        response.set_cookie('recluse_verified', 'true', max_age=86400*7, httponly=True)
+        return response
 
     async def get_user_session(self, request):
         session_id = request.cookies.get("recluse_session")
@@ -254,13 +326,11 @@ class Dashboard(commands.Cog):
         banned_html = ""
         
         if hasattr(self.bot, 'db'):
-            # Fetch ALL visitors without the .limit(10), sorting newest first
             visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1)
             async for v in visits_cursor:
                 time_str = datetime.datetime.fromtimestamp(v['last_visit']).strftime('%Y-%m-%d %H:%M')
                 last_user = v.get('last_user', 'Guest')
                 
-                # Style the badge based on if they logged into discord or not
                 user_badge_color = "bg-violet-500/20 text-violet-300 border-violet-500/30" if last_user != 'Guest' else "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
                 
                 visitor_html += f"""
@@ -280,7 +350,6 @@ class Dashboard(commands.Cog):
                 
             if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No visitors logged yet.</p>"
 
-            # Banned IPs
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
             async for b in bans_cursor:
                 banned_html += f"""
@@ -302,7 +371,6 @@ class Dashboard(commands.Cog):
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
                 .glass-panel {{ background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(12px); }}
-                /* Custom Scrollbar for IP Table */
                 ::-webkit-scrollbar {{ width: 8px; }}
                 ::-webkit-scrollbar-track {{ background: rgba(24, 24, 27, 0.6); }}
                 ::-webkit-scrollbar-thumb {{ background: rgba(255, 255, 255, 0.1); border-radius: 4px; }}
