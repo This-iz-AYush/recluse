@@ -316,6 +316,7 @@ class Dashboard(commands.Cog):
         banned_html = ""
         
         if hasattr(self.bot, 'db'):
+            # Fetch Visitors
             visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1)
             async for v in visits_cursor:
                 time_str = datetime.datetime.fromtimestamp(v['last_visit']).strftime('%Y-%m-%d %H:%M')
@@ -340,6 +341,7 @@ class Dashboard(commands.Cog):
                 
             if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No visitors logged yet.</p>"
 
+            # Fetch Banned IPs (These already have auto-unban buttons!)
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
             async for b in bans_cursor:
                 banned_html += f"""
@@ -428,7 +430,8 @@ class Dashboard(commands.Cog):
                             
                             <div class="flex gap-2">
                                 <input type="text" id="manual_ip" placeholder="Enter IP address manually..." class="flex-1 bg-[#18181b] border border-white/10 rounded-xl p-2.5 text-white text-sm focus:outline-none focus:border-red-500 transition">
-                                <button onclick="submitIPAction('ban', document.getElementById('manual_ip').value)" class="px-4 py-2.5 bg-red-500/20 text-red-400 font-semibold hover:bg-red-500 hover:text-white rounded-xl transition border border-red-500/30">Ban IP</button>
+                                <button onclick="submitIPAction('ban', document.getElementById('manual_ip').value)" class="px-4 py-2.5 bg-red-500/20 text-red-400 font-semibold hover:bg-red-500 hover:text-white rounded-xl transition border border-red-500/30">Ban</button>
+                                <button onclick="submitIPAction('unban', document.getElementById('manual_ip').value)" class="px-4 py-2.5 bg-emerald-500/20 text-emerald-400 font-semibold hover:bg-emerald-500 hover:text-white rounded-xl transition border border-emerald-500/30">Unban</button>
                             </div>
                         </div>
                     </div>
@@ -444,6 +447,8 @@ class Dashboard(commands.Cog):
                 async function submitIPAction(action, ip) {{
                     if(!ip) return alert("Please provide an IP address.");
                     if(action === 'ban' && !confirm(`Are you sure you want to permanently IP ban ${{ip}}?`)) return;
+                    // Added unban confirmation
+                    if(action === 'unban' && !confirm(`Are you sure you want to unban the IP: ${{ip}}?`)) return;
                     
                     try {{
                         const res = await fetch('/api/ip_action', {{
@@ -464,7 +469,6 @@ class Dashboard(commands.Cog):
         </html>
         """
         return web.Response(text=owner_html, content_type='text/html')
-
     async def handle_ip_action(self, request):
         user_session = await self.get_user_session(request)
         if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
