@@ -68,6 +68,8 @@ class AI(commands.Cog):
         # --- FETCH SETTINGS FROM DATABASE ---
         ai_enabled = True
         automod_enabled = False
+        default_ai_model = "nexusify"
+        banned_words = []
         
         if message.guild and hasattr(self.bot, 'db'):
             # Look up this specific server's preferences
@@ -75,10 +77,13 @@ class AI(commands.Cog):
             if settings:
                 ai_enabled = settings.get("ai_enabled", True)
                 automod_enabled = settings.get("automod_enabled", False)
+                default_ai_model = settings.get("default_ai_model", "nexusify")
+                banned_words = settings.get("banned_words", [])
 
         # --- AUTOMOD CHECK ---
         if automod_enabled:
-            if any(restricted in content_lower for restricted in self.RESTRICTED_LEXICON):
+            check_words = banned_words if banned_words else self.RESTRICTED_LEXICON
+            if any(restricted in content_lower for restricted in check_words):
                 try:
                     await message.delete()
                     warning = await message.channel.send(f"⚠️ {message.author.mention}, the usage of that terminology is strictly prohibited.")
@@ -162,7 +167,8 @@ class AI(commands.Cog):
                                 pass
                         
                         # --- E. Check User Preference and Fetch Response ---
-                        preferred_model = self.user_ai_preference.get(message.author.id, "nexusify")
+                        user_id = message.author.id
+                        preferred_model = self.user_ai_preference.get(user_id, default_ai_model)
                         
                         if preferred_model == "sarvam":
                             if image_parts:
@@ -177,8 +183,8 @@ class AI(commands.Cog):
                         
                         # --- F. Save to Memory and Send Final Response ---
                         if not ai_response.startswith("❌"): # Don't memorize errors
-                            self.update_memory(message.author.id, "user", clean_prompt)
-                            self.update_memory(message.author.id, "model", ai_response)
+                            self.update_memory(user_id, "user", clean_prompt)
+                            self.update_memory(user_id, "model", ai_response)
 
                         # Attempt to reply, but fallback to regular send if the original message was deleted
                         try:
@@ -420,7 +426,6 @@ class AI(commands.Cog):
         except Exception as e:
             return f"❌ **Network Exception:** `{type(e).__name__}`"
 
-
     @commands.hybrid_command(name="imagine", aliases=["gen", "draw"], description="Generates a high-quality image using Nexusify.")
     @commands.cooldown(1, 60, commands.BucketType.user)
     @app_commands.describe(
@@ -545,3 +550,4 @@ class AI(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
+    
