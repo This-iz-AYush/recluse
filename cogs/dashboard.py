@@ -32,7 +32,7 @@ class Dashboard(commands.Cog):
 
     @web.middleware
     async def ip_block_middleware(self, request, handler):
-        """Intercepts all traffic to log IPs and enforce bans."""
+        """Intercepts all traffic to log IPs, associate Discord usernames, and enforce bans."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
         
@@ -44,10 +44,24 @@ class Dashboard(commands.Cog):
             if is_banned:
                 return web.Response(text="403 Forbidden: Your IP address has been permanently restricted from accessing this network.", status=403)
             
-            # 2. Log the visit
+            # 2. Check if this visitor has a Discord Session cookie to grab their username
+            session_id = request.cookies.get("recluse_session")
+            discord_username = None
+            
+            if session_id:
+                session = await self.bot.db.sessions.find_one({"session_id": session_id})
+                # Verify the session hasn't expired
+                if session and (datetime.datetime.utcnow().timestamp() - session.get('created_at', 0) < 86400):
+                    discord_username = session.get("username")
+
+            # 3. Log the visit (only update username if we found one, leaving past associations intact!)
+            update_data = {"last_visit": datetime.datetime.utcnow().timestamp()}
+            if discord_username:
+                update_data["last_user"] = discord_username
+
             await self.bot.db.visit_logs.update_one(
                 {"ip": ip},
-                {"$set": {"last_visit": datetime.datetime.utcnow().timestamp()}, "$inc": {"hits": 1}},
+                {"$set": update_data, "$inc": {"hits": 1}},
                 upsert=True
             )
 
@@ -240,13 +254,22 @@ class Dashboard(commands.Cog):
         banned_html = ""
         
         if hasattr(self.bot, 'db'):
-            visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1).limit(10)
+            # Fetch ALL visitors without the .limit(10), sorting newest first
+            visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1)
             async for v in visits_cursor:
                 time_str = datetime.datetime.fromtimestamp(v['last_visit']).strftime('%Y-%m-%d %H:%M')
+                last_user = v.get('last_user', 'Guest')
+                
+                # Style the badge based on if they logged into discord or not
+                user_badge_color = "bg-violet-500/20 text-violet-300 border-violet-500/30" if last_user != 'Guest' else "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
+                
                 visitor_html += f"""
                 <div class="flex justify-between items-center p-3 border-b border-white/5 hover:bg-white/5 transition">
                     <div>
-                        <span class="font-mono text-white text-sm">{v['ip']}</span>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="font-mono text-white text-sm">{v['ip']}</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded border {user_badge_color}">{last_user}</span>
+                        </div>
                         <p class="text-xs text-zinc-500">Hits: {v.get('hits', 1)}</p>
                     </div>
                     <div class="flex items-center gap-3">
@@ -255,8 +278,9 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>"""
                 
-            if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No recent visitors logged.</p>"
+            if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No visitors logged yet.</p>"
 
+            # Banned IPs
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
             async for b in bans_cursor:
                 banned_html += f"""
@@ -278,6 +302,11 @@ class Dashboard(commands.Cog):
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
                 .glass-panel {{ background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(12px); }}
+                /* Custom Scrollbar for IP Table */
+                ::-webkit-scrollbar {{ width: 8px; }}
+                ::-webkit-scrollbar-track {{ background: rgba(24, 24, 27, 0.6); }}
+                ::-webkit-scrollbar-thumb {{ background: rgba(255, 255, 255, 0.1); border-radius: 4px; }}
+                ::-webkit-scrollbar-thumb:hover {{ background: rgba(255, 255, 255, 0.2); }}
             </style>
         </head>
         <body class="bg-[#09090b] text-zinc-300 font-sans min-h-screen flex flex-col selection:bg-red-500 selection:text-white">
@@ -290,7 +319,7 @@ class Dashboard(commands.Cog):
                 </div>
             </nav>
 
-            <main class="flex-1 max-w-5xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8">
+            <main class="flex-1 max-w-6xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8">
                 <div>
                     <h1 class="text-3xl font-extrabold text-white mb-2">Owner Control Panel</h1>
                     <p class="text-zinc-400">Global telemetry and administrative actions for {bot_name}.</p>
@@ -325,17 +354,17 @@ class Dashboard(commands.Cog):
                         <i class="fa-solid fa-shield-halved text-red-500"></i> Network Firewall (IP Access)
                     </h2>
                     
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <div>
-                            <h3 class="text-zinc-300 font-medium mb-3">Recent Unique Visitors</h3>
-                            <div class="bg-[#18181b] rounded-xl border border-white/10 overflow-hidden">
+                            <h3 class="text-zinc-300 font-medium mb-3">All Logged Visitors</h3>
+                            <div class="bg-[#18181b] rounded-xl border border-white/10 overflow-y-auto max-h-[400px]">
                                 {visitor_html}
                             </div>
                         </div>
                         
                         <div>
                             <h3 class="text-red-400 font-medium mb-3">Banned IP Addresses</h3>
-                            <div class="bg-red-500/5 rounded-xl border border-red-500/20 overflow-hidden mb-4">
+                            <div class="bg-red-500/5 rounded-xl border border-red-500/20 overflow-y-auto max-h-[300px] mb-4">
                                 {banned_html}
                             </div>
                             
