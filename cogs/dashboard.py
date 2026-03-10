@@ -257,7 +257,7 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>"""
                 
-            if not visitor_html: visitor_html = "<p class="text-zinc-500 text-sm p-3">No recent visitors logged.</p>"
+            if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No recent visitors logged.</p>"
 
             # Banned IPs
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
@@ -268,7 +268,7 @@ class Dashboard(commands.Cog):
                     <button onclick="submitIPAction('unban', '{b['ip']}')" class="text-xs bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white px-2 py-1 rounded border border-emerald-500/20 transition">Unban</button>
                 </div>"""
                 
-            if not banned_html: banned_html = "<p class="text-zinc-500 text-sm p-3">No IPs are currently banned.</p>"
+            if not banned_html: banned_html = "<p class='text-zinc-500 text-sm p-3'>No IPs are currently banned.</p>"
 
 
         owner_html = f"""
