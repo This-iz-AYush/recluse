@@ -683,7 +683,7 @@ class Dashboard(commands.Cog):
                         
                         <div class="lg:col-span-3 mt-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-3">
                             <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
-                            <p><strong>Database Sync Active:</strong> Changes made here are automatically reflected to the server in real-time.</p>
+                            <p><strong>Server Sync Active:</strong> Changes made here are automatically reflected to the server in real-time.</p>
                         </div>
 
                     </div>
