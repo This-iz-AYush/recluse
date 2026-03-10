@@ -23,7 +23,7 @@ class Dashboard(commands.Cog):
             web.get('/manage/{guild_id}', self.manage_server),
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
-            web.post('/api/ip_action', self.handle_ip_action) # New Firewall Route
+            web.post('/api/ip_action', self.handle_ip_action)
         ])
         
         self.runner = None
@@ -33,7 +33,6 @@ class Dashboard(commands.Cog):
     @web.middleware
     async def ip_block_middleware(self, request, handler):
         """Intercepts all traffic to log IPs and enforce bans."""
-        # Get IP (Accounts for proxies like Cloudflare/Render)
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
         
@@ -241,7 +240,6 @@ class Dashboard(commands.Cog):
         banned_html = ""
         
         if hasattr(self.bot, 'db'):
-            # Recent Visitors
             visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1).limit(10)
             async for v in visits_cursor:
                 time_str = datetime.datetime.fromtimestamp(v['last_visit']).strftime('%Y-%m-%d %H:%M')
@@ -259,7 +257,6 @@ class Dashboard(commands.Cog):
                 
             if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No recent visitors logged.</p>"
 
-            # Banned IPs
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
             async for b in bans_cursor:
                 banned_html += f"""
@@ -269,7 +266,6 @@ class Dashboard(commands.Cog):
                 </div>"""
                 
             if not banned_html: banned_html = "<p class='text-zinc-500 text-sm p-3'>No IPs are currently banned.</p>"
-
 
         owner_html = f"""
         <!DOCTYPE html>
@@ -411,9 +407,6 @@ class Dashboard(commands.Cog):
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    # --- BELOW: Existing manage_server, update_settings, login, callback, logout, start_server ---
-    # (Kept identical to your previous working setup)
-
     async def manage_server(self, request):
         user_session = await self.get_user_session(request)
         if not user_session:
@@ -441,7 +434,10 @@ class Dashboard(commands.Cog):
 
         # --- FETCH SAVED SETTINGS FROM DATABASE ---
         ai_enabled = True
-        automod_enabled = False
+        automod_enabled = True
+        anime_enabled = True
+        sports_enabled = True
+        misc_enabled = True
         default_ai_model = "nexusify"
         banned_words = []
         
@@ -449,12 +445,18 @@ class Dashboard(commands.Cog):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
             if settings:
                 ai_enabled = settings.get("ai_enabled", True)
-                automod_enabled = settings.get("automod_enabled", False)
+                automod_enabled = settings.get("automod_enabled", True)
+                anime_enabled = settings.get("anime_enabled", True)
+                sports_enabled = settings.get("sports_enabled", True)
+                misc_enabled = settings.get("misc_enabled", True)
                 default_ai_model = settings.get("default_ai_model", "nexusify")
                 banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"])
                 
         ai_checked = "checked" if ai_enabled else ""
         mod_checked = "checked" if automod_enabled else ""
+        anime_checked = "checked" if anime_enabled else ""
+        sports_checked = "checked" if sports_enabled else ""
+        misc_checked = "checked" if misc_enabled else ""
         
         nexusify_checked = "checked" if default_ai_model == "nexusify" else ""
         gemini_checked = "checked" if default_ai_model == "gemini" else ""
@@ -498,7 +500,7 @@ class Dashboard(commands.Cog):
                 
                 <div class="mt-4">
                     <h2 class="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                        <i class="fa-solid fa-cubes text-violet-500"></i> Active Modules
+                        <i class="fa-solid fa-cubes text-violet-500"></i> Server Modules
                     </h2>
                     
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -513,7 +515,7 @@ class Dashboard(commands.Cog):
                                     </div>
                                     <div>
                                         <h3 class="text-xl font-bold text-white">Neural Core (AI)</h3>
-                                        <p class="text-sm text-zinc-400">Nexusify • Gemini • Sarvam</p>
+                                        <p class="text-sm text-zinc-400">Generative chat and images.</p>
                                     </div>
                                 </div>
                                 <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
@@ -523,7 +525,7 @@ class Dashboard(commands.Cog):
                             </div>
                             
                             <p class="text-zinc-300 mb-8 max-w-2xl leading-relaxed">
-                                The generative and conversational heart of __BOT_NAME__. Currently processing contextual memory, dynamic image generation, and strict lexicon filtering for __GUILD_NAME__.
+                                The generative and conversational heart of __BOT_NAME__. Currently processing contextual memory and dynamic image generation for __GUILD_NAME__.
                             </p>
                             
                             <div class="flex gap-3">
@@ -543,11 +545,53 @@ class Dashboard(commands.Cog):
                                     <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
                                 </div>
                             </div>
-                            <h3 class="text-lg font-bold text-white mb-2">Automod & Safety</h3>
-                            <p class="text-sm text-zinc-400 mb-6 flex-1">Advanced warnings, timed mutes, dynamic purges, and channel locks.</p>
+                            <h3 class="text-lg font-bold text-white mb-2">Moderation & Safety</h3>
+                            <p class="text-sm text-zinc-400 mb-6 flex-1">Enables warn, ban, mute, and dynamic chat filtering rules.</p>
                             <button onclick="openModal('modModal')" class="w-full py-2 rounded-lg bg-[#18181b] border border-white/10 hover:border-white/20 transition text-sm font-medium text-white">
-                                Edit Rules
+                                Edit Lexicon Rules
                             </button>
+                        </div>
+
+                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleAnime">
+                            <div class="flex justify-between items-start mb-6">
+                                <div class="w-10 h-10 rounded-lg bg-pink-500/10 flex items-center justify-center border border-pink-500/20">
+                                    <i class="fa-solid fa-tv text-pink-400"></i>
+                                </div>
+                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                                    <input type="checkbox" id="toggleAnime" __ANIME_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
+                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
+                                </div>
+                            </div>
+                            <h3 class="text-lg font-bold text-white mb-2">Anime Database</h3>
+                            <p class="text-sm text-zinc-400">Allow users to query MyAnimeList for shows and manga.</p>
+                        </div>
+
+                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleSports">
+                            <div class="flex justify-between items-start mb-6">
+                                <div class="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
+                                    <i class="fa-solid fa-baseball-bat-ball text-orange-400"></i>
+                                </div>
+                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                                    <input type="checkbox" id="toggleSports" __SPORTS_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
+                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
+                                </div>
+                            </div>
+                            <h3 class="text-lg font-bold text-white mb-2">Live Sports</h3>
+                            <p class="text-sm text-zinc-400">Live cricket score tracking and real-time updates.</p>
+                        </div>
+
+                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleMisc">
+                            <div class="flex justify-between items-start mb-6">
+                                <div class="w-10 h-10 rounded-lg bg-teal-500/10 flex items-center justify-center border border-teal-500/20">
+                                    <i class="fa-solid fa-box-open text-teal-400"></i>
+                                </div>
+                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                                    <input type="checkbox" id="toggleMisc" __MISC_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
+                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
+                                </div>
+                            </div>
+                            <h3 class="text-lg font-bold text-white mb-2">Miscellaneous</h3>
+                            <p class="text-sm text-zinc-400">AFK statuses, server info, avatars, and user telemetry.</p>
                         </div>
                         
                         <div class="lg:col-span-3 mt-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-3">
@@ -609,73 +653,35 @@ class Dashboard(commands.Cog):
             </div>
 
             <script>
-                // Modal specific UI controls
-                function openModal(id) {
-                    document.getElementById(id).classList.remove('hidden');
-                }
-                function closeModal(id) {
-                    document.getElementById(id).classList.add('hidden');
-                }
+                function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+                function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-                // AI Model Save Function
                 async function saveAIModel() {
                     const selectedModel = document.querySelector('input[name="ai_model"]:checked').value;
-                    const btn = document.getElementById('saveAIBtn');
-                    btn.innerText = 'Saving...';
-                    try {
-                        const response = await fetch(`/api/settings/__GUILD_ID__`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'update_ai_model', model: selectedModel })
-                        });
-                        if (response.ok) {
-                            closeModal('aiModal');
-                        }
-                    } catch (error) {
-                        console.error("Error saving AI model:", error);
-                    }
-                    btn.innerText = 'Save Changes';
+                    const btn = document.getElementById('saveAIBtn'); btn.innerText = 'Saving...';
+                    await fetch(`/api/settings/__GUILD_ID__`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_ai_model', model: selectedModel }) });
+                    closeModal('aiModal'); btn.innerText = 'Save Changes';
                 }
 
-                // Automod Save Function
                 async function saveAutomod() {
                     const words = document.getElementById('banned_words_input').value;
-                    const btn = document.getElementById('saveModBtn');
-                    btn.innerText = 'Saving...';
-                    try {
-                        const response = await fetch(`/api/settings/__GUILD_ID__`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'update_automod', words: words })
-                        });
-                        if (response.ok) {
-                            closeModal('modModal');
-                        }
-                    } catch (error) {
-                        console.error("Error saving Automod rules:", error);
-                    }
-                    btn.innerText = 'Save Rules';
+                    const btn = document.getElementById('saveModBtn'); btn.innerText = 'Saving...';
+                    await fetch(`/api/settings/__GUILD_ID__`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_automod', words: words }) });
+                    closeModal('modModal'); btn.innerText = 'Save Rules';
                 }
 
-                // Main Toggle logic
                 document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
                     const updateVisuals = (element) => {
                         const card = document.getElementById('card-' + element.id);
                         const label = element.nextElementSibling;
                         if(element.checked) {
-                            element.style.left = 'auto';
-                            element.style.right = '0';
-                            element.style.borderColor = '#8b5cf6';
-                            label.style.backgroundColor = '#8b5cf6';
-                            label.style.boxShadow = '0 0 10px rgba(139, 92, 246, 0.5)';
-                            card.style.opacity = '1';
+                            element.style.left = 'auto'; element.style.right = '0';
+                            element.style.borderColor = '#8b5cf6'; label.style.backgroundColor = '#8b5cf6';
+                            label.style.boxShadow = '0 0 10px rgba(139, 92, 246, 0.5)'; card.style.opacity = '1';
                         } else {
-                            element.style.right = 'auto';
-                            element.style.left = '0';
-                            element.style.borderColor = '#52525b';
-                            label.style.backgroundColor = '#52525b';
-                            label.style.boxShadow = 'none';
-                            card.style.opacity = '0.6';
+                            element.style.right = 'auto'; element.style.left = '0';
+                            element.style.borderColor = '#52525b'; label.style.backgroundColor = '#52525b';
+                            label.style.boxShadow = 'none'; card.style.opacity = '0.6';
                         }
                     };
 
@@ -683,28 +689,13 @@ class Dashboard(commands.Cog):
 
                     toggle.addEventListener('change', async function() {
                         updateVisuals(this);
-                        
-                        const moduleName = this.id;
-                        const isEnabled = this.checked;
-                        const guildId = "__GUILD_ID__";
-
                         try {
-                            const response = await fetch(`/api/settings/${guildId}`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: 'toggle', module: moduleName, enabled: isEnabled })
+                            const response = await fetch(`/api/settings/__GUILD_ID__`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'toggle', module: this.id, enabled: this.checked })
                             });
-                            
-                            if (!response.ok) {
-                                console.error("Server rejected the save request.");
-                                this.checked = !isEnabled;
-                                updateVisuals(this);
-                            }
-                        } catch (error) {
-                            console.error("Network error saving setting:", error);
-                            this.checked = !isEnabled;
-                            updateVisuals(this);
-                        }
+                            if (!response.ok) { this.checked = !this.checked; updateVisuals(this); }
+                        } catch (error) { this.checked = !this.checked; updateVisuals(this); }
                     });
                 });
             </script>
@@ -719,9 +710,12 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
         manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
         
-        # Injecting States
         manage_html = manage_html.replace("__AI_CHECKED__", ai_checked)
         manage_html = manage_html.replace("__MOD_CHECKED__", mod_checked)
+        manage_html = manage_html.replace("__ANIME_CHECKED__", anime_checked)
+        manage_html = manage_html.replace("__SPORTS_CHECKED__", sports_checked)
+        manage_html = manage_html.replace("__MISC_CHECKED__", misc_checked)
+        
         manage_html = manage_html.replace("__NEXUSIFY_CHECKED__", nexusify_checked)
         manage_html = manage_html.replace("__GEMINI_CHECKED__", gemini_checked)
         manage_html = manage_html.replace("__SARVAM_CHECKED__", sarvam_checked)
@@ -777,10 +771,18 @@ class Dashboard(commands.Cog):
                 module = data.get('module')
                 enabled = data.get('enabled')
                 
-                if module not in ['toggleAI', 'toggleMod']:
+                db_mapping = {
+                    'toggleAI': 'ai_enabled',
+                    'toggleMod': 'automod_enabled',
+                    'toggleAnime': 'anime_enabled',
+                    'toggleSports': 'sports_enabled',
+                    'toggleMisc': 'misc_enabled'
+                }
+                
+                if module not in db_mapping:
                     return web.json_response({"error": "Invalid module name"}, status=400)
                     
-                db_field = "ai_enabled" if module == 'toggleAI' else "automod_enabled"
+                db_field = db_mapping[module]
                 if hasattr(self.bot, 'db'):
                     await self.bot.db.guild_settings.update_one(
                         {"guild_id": guild_id_int},
@@ -796,45 +798,30 @@ class Dashboard(commands.Cog):
     async def login(self, request):
         client_id = os.getenv("DISCORD_CLIENT_ID")
         redirect_uri = os.getenv("REDIRECT_URI")
-        
         if not client_id or not redirect_uri:
-            return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing in Render.", status=500)
-
-        oauth_url = (
-            f"https://discord.com/api/oauth2/authorize?client_id={client_id}"
-            f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
-            f"&response_type=code&scope=identify%20guilds"
-        )
+            return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing.", status=500)
+        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
         raise web.HTTPFound(oauth_url)
 
     async def callback(self, request):
         code = request.query.get("code")
-        if not code:
-            return web.Response(text="Login failed. No code provided by Discord.", status=400)
-
-        client_id = os.getenv("DISCORD_CLIENT_ID")
-        client_secret = os.getenv("DISCORD_CLIENT_SECRET")
-        redirect_uri = os.getenv("REDIRECT_URI")
+        if not code: return web.Response(text="Login failed. No code provided by Discord.", status=400)
 
         data = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": os.getenv("DISCORD_CLIENT_ID"),
+            "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": redirect_uri
+            "redirect_uri": os.getenv("REDIRECT_URI")
         }
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         
         async with aiohttp.ClientSession() as session:
             async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
-                if resp.status != 200:
-                    return web.Response(text=f"Failed to authenticate with Discord: {await resp.text()}", status=500)
-                
-                token_data = await resp.json()
-                access_token = token_data.get("access_token")
+                if resp.status != 200: return web.Response(text=f"Failed to authenticate with Discord.", status=500)
+                access_token = (await resp.json()).get("access_token")
 
-            user_headers = {"Authorization": f"Bearer {access_token}"}
-            async with session.get("https://discord.com/api/users/@me", headers=user_headers) as resp:
+            async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
                 user_data = await resp.json()
 
         session_id = str(uuid.uuid4())
@@ -842,15 +829,7 @@ class Dashboard(commands.Cog):
         if hasattr(self.bot, 'db'):
             await self.bot.db.sessions.update_one(
                 {"discord_id": user_data["id"]},
-                {
-                    "$set": {
-                        "session_id": session_id,
-                        "username": user_data.get("username", "Unknown"),
-                        "avatar": user_data.get("avatar", ""),
-                        "access_token": access_token,
-                        "created_at": datetime.datetime.utcnow().timestamp()
-                    }
-                },
+                {"$set": {"session_id": session_id, "username": user_data.get("username", "Unknown"), "avatar": user_data.get("avatar", ""), "access_token": access_token, "created_at": datetime.datetime.utcnow().timestamp()}},
                 upsert=True
             )
 
@@ -862,13 +841,11 @@ class Dashboard(commands.Cog):
         session_id = request.cookies.get("recluse_session")
         if session_id and hasattr(self.bot, 'db'):
             await self.bot.db.sessions.delete_one({"session_id": session_id})
-            
         response = web.HTTPFound('/')
         response.del_cookie('recluse_session')
         return response
 
     async def start_server(self):
-        # We start the web server immediately to satisfy Render's port scanner!
         port = int(os.getenv("PORT", 8080))
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
