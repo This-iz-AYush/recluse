@@ -213,6 +213,14 @@ class AI(commands.Cog):
                         if not ai_response.startswith("❌"): # Don't memorize errors
                             self.update_memory(user_id, "user", clean_prompt)
                             self.update_memory(user_id, "model", ai_response)
+                            
+                            # Log usage telemetry for dashboard graphs
+                            if hasattr(self.bot, 'db'):
+                                await self.bot.db.ai_telemetry.update_one(
+                                    {"guild_id": message.guild.id, "date": datetime.datetime.utcnow().strftime('%Y-%m-%d')},
+                                    {"$inc": {"requests_processed": 1}},
+                                    upsert=True
+                                )
 
                         # Attempt to reply, but fallback to regular send if the original message was deleted
                         try:
