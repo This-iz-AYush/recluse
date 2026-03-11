@@ -548,7 +548,19 @@ class Dashboard(commands.Cog):
         bot_name = self.bot.user.name if self.bot.user else "Recluse"
         server_count = len(self.bot.guilds)
         member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
-        loaded_cogs = ", ".join(self.bot.cogs.keys())
+        
+        is_locked = getattr(self.bot, 'global_lockdown', False)
+
+        # Build Hot-Reload Cog List
+        cogs_html = ""
+        for ext_name in self.bot.extensions.keys():
+            clean_name = ext_name.replace('cogs.', '')
+            cogs_html += f"""
+            <div class="flex justify-between items-center p-2.5 hover:bg-white/5 rounded-lg transition group border border-transparent hover:border-white/10">
+                <span class="text-sm font-mono text-zinc-300"><i class="fa-solid fa-microchip text-zinc-600 mr-2"></i> {ext_name}</span>
+                <button onclick="reloadCog('{clean_name}')" class="text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0 font-bold border border-blue-500/20"><i class="fa-solid fa-arrows-rotate mr-1"></i> Reload</button>
+            </div>
+            """
 
         visitor_html = ""
         banned_html = ""
@@ -587,6 +599,12 @@ class Dashboard(commands.Cog):
                 
             if not banned_html: banned_html = "<p class='text-zinc-500 text-sm p-3'>No IPs are currently banned.</p>"
 
+        # Dynamic Lock UI States
+        lock_btn_color = "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20" if is_locked else "bg-red-600 hover:bg-red-700 shadow-red-500/20"
+        lock_btn_text = "LIFT LOCKDOWN" if is_locked else "ENGAGE DEFCON LOCKDOWN"
+        lock_title_color = "text-red-500" if is_locked else "text-zinc-400"
+        lock_icon_anim = "animate-pulse" if is_locked else ""
+
         owner_html = f"""
         <!DOCTYPE html>
         <html lang="en">
@@ -614,7 +632,7 @@ class Dashboard(commands.Cog):
                 </div>
             </nav>
 
-            <main class="flex-1 max-w-6xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8">
+            <main class="flex-1 max-w-6xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8 pb-20">
                 <div>
                     <h1 class="text-3xl font-extrabold text-white mb-2">Owner Control Panel</h1>
                     <p class="text-zinc-400">Global telemetry and administrative actions for {bot_name}.</p>
@@ -644,22 +662,69 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>
 
-                <div class="glass-panel p-6 rounded-2xl border border-white/5">
-                    <h2 class="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                        <i class="fa-solid fa-shield text-red-500"></i> Network Firewall (IP Access)
-                    </h2>
+                <h2 class="text-xl font-bold text-white mt-4 flex items-center gap-2 border-b border-white/5 pb-4">
+                    <i class="fa-solid fa-bolt text-yellow-500"></i> Global System Overrides
+                </h2>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     
+                    <div class="glass-panel p-6 rounded-2xl border border-red-500/30 flex flex-col relative overflow-hidden">
+                        <div class="absolute -right-6 -top-6 text-red-500/5 text-9xl {lock_icon_anim}"><i class="fa-solid fa-power-off"></i></div>
+                        <h3 class="{lock_title_color} font-bold text-lg mb-2 relative z-10"><i class="fa-solid fa-skull"></i> Master Lockdown</h3>
+                        <p class="text-xs text-zinc-400 mb-6 relative z-10 leading-relaxed">Instantly paralyze network command processing globally. Use only during active severe API outages or zero-day exploits.</p>
+                        <div class="mt-auto relative z-10">
+                            <button onclick="toggleGlobalLockdown({str(not is_locked).lower()})" class="w-full py-3.5 rounded-xl {lock_btn_color} font-bold text-white transition shadow-lg tracking-wider" id="globalLockBtn">
+                                {lock_btn_text}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel p-6 rounded-2xl border border-white/5 flex flex-col relative overflow-hidden">
+                        <div class="absolute -right-6 -bottom-6 text-white/5 text-8xl"><i class="fa-solid fa-ban"></i></div>
+                        <h3 class="text-white font-bold text-lg mb-2 relative z-10"><i class="fa-solid fa-user-shield text-zinc-400 mr-1"></i> Entity Blacklist</h3>
+                        <p class="text-xs text-zinc-400 mb-4 relative z-10">Permanently sever a specific user ID or Guild ID from the entire network.</p>
+                        <div class="space-y-3 mt-auto relative z-10">
+                            <div class="flex gap-2">
+                                <select id="bl_type" class="w-1/3 bg-[#18181b] border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-purple-500 transition">
+                                    <option value="user">User</option>
+                                    <option value="guild">Guild</option>
+                                </select>
+                                <input type="text" id="bl_id" placeholder="Target ID..." class="w-2/3 bg-[#18181b] border border-white/10 rounded-lg p-2 text-sm font-mono text-white focus:outline-none focus:border-purple-500 transition">
+                            </div>
+                            <input type="text" id="bl_reason" placeholder="Reason for execution..." class="w-full bg-[#18181b] border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-purple-500 transition">
+                            <button onclick="submitBlacklist()" class="w-full py-2.5 rounded-lg bg-purple-500 hover:bg-purple-600 shadow-lg shadow-purple-500/20 text-white font-bold text-sm transition">
+                                Execute Override
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel p-6 rounded-2xl border border-white/5 flex flex-col relative">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="text-white font-bold text-lg"><i class="fa-solid fa-rotate-right text-zinc-400 mr-1"></i> Module Injection</h3>
+                        </div>
+                        <p class="text-xs text-zinc-400 mb-4">Recompile and hot-swap Python code in active memory.</p>
+                        <div class="bg-[#090b10] rounded-xl border border-white/5 p-2 overflow-y-auto h-[170px] custom-scrollbar space-y-1 shadow-inner">
+                            {cogs_html}
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="text-xl font-bold text-white mt-4 flex items-center gap-2 border-b border-white/5 pb-4">
+                    <i class="fa-solid fa-shield-halved text-blue-500"></i> Network Firewall (IP Access)
+                </h2>
+                
+                <div class="glass-panel p-6 rounded-2xl border border-white/5">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <div>
                             <h3 class="text-zinc-300 font-medium mb-3">All Logged Visitors</h3>
-                            <div class="bg-[#18181b] rounded-xl border border-white/10 overflow-y-auto max-h-[400px]">
+                            <div class="bg-[#18181b] rounded-xl border border-white/10 overflow-y-auto max-h-[300px]">
                                 {visitor_html}
                             </div>
                         </div>
                         
                         <div>
-                            <h3 class="text-red-400 font-medium mb-3">Banned IP Addresses</h3>
-                            <div class="bg-red-500/5 rounded-xl border border-red-500/20 overflow-y-auto max-h-[300px] mb-4">
+                            <h3 class="text-red-400 font-medium mb-3">Restricted IP Addresses</h3>
+                            <div class="bg-red-500/5 rounded-xl border border-red-500/20 overflow-y-auto max-h-[220px] mb-4">
                                 {banned_html}
                             </div>
                             
@@ -671,14 +736,10 @@ class Dashboard(commands.Cog):
                         </div>
                     </div>
                 </div>
-
-                <div class="glass-panel rounded-2xl p-6 border border-white/5 relative overflow-hidden">
-                    <h2 class="text-xl font-bold text-white mb-4">Loaded Core Extensions</h2>
-                    <p class="text-zinc-400 font-mono text-sm mb-6 bg-black/40 p-4 rounded-xl border border-white/5">{loaded_cogs}</p>
-                </div>
             </main>
             
             <script>
+                // --- IP FIREWALL ---
                 async function submitIPAction(action, ip) {{
                     if(!ip) return alert("Please provide an IP address.");
                     if(action === 'ban' && !confirm(`Are you sure you want to permanently IP ban ${{ip}}?`)) return;
@@ -686,24 +747,67 @@ class Dashboard(commands.Cog):
                     
                     try {{
                         const res = await fetch('/api/ip_action', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                             body: JSON.stringify({{ action: action, ip: ip.trim() }})
                         }});
-                        
                         if(res.ok) window.location.reload();
                         else alert("Failed to execute action.");
-                    }} catch (e) {{
-                        console.error(e);
-                        alert("Network error.");
-                    }}
+                    }} catch (e) {{ alert("Network error."); }}
+                }}
+
+                // --- SYSTEM OVERRIDES ---
+                async function toggleGlobalLockdown(targetState) {{
+                    if (targetState && !confirm("CRITICAL WARNING: This will immediately paralyze the entire bot network. Proceed?")) return;
+                    if (!targetState && !confirm("Lift global lockdown and resume normal operations?")) return;
+                    
+                    const btn = document.getElementById('globalLockBtn');
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+                    
+                    try {{
+                        const res = await fetch('/api/owner_action', {{
+                            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{action: 'global_lockdown', state: targetState}})
+                        }});
+                        if (res.ok) window.location.reload();
+                        else throw new Error("Failed");
+                    }} catch (e) {{ alert("Network error."); window.location.reload(); }}
+                }}
+
+                async function submitBlacklist() {{
+                    const target_id = document.getElementById('bl_id').value;
+                    const type = document.getElementById('bl_type').value;
+                    const reason = document.getElementById('bl_reason').value;
+
+                    if(!target_id || isNaN(target_id)) return alert("Valid ID required.");
+                    if(!confirm(`Permanently blacklist ${{type.toUpperCase()}} ID ${{target_id}} globally? This cannot be undone from the dashboard.`)) return;
+
+                    try {{
+                        const res = await fetch('/api/owner_action', {{
+                            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{action: 'blacklist', target_id: target_id, type: type, reason: reason}})
+                        }});
+                        if (res.ok) {{
+                            alert("Target successfully neutralized.");
+                            document.getElementById('bl_id').value = '';
+                        }} else alert("Failed to execute blacklist.");
+                    }} catch (e) {{ alert("Network error."); }}
+                }}
+
+                async function reloadCog(cogName) {{
+                    try {{
+                        const res = await fetch('/api/owner_action', {{
+                            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{action: 'reload_cog', cog: cogName}})
+                        }});
+                        if (res.ok) alert(`${{cogName}} injected successfully.`);
+                        else alert(`Injection Failed for ${{cogName}}. Check Python console for syntax tracebacks.`);
+                    }} catch (e) {{ alert("Network error."); }}
                 }}
             </script>
         </body>
         </html>
         """
         return web.Response(text=owner_html, content_type='text/html')
-
     async def manage_server(self, request):
         user_session = await self.get_user_session(request)
         if not user_session: return web.HTTPFound('/login')
