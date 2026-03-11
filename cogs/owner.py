@@ -4,7 +4,7 @@ import traceback
 import textwrap
 import io
 import contextlib
-import aiohttp
+import datetime
 
 class ShutdownConfirm(discord.ui.View):
     def __init__(self, bot, author):
@@ -27,6 +27,92 @@ class Owner(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.cb = "```" 
+
+    # --- WICK-STYLE ENTERPRISE NETWORK MANAGEMENT ---
+
+    @commands.hybrid_group(name="network", description="[Dev] Enterprise global network management and security.")
+    @commands.is_owner()
+    async def network(self, ctx):
+        """Base command for network security."""
+        if ctx.invoked_subcommand is None:
+            await ctx.send("❌ Use a valid subcommand: `/network blacklist_user`, `/network blacklist_guild`, or `/network lockdown`.", ephemeral=True)
+
+    @network.command(name="blacklist_user", description="[Dev] Globally restrict a user from interacting with the bot.")
+    async def blacklist_user(self, ctx, user_id: str, *, reason: str = "TOS Violation / Abuse"):
+        await ctx.defer(ephemeral=True)
+        try:
+            uid = int(user_id)
+            if hasattr(self.bot, 'db'):
+                await self.bot.db.global_blacklist.update_one(
+                    {"target_id": uid, "type": "user"},
+                    {"$set": {"reason": reason, "timestamp": datetime.datetime.utcnow().timestamp()}},
+                    upsert=True
+                )
+            await ctx.send(f"⛔ **Network Security:** User `{uid}` has been globally blacklisted.\n**Reason:** {reason}", ephemeral=True)
+        except ValueError:
+            await ctx.send("❌ Invalid ID format. Must be an integer.", ephemeral=True)
+
+    @network.command(name="unblacklist_user", description="[Dev] Remove a user from the global blacklist.")
+    async def unblacklist_user(self, ctx, user_id: str):
+        await ctx.defer(ephemeral=True)
+        try:
+            uid = int(user_id)
+            if hasattr(self.bot, 'db'):
+                await self.bot.db.global_blacklist.delete_one({"target_id": uid, "type": "user"})
+            await ctx.send(f"✅ **Network Security:** User `{uid}` has been removed from the blacklist.", ephemeral=True)
+        except ValueError:
+            await ctx.send("❌ Invalid ID format.", ephemeral=True)
+
+    @network.command(name="blacklist_guild", description="[Dev] Globally blacklist a server and force the bot to leave it.")
+    async def blacklist_guild(self, ctx, guild_id: str, *, reason: str = "TOS Violation / Network Abuse"):
+        await ctx.defer(ephemeral=True)
+        try:
+            gid = int(guild_id)
+            if hasattr(self.bot, 'db'):
+                await self.bot.db.global_blacklist.update_one(
+                    {"target_id": gid, "type": "guild"},
+                    {"$set": {"reason": reason, "timestamp": datetime.datetime.utcnow().timestamp()}},
+                    upsert=True
+                )
+                
+            # Attempt to instantly force-leave the server
+            guild = self.bot.get_guild(gid)
+            if guild:
+                await guild.leave()
+                await ctx.send(f"⛔ **Network Security:** Guild `{guild.name}` ({gid}) has been blacklisted and abandoned.\n**Reason:** {reason}", ephemeral=True)
+            else:
+                await ctx.send(f"⛔ **Network Security:** Guild `{gid}` has been blacklisted. (Bot is not currently in this server).", ephemeral=True)
+        except ValueError:
+             await ctx.send("❌ Invalid ID format.", ephemeral=True)
+
+    @network.command(name="lockdown", description="[Dev] Engage global network lockdown (disables all command processing).")
+    async def global_lockdown(self, ctx, state: bool):
+        """Toggle to True to disable the bot globally in case of an exploit."""
+        self.bot.global_lockdown = state
+        
+        if state:
+            embed = discord.Embed(title="🔴 GLOBAL LOCKDOWN ENGAGED", description="All command processing has been suspended across the network.", color=discord.Color.red())
+        else:
+            embed = discord.Embed(title="🟢 GLOBAL LOCKDOWN LIFTED", description="Normal network operations have resumed.", color=discord.Color.brand_green())
+            
+        await ctx.send(embed=embed)
+
+    @network.command(name="force_leave", description="[Dev] Force the bot to leave a specific server without blacklisting it.")
+    async def force_leave(self, ctx, guild_id: str):
+        await ctx.defer(ephemeral=True)
+        try:
+            gid = int(guild_id)
+            guild = self.bot.get_guild(gid)
+            if guild:
+                await guild.leave()
+                await ctx.send(f"👋 Successfully left the server: `{guild.name}` ({gid}).", ephemeral=True)
+            else:
+                await ctx.send(f"❌ I am not in a server with ID `{gid}`.", ephemeral=True)
+        except ValueError:
+            await ctx.send("❌ Invalid ID format.", ephemeral=True)
+
+
+    # --- EXISTING UTILITY COMMANDS ---
 
     @commands.hybrid_command(name="reload", description="[Dev] Hot-reloads a specific cog/extension.")
     @commands.is_owner()
@@ -58,6 +144,7 @@ class Owner(commands.Cog):
         guilds = sorted(self.bot.guilds, key=lambda g: g.member_count, reverse=True)
         embed = discord.Embed(title=f"Connected Servers ({len(guilds)})", color=discord.Color.purple())
         for guild in guilds[:20]: embed.add_field(name=f"{guild.name}", value=f"ID: `{guild.id}`\nMembers: {guild.member_count}", inline=True)
+        if len(guilds) > 20: embed.set_footer(text=f"Showing top 20 of {len(guilds)} servers.")
         await ctx.send(embed=embed, ephemeral=True)
 
     @commands.command(name="eval", hidden=True)
@@ -98,11 +185,6 @@ class Owner(commands.Cog):
     @commands.hybrid_command(name="echo", description="[Dev] Forces the bot to echo a message in the current or specified channel.")
     @commands.is_owner()
     async def echo(self, ctx, channel: discord.TextChannel = None, *, message: str):
-        """
-        Usage: 
-        /echo <message> (Sends in current channel)
-        /echo <#channel> <message> (Sends in specific channel)
-        """
         target_channel = channel or ctx.channel       
         try:
             await target_channel.send(message)
