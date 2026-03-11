@@ -101,10 +101,7 @@ class Core(commands.Cog):
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
-        delta_uptime = datetime.datetime.utcnow() - self.bot.launch_time
-        hours, remainder = divmod(int(delta_uptime.total_seconds()), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        days, hours = divmod(hours, 24)
+        await ctx.defer() # Defers the interaction since the API call might take a second
         
         active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
         app_info = await self.bot.application_info()
@@ -113,7 +110,47 @@ class Core(commands.Cog):
         embed.add_field(name="Registered Owner", value=str(app_info.owner), inline=True)
         embed.add_field(name="Websocket Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
         embed.add_field(name="Your Active AI", value=f"🧠 **{active_ai}**", inline=True)
-        embed.add_field(name="Continuous Uptime", value=f"{days}d {hours}h {minutes}m {seconds}s", inline=False)
+
+        # --- Fetch UptimeRobot Stats ---
+        api_key = os.getenv('UPTIMEROBOT_API_KEY')
+        uptime_display = "Configure `UPTIMEROBOT_API_KEY` in .env"
+        
+        if api_key:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = "https://api.uptimerobot.com/v2/getMonitors"
+                    # custom_uptime_ratios=30 gets the 30-day percentage
+                    payload = f"api_key={api_key.strip()}&format=json&custom_uptime_ratios=30"
+                    headers = {
+                        'content-type': "application/x-www-form-urlencoded",
+                        'cache-control': "no-cache"
+                    }
+                    async with session.post(url, data=payload, headers=headers, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if data.get("stat") == "ok" and data.get("monitors"):
+                                monitor = data["monitors"][0]
+                                status_code = monitor.get("status")
+                                
+                                # Status Codes: 2 = Up, 8 = Seems Down, 9 = Down, 0 = Paused
+                                if status_code == 2:
+                                    status_text = "🟢 **Operational**"
+                                elif status_code in [8, 9]:
+                                    status_text = "🔴 **Down**"
+                                else:
+                                    status_text = "⚪ **Paused/Unknown**"
+                                    
+                                uptime_ratio = monitor.get("custom_uptime_ratio", "N/A")
+                                uptime_display = f"{status_text} ({uptime_ratio}% over 30 days)"
+                            else:
+                                uptime_display = "⚠️ Monitor data unavailable."
+                        else:
+                            uptime_display = f"⚠️ API Error: {response.status}"
+            except Exception:
+                uptime_display = "⚠️ Failed to connect to UptimeRobot."
+
+        embed.add_field(name="Service Status", value=uptime_display, inline=False)
+        
         await ctx.send(embed=embed)
 
     @tasks.loop(seconds=15)
