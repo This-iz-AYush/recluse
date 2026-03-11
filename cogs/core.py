@@ -112,6 +112,7 @@ class Core(commands.Cog):
         embed.add_field(name="Registered Owner", value=str(app_info.owner), inline=True)
         embed.add_field(name="Websocket Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
         embed.add_field(name="Your Active AI", value=f"🧠 **{active_ai}**", inline=True)
+        
 
         # --- Fetch UptimeRobot Stats ---
         api_key = os.getenv('UPTIMEROBOT_API_KEY')
