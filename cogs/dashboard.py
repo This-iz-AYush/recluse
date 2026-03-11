@@ -1212,7 +1212,224 @@ class Dashboard(commands.Cog):
         logs_html = logs_html.replace("__MOD_LOGS__", mod_logs_html)
         logs_html = logs_html.replace("__SECURITY_LOGS__", security_logs_html)
         
-        return web.Response(text=logs_html, content_type='text/html')    
+        return web.Response(text=logs_html, content_type='text/html')
+
+    async def auto_mod(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session:
+            return web.HTTPFound('/login')
+            
+        guild_id = request.match_info.get('guild_id')
+        try:
+            guild_id_int = int(guild_id)
+        except ValueError:
+            return web.Response(text="Invalid Server ID.", status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild:
+            return web.Response(text="Recluse is not in this server.", status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        # --- FETCH CURRENT SETTINGS ---
+        banned_words = ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"] # Defaults
+        if hasattr(self.bot, 'db'):
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
+            if settings and "banned_words" in settings:
+                banned_words = settings["banned_words"]
+
+        banned_words_raw = ", ".join(banned_words)
+        
+        # Generate the HTML pills for the UI
+        pills_html = ""
+        if not banned_words or (len(banned_words) == 1 and banned_words[0] == ""):
+            pills_html = "<p class='text-zinc-500 text-sm'>No words currently blacklisted. The AI will not filter any specific terms.</p>"
+        else:
+            for word in banned_words:
+                if word.strip():
+                    pills_html += f'<span class="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono rounded-md shadow-sm">{word}</span>\n'
+
+        # UI Replacements
+        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        user_name = user_session.get('username', 'Admin')
+        user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
+
+        automod_html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>__GUILD_NAME__ | Auto Mod</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                body { background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }
+                .glass-panel { background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }
+                .sidebar-link { transition: all 0.2s; }
+                .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
+                .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
+                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+            </style>
+        </head>
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
+
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="__GUILD_ICON__" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">__GUILD_NAME__</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">__GUILD_ID__</p>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="/automod/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="/logs/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+            </aside>
+
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="flex items-center gap-3 md:hidden">
+                        <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
+                        <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
+                    </div>
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Content Filtration</div> 
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">__USER_NAME__</span>
+                            <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20 custom-scrollbar">
+                    
+                    <div class="mb-8 max-w-4xl mx-auto">
+                        <h1 class="text-3xl font-extrabold text-white mb-2"><i class="fa-solid fa-shield-halved text-red-500 mr-2"></i> Auto Mod Lexicon</h1>
+                        <p class="text-zinc-400 text-sm">Configure the exact terminology and phrasing that will trigger the AI's automated deletion and strike protocols.</p>
+                    </div>
+
+                    <div class="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6">
+                        
+                        <div class="lg:col-span-3 glass-panel rounded-xl shadow-2xl overflow-hidden border border-white/5">
+                            <div class="bg-[#12161f] border-b border-white/5 px-6 py-4">
+                                <h3 class="text-white font-bold tracking-wide flex items-center gap-2"><i class="fa-solid fa-pen-to-square text-zinc-400"></i> Edit Rule Set</h3>
+                            </div>
+                            <div class="p-6">
+                                <label class="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Blacklisted Terminology</label>
+                                <p class="text-xs text-zinc-400 mb-4">Enter words or exact phrases you wish to ban. Separate each entry with a comma. The AI will enforce these globally across the server.</p>
+                                
+                                <textarea id="banned_words_input" rows="6" class="w-full bg-[#0d1117] border border-white/10 rounded-lg p-4 text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition resize-none placeholder-zinc-700 shadow-inner" placeholder="e.g. term1, term2, forbidden phrase">__BANNED_WORDS_RAW__</textarea>
+                                
+                                <div class="mt-6 flex justify-end">
+                                    <button id="saveModBtn" onclick="saveAutomod()" class="px-6 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 shadow-lg shadow-blue-500/20 text-white font-bold text-sm transition flex items-center gap-2">
+                                        <i class="fa-solid fa-cloud-arrow-up"></i> Deploy Rules
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-2 glass-panel rounded-xl shadow-2xl overflow-hidden border border-red-500/20 flex flex-col">
+                            <div class="bg-red-500/5 border-b border-red-500/20 px-6 py-4">
+                                <h3 class="text-red-400 font-bold tracking-wide flex items-center gap-2"><i class="fa-solid fa-ban"></i> Active Filters</h3>
+                            </div>
+                            <div class="p-6 flex-1 bg-red-500/5">
+                                <p class="text-xs text-zinc-400 mb-4">The following terms are currently loaded into the active memory bank.</p>
+                                
+                                <div class="flex flex-wrap gap-2">
+                                    __BANNED_WORDS_PILLS__
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    
+                    <div class="max-w-4xl mx-auto mt-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 flex gap-4 items-start">
+                        <i class="fa-solid fa-circle-info text-blue-400 mt-1"></i>
+                        <div>
+                            <h4 class="text-blue-400 font-bold text-sm mb-1">How it works</h4>
+                            <p class="text-xs text-blue-300/80 leading-relaxed">
+                                When a user triggers one of these filters, Recluse will immediately intercept and delete the message. A strike will be recorded against the user's ID, and the infraction will be logged in your <strong>Server Audit Logs</strong> page. 
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+            </main>
+
+            <script>
+                async function saveAutomod() {
+                    const words = document.getElementById('banned_words_input').value;
+                    const btn = document.getElementById('saveModBtn'); 
+                    const originalText = btn.innerHTML;
+                    
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deploying...';
+                    btn.classList.add('opacity-75');
+                    
+                    try {
+                        const response = await fetch(`/api/settings/__GUILD_ID__`, { 
+                            method: 'POST', 
+                            headers: { 'Content-Type': 'application/json' }, 
+                            body: JSON.stringify({ action: 'update_automod', words: words }) 
+                        });
+                        
+                        if (response.ok) {
+                            btn.innerHTML = '<i class="fa-solid fa-check"></i> Deployed';
+                            btn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                            btn.classList.add('bg-emerald-500', 'hover:bg-emerald-600', 'shadow-emerald-500/20');
+                            
+                            // Reload page after 1 second to update the visual pills
+                            setTimeout(() => { window.location.reload(); }, 1000);
+                        } else {
+                            throw new Error("Failed to save");
+                        }
+                    } catch (e) {
+                        btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Error';
+                        btn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                        btn.classList.add('bg-red-500', 'hover:bg-red-600', 'shadow-red-500/20');
+                        setTimeout(() => { 
+                            btn.innerHTML = originalText;
+                            btn.className = 'px-6 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 shadow-lg shadow-blue-500/20 text-white font-bold text-sm transition flex items-center gap-2';
+                        }, 2000);
+                    }
+                }
+            </script>
+        </body>
+        </html>
+        """
+        
+        automod_html = automod_html.replace("__GUILD_NAME__", str(guild.name))
+        automod_html = automod_html.replace("__GUILD_ICON__", str(guild_icon))
+        automod_html = automod_html.replace("__GUILD_ID__", str(guild_id_int))
+        automod_html = automod_html.replace("__USER_NAME__", str(user_name))
+        automod_html = automod_html.replace("__USER_AVATAR__", str(user_avatar))
+        automod_html = automod_html.replace("__BANNED_WORDS_RAW__", banned_words_raw)
+        automod_html = automod_html.replace("__BANNED_WORDS_PILLS__", pills_html)
+        
+        return web.Response(text=automod_html, content_type='text/html')    
 
     async def start_server(self):
         port = int(os.getenv("PORT", 8080))
