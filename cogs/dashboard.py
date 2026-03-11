@@ -560,185 +560,255 @@ class Dashboard(commands.Cog):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>__GUILD_NAME__ | Settings</title>
+            <title>__GUILD_NAME__ | __BOT_NAME__ Dashboard</title>
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
-                .glass-panel { background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(12px); }
-                .toggle-checkbox:checked { right: 0; border-color: #8b5cf6; }
-                .toggle-checkbox:checked + .toggle-label { background-color: #8b5cf6; box-shadow: 0 0 10px rgba(139, 92, 246, 0.5); }
+                body { background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }
+                .glass-panel { background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }
+                .sidebar-link { transition: all 0.2s; }
+                .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
+                .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
+                
+                /* Circular Progress Bar CSS */
+                .circular-chart { display: block; margin: 0 auto; max-width: 80%; max-height: 250px; }
+                .circle-bg { fill: none; stroke: rgba(255, 255, 255, 0.1); stroke-width: 3.8; }
+                .circle { fill: none; stroke-width: 2.8; stroke-linecap: round; animation: progress 1s ease-out forwards; }
+                @keyframes progress { 0% { stroke-dasharray: 0 100; } }
+                .percentage { fill: #fff; font-family: sans-serif; font-size: 0.5em; text-anchor: middle; font-weight: bold; }
+                
+                .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
+                .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
             </style>
         </head>
-        <body class="bg-[#09090b] text-zinc-300 font-sans min-h-screen flex flex-col selection:bg-violet-500 selection:text-white relative">
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
 
-            <nav class="glass-panel sticky top-0 z-50 px-6 py-4 flex justify-between items-center border-b border-white/5">
-                <div class="flex items-center gap-4">
-                    <a href="/" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-arrow-left"></i></a>
-                    <div class="h-6 w-px bg-white/10"></div>
-                    <img src="__GUILD_ICON__" alt="Server" class="w-8 h-8 rounded-full">
-                    <span class="text-lg font-bold text-white tracking-wide">__GUILD_NAME__</span>
-                </div>
-                
-                <div class="flex items-center gap-4">
-                    <div class="flex items-center gap-3 bg-white/5 py-1.5 px-3 rounded-full border border-white/5">
-                        <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
-                        <span class="text-sm font-medium text-white">__USER_NAME__</span>
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="__GUILD_ICON__" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">__GUILD_NAME__</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">__GUILD_ID__</p>
+                        </div>
                     </div>
                 </div>
-            </nav>
 
-            <main class="flex-1 max-w-7xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8">
-                
-                <div class="mt-4">
-                    <h2 class="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                        <i class="fa-solid fa-cubes text-violet-500"></i> Server Modules
-                    </h2>
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="#" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
+                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
                     
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        
-                        <div class="lg:col-span-2 glass-panel rounded-2xl p-6 border border-violet-500/30 relative overflow-hidden transition-all duration-300" id="card-toggleAI">
-                            <div class="absolute top-0 right-0 w-64 h-64 bg-violet-500/5 rounded-full blur-3xl -z-10"></div>
-                            
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="flex items-center gap-4">
-                                    <div class="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center border border-violet-500/20">
-                                        <i class="fa-solid fa-microchip text-xl text-violet-500"></i>
-                                    </div>
-                                    <div>
-                                        <h3 class="text-xl font-bold text-white">Neural Core (AI)</h3>
-                                        <p class="text-sm text-zinc-400">Generative chat and images.</p>
-                                    </div>
-                                </div>
-                                <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" id="toggleAI" __AI_CHECKED__ class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
-                                    <label class="toggle-label block overflow-hidden h-6 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300 shadow-[0_0_10px_rgba(139,92,246,0.5)]"></label>
-                                </div>
-                            </div>
-                            
-                            <p class="text-zinc-300 mb-8 max-w-2xl leading-relaxed">
-                                The generative and conversational heart of __BOT_NAME__. Currently processing contextual memory and dynamic image generation for __GUILD_NAME__.
-                            </p>
-                            
-                            <div class="flex gap-3">
-                                <button onclick="openModal('aiModal')" class="px-5 py-2.5 rounded-xl bg-white text-black font-semibold hover:bg-zinc-200 transition">
-                                    Configure Models
-                                </button>
-                            </div>
-                        </div>
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="#" onclick="openModal('modModal')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
+            </aside>
 
-                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleMod">
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                                    <i class="fa-solid fa-shield text-emerald-400"></i>
-                                </div>
-                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" id="toggleMod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
-                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
-                                </div>
-                            </div>
-                            <h3 class="text-lg font-bold text-white mb-2">Moderation & Safety</h3>
-                            <p class="text-sm text-zinc-400 mb-6 flex-1">Enables warn, ban, mute, and dynamic chat filtering rules.</p>
-                            <button onclick="openModal('modModal')" class="w-full py-2 rounded-lg bg-[#18181b] border border-white/10 hover:border-white/20 transition text-sm font-medium text-white">
-                                Edit Lexicon Rules
-                            </button>
-                        </div>
-
-                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleAnime">
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="w-10 h-10 rounded-lg bg-pink-500/10 flex items-center justify-center border border-pink-500/20">
-                                    <i class="fa-solid fa-tv text-pink-400"></i>
-                                </div>
-                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" id="toggleAnime" __ANIME_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
-                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
-                                </div>
-                            </div>
-                            <h3 class="text-lg font-bold text-white mb-2">Anime Database</h3>
-                            <p class="text-sm text-zinc-400">Allow users to query MyAnimeList for shows and manga.</p>
-                        </div>
-
-                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleSports">
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
-                                    <i class="fa-solid fa-baseball-bat-ball text-orange-400"></i>
-                                </div>
-                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" id="toggleSports" __SPORTS_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
-                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
-                                </div>
-                            </div>
-                            <h3 class="text-lg font-bold text-white mb-2">Live Sports</h3>
-                            <p class="text-sm text-zinc-400">Live cricket score tracking and real-time updates.</p>
-                        </div>
-
-                        <div class="glass-panel rounded-2xl p-6 flex flex-col border border-white/5 transition-all duration-300" id="card-toggleMisc">
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="w-10 h-10 rounded-lg bg-teal-500/10 flex items-center justify-center border border-teal-500/20">
-                                    <i class="fa-solid fa-box-open text-teal-400"></i>
-                                </div>
-                                <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                                    <input type="checkbox" id="toggleMisc" __MISC_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-violet-500"/>
-                                    <label class="toggle-label block overflow-hidden h-5 rounded-full bg-violet-500 cursor-pointer transition-colors duration-300"></label>
-                                </div>
-                            </div>
-                            <h3 class="text-lg font-bold text-white mb-2">Miscellaneous</h3>
-                            <p class="text-sm text-zinc-400">AFK statuses, server info, avatars, and user telemetry.</p>
-                        </div>
-                        
-                        <div class="lg:col-span-3 mt-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-3">
-                            <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
-                            <p><strong>Server Sync Active:</strong> Changes made here are automatically reflected to the server in real-time.</p>
-                        </div>
-
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="flex items-center gap-3 md:hidden">
+                        <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
+                        <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
                     </div>
+                    <div class="hidden md:block"></div> <div class="flex items-center gap-4">
+                        <button class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-bell"></i></button>
+                        <div class="h-5 w-px bg-white/10"></div>
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">__USER_NAME__</span>
+                            <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20">
+                    
+                    <div class="text-center mb-10 mt-4">
+                        <p class="text-blue-500 font-bold tracking-widest text-xs mb-2">OVERVIEW</p>
+                        <h1 class="text-4xl font-extrabold text-white">__GUILD_NAME__</h1>
+                    </div>
+
+                    <div class="max-w-5xl mx-auto glass-panel rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden mb-12 border border-white/5">
+                        
+                        <div class="flex-1 p-8">
+                            <h3 class="text-white font-bold text-lg mb-6 border-b border-white/5 pb-2">DETAILS</h3>
+                            
+                            <div class="grid grid-cols-2 gap-y-8 gap-x-4">
+                                <div>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Server Name <i class="fa-regular fa-copy cursor-pointer hover:text-white" onclick="navigator.clipboard.writeText('__GUILD_NAME__')"></i></p>
+                                    <p class="text-white text-sm font-medium">__GUILD_NAME__</p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Server ID <i class="fa-regular fa-copy cursor-pointer hover:text-white" onclick="navigator.clipboard.writeText('__GUILD_ID__')"></i></p>
+                                    <p class="text-white text-sm font-medium font-mono">__GUILD_ID__</p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Shard ID <i class="fa-regular fa-copy cursor-pointer hover:text-white"></i></p>
+                                    <p class="text-white text-sm font-medium">0</p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Type</p>
+                                    <span class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg shadow-blue-500/20">STANDARD</span>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Members <i class="fa-regular fa-copy cursor-pointer hover:text-white"></i></p>
+                                    <p class="text-white text-sm font-medium">__MEMBER_COUNT__</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="md:w-72 bg-[#12161f] p-8 flex flex-col border-l border-white/5 relative">
+                            <h3 class="text-white font-bold text-lg mb-4 text-center">SECURITY</h3>
+                            <div class="flex-1 flex items-center justify-center">
+                                <svg viewBox="0 0 36 36" class="circular-chart" style="stroke: #10b981;">
+                                    <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                    <path class="circle" stroke-dasharray="100, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                    <text x="18" y="20.35" class="percentage">100%</text>
+                                </svg>
+                            </div>
+                            <div class="mt-4 pt-4 border-t border-white/5 flex items-center justify-between text-xs text-zinc-400">
+                                <span><i class="fa-solid fa-circle-info mr-1"></i> Notes</span>
+                                <div class="flex gap-1">
+                                    <div class="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-[8px] border border-emerald-500"><i class="fa-solid fa-check"></i></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="max-w-5xl mx-auto">
+                        <h4 class="text-center text-sm font-bold text-zinc-400 tracking-widest mb-6">QUICK SYSTEMS OVERVIEW</h4>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            
+                            <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleAI">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-white font-bold flex items-center gap-2"><i class="fa-solid fa-microchip text-blue-400"></i> AI Core</h3>
+                                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="toggleAI" __AI_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-zinc-400 mb-4 h-8">Generative chat and image processing engines.</p>
+                                <button onclick="openModal('aiModal')" class="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-medium py-2 rounded-lg transition border border-white/5"><i class="fa-solid fa-gear"></i> Configure Models</button>
+                            </div>
+
+                            <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleMod">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-white font-bold flex items-center gap-2"><i class="fa-solid fa-hammer text-red-400"></i> Auto Mod</h3>
+                                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="toggleMod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-zinc-400 mb-4 h-8">Enables warn, ban, mute, and dynamic chat filters.</p>
+                                <button onclick="openModal('modModal')" class="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-medium py-2 rounded-lg transition border border-white/5"><i class="fa-solid fa-filter"></i> Edit Filters</button>
+                            </div>
+
+                            <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleAnime">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-white font-bold flex items-center gap-2"><i class="fa-solid fa-tv text-pink-400"></i> Anime API</h3>
+                                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="toggleAnime" __ANIME_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-zinc-400 h-8">Allows users to query MyAnimeList database.</p>
+                            </div>
+
+                            <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleSports">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-white font-bold flex items-center gap-2"><i class="fa-solid fa-baseball-bat-ball text-orange-400"></i> Live Sports</h3>
+                                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="toggleSports" __SPORTS_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-zinc-400 h-8">Cricket score tracking and real-time updates.</p>
+                            </div>
+
+                            <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleMisc">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-white font-bold flex items-center gap-2"><i class="fa-solid fa-box-open text-teal-400"></i> Miscellaneous</h3>
+                                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="toggleMisc" __MISC_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-zinc-400 h-8">AFK statuses, server info, avatars, and telemetry.</p>
+                            </div>
+
+                        </div>
+                    </div>
+
                 </div>
             </main>
 
-            <div id="aiModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-violet-500/30 shadow-2xl">
+            <div id="aiModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-xl font-bold text-white">Configure AI Brain</h3>
-                        <button onclick="closeModal('aiModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times text-xl"></i></button>
+                        <h3 class="text-xl font-bold text-white"><i class="fa-solid fa-microchip text-blue-500 mr-2"></i> Configure AI Engine</h3>
+                        <button onclick="closeModal('aiModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times"></i></button>
                     </div>
-                    <p class="text-zinc-400 text-sm mb-4">Select the default generative AI model for your server. (Users can still override this individually using /choose_ai)</p>
+                    <p class="text-zinc-400 text-sm mb-4">Select the default generative AI model for your server.</p>
                     
                     <div class="space-y-3 mb-6">
                         <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
-                            <input type="radio" name="ai_model" value="nexusify" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __NEXUSIFY_CHECKED__>
+                            <input type="radio" name="ai_model" value="nexusify" class="w-4 h-4 text-blue-500 bg-zinc-800 border-zinc-700" __NEXUSIFY_CHECKED__>
                             <span class="text-white font-medium">Nexusify (Kimi-k2.5)</span>
                         </label>
                         <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
-                            <input type="radio" name="ai_model" value="gemini" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __GEMINI_CHECKED__>
+                            <input type="radio" name="ai_model" value="gemini" class="w-4 h-4 text-blue-500 bg-zinc-800 border-zinc-700" __GEMINI_CHECKED__>
                             <span class="text-white font-medium">Google Gemini (Flash 2.5)</span>
                         </label>
                         <label class="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 cursor-pointer hover:bg-white/10 transition">
-                            <input type="radio" name="ai_model" value="sarvam" class="w-4 h-4 text-violet-500 bg-zinc-800 border-zinc-700" __SARVAM_CHECKED__>
+                            <input type="radio" name="ai_model" value="sarvam" class="w-4 h-4 text-blue-500 bg-zinc-800 border-zinc-700" __SARVAM_CHECKED__>
                             <span class="text-white font-medium">Sarvam AI (Text Only)</span>
                         </label>
                     </div>
-                    
                     <div class="flex justify-end gap-3">
                         <button onclick="closeModal('aiModal')" class="px-4 py-2 rounded-xl text-zinc-400 hover:text-white font-medium transition">Cancel</button>
-                        <button id="saveAIBtn" onclick="saveAIModel()" class="px-5 py-2 rounded-xl bg-violet-500 hover:bg-violet-600 shadow-lg shadow-violet-500/20 text-white font-semibold transition">Save Changes</button>
+                        <button id="saveAIBtn" onclick="saveAIModel()" class="px-5 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 shadow-lg text-white font-semibold transition">Save Changes</button>
                     </div>
                 </div>
             </div>
 
-            <div id="modModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-emerald-500/30 shadow-2xl">
+            <div id="modModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-xl font-bold text-white">Edit Automod Lexicon</h3>
-                        <button onclick="closeModal('modModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times text-xl"></i></button>
+                        <h3 class="text-xl font-bold text-white"><i class="fa-solid fa-filter text-red-500 mr-2"></i> Edit Lexicon Rules</h3>
+                        <button onclick="closeModal('modModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times"></i></button>
                     </div>
                     <p class="text-zinc-400 text-sm mb-4">Enter words or phrases that should be automatically deleted. Separate each word with a comma.</p>
                     
                     <div class="mb-6">
-                        <textarea id="banned_words_input" rows="4" class="w-full bg-[#18181b] border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-emerald-500 transition resize-none placeholder-zinc-600" placeholder="e.g. badword, spamlink, anotherbadword">__BANNED_WORDS__</textarea>
+                        <textarea id="banned_words_input" rows="4" class="w-full bg-[#0d1117] border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition resize-none placeholder-zinc-600">__BANNED_WORDS__</textarea>
                     </div>
-                    
                     <div class="flex justify-end gap-3">
                         <button onclick="closeModal('modModal')" class="px-4 py-2 rounded-xl text-zinc-400 hover:text-white font-medium transition">Cancel</button>
-                        <button id="saveModBtn" onclick="saveAutomod()" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 text-white font-semibold transition">Save Rules</button>
+                        <button id="saveModBtn" onclick="saveAutomod()" class="px-5 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 shadow-lg text-white font-semibold transition">Save Rules</button>
                     </div>
                 </div>
             </div>
@@ -767,8 +837,8 @@ class Dashboard(commands.Cog):
                         const label = element.nextElementSibling;
                         if(element.checked) {
                             element.style.left = 'auto'; element.style.right = '0';
-                            element.style.borderColor = '#8b5cf6'; label.style.backgroundColor = '#8b5cf6';
-                            label.style.boxShadow = '0 0 10px rgba(139, 92, 246, 0.5)'; card.style.opacity = '1';
+                            element.style.borderColor = '#3b82f6'; label.style.backgroundColor = '#3b82f6';
+                            label.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)'; card.style.opacity = '1';
                         } else {
                             element.style.right = 'auto'; element.style.left = '0';
                             element.style.borderColor = '#52525b'; label.style.backgroundColor = '#52525b';
@@ -800,6 +870,7 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__USER_NAME__", str(user_name))
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
         manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
+        manage_html = manage_html.replace("__MEMBER_COUNT__", str(guild.member_count))
         
         manage_html = manage_html.replace("__AI_CHECKED__", ai_checked)
         manage_html = manage_html.replace("__MOD_CHECKED__", mod_checked)
