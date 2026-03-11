@@ -582,7 +582,17 @@ class AI(commands.Cog):
              await wait_msg.edit(content="⏳ **Timeout:** The image generation took too long. Complex models can sometimes time out.", embed=None)
         except Exception as e:
              await self.bot.log_system_error(ctx, e)
-             await wait_msg.edit(content=f"❌ **Network Error:** `{type(e).__name__}` occurred while contacting the Nexusify image server.", embed=None)
+             
+             # Log the failure for the dashboard's health monitor
+             if hasattr(self.bot, 'db') and ctx.guild:
+                 await self.bot.db.system_health.insert_one({
+                     "guild_id": ctx.guild.id,
+                     "module": "AI_Imagine",
+                     "error": type(e).__name__,
+                     "timestamp": datetime.datetime.utcnow().timestamp()
+                 })
+                 
+             await wait_msg.edit(content="❌ **System Error:** The rendering engine encountered a fault. The issue has been logged to the dashboard.", embed=None)
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
