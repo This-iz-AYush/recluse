@@ -7,6 +7,14 @@ class Misc(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def log_telemetry(self, guild_id: int, command_name: str):
+        if hasattr(self.bot, 'db'):
+            await self.bot.db.command_telemetry.update_one(
+                {"guild_id": guild_id, "command": command_name, "date": datetime.datetime.utcnow().strftime('%Y-%m-%d')},
+                {"$inc": {"uses": 1}},
+                upsert=True
+            )
+
     async def cog_check(self, ctx):
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
@@ -19,19 +27,73 @@ class Misc(commands.Cog):
     @commands.hybrid_command(name="ping", description="Ping the bot and get the response time in milliseconds.")
     async def ping(self, ctx):
         start_time = datetime.datetime.utcnow()
-        message = await ctx.send("🏓 Pinging...")
+        message = await ctx.send("🏓 Pinging network...")
         api_latency = round((datetime.datetime.utcnow() - start_time).total_seconds() * 1000)
         ws_latency = round(self.bot.latency * 1000)
-        await message.edit(content=f"🏓 **Pong!**\n📡 API Latency: `{api_latency}ms`\n🖥️ Websocket Latency: `{ws_latency}ms`")
+        await message.edit(content=f"📡 **Network Diagnostics**\nAPI Latency: `{api_latency}ms`\nGateway Websocket: `{ws_latency}ms`")
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "ping")
 
     @commands.hybrid_command(name="afk", description="Set an AFK status to display when you are mentioned.")
     async def afk(self, ctx, *, reason: str = "AFK"):
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
         timestamp = datetime.datetime.utcnow().timestamp()
         await self.bot.db.afk.update_one({"user_id": ctx.author.id}, {"$set": {"reason": reason, "timestamp": timestamp}}, upsert=True)
-        await ctx.send(f"✅ {ctx.author.mention}, I've set your AFK status: **{reason}**")
+        await ctx.send(f"✅ {ctx.author.mention}, your status has been updated to: **{reason}**")
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "afk")
 
-    @commands.hybrid_command(name="avatar", description="Get the avatar of yourself or another user.")
+    @commands.hybrid_command(name="serverinfo", description="Get comprehensive security and telemetry data about the server.")
+    async def serverinfo(self, ctx):
+        if not ctx.guild: return await ctx.send("❌ Server only command.")
+        guild = ctx.guild
+        
+        embed = discord.Embed(title=f"Server Dossier: {guild.name}", color=0x2b2d31)
+        if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+        
+        # Wick style detailed layout
+        embed.add_field(name="🛡️ Authority", value=f"**Owner:** {guild.owner.mention}\n**ID:** `{guild.owner.id}`", inline=True)
+        embed.add_field(name="🆔 Network ID", value=f"`{guild.id}`", inline=True)
+        embed.add_field(name="📅 Inception Date", value=f"<t:{int(guild.created_at.timestamp())}:f>\n(<t:{int(guild.created_at.timestamp())}:R>)", inline=False)
+        
+        # Counts
+        bots = sum(1 for m in guild.members if m.bot)
+        humans = guild.member_count - bots
+        embed.add_field(name="👥 Population", value=f"**Total:** {guild.member_count}\n**Humans:** {humans}\n**Automata:** {bots}", inline=True)
+        embed.add_field(name="🗂️ Infrastructure", value=f"**Text:** {len(guild.text_channels)}\n**Voice:** {len(guild.voice_channels)}\n**Roles:** {len(guild.roles)}", inline=True)
+        
+        security_level = str(guild.verification_level).title()
+        embed.add_field(name="🔒 Security Level", value=f"`{security_level}`", inline=True)
+        
+        await ctx.send(embed=embed)
+        await self.log_telemetry(ctx.guild.id, "serverinfo")
+
+    @commands.hybrid_command(name="whois", description="Pull a security profile on a specific user.")
+    async def whois(self, ctx, member: discord.Member = None):
+        member = member or ctx.author
+        
+        # Fetch moderation records if available
+        strikes = 0
+        if hasattr(self.bot, 'db'):
+            strike_record = await self.bot.db.user_strikes.find_one({"guild_id": ctx.guild.id, "user_id": member.id})
+            if strike_record: strikes = strike_record.get("strikes", 0)
+
+        embed = discord.Embed(title=f"User Dossier: {member.name}", color=0x2b2d31)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        
+        embed.add_field(name="Identity", value=f"**Mention:** {member.mention}\n**ID:** `{member.id}`\n**Bot:** {'Yes' if member.bot else 'No'}", inline=True)
+        embed.add_field(name="Security Status", value=f"**Active Strikes:** `{strikes}`", inline=True)
+        
+        embed.add_field(name="Timeline", value=f"**Account Created:** <t:{int(member.created_at.timestamp())}:D> (<t:{int(member.created_at.timestamp())}:R>)\n**Joined Network:** <t:{int(member.joined_at.timestamp())}:D> (<t:{int(member.joined_at.timestamp())}:R>)", inline=False)
+        
+        # Role handling (safeguard against huge role lists)
+        roles = [role.mention for role in reversed(member.roles[1:])] 
+        roles_str = " ".join(roles) if roles else "None"
+        if len(roles_str) > 1024: roles_str = roles_str[:1020] + "..."
+        embed.add_field(name=f"Clearance Roles [{len(roles)}]", value=roles_str, inline=False)
+        
+        await ctx.send(embed=embed)
+        await self.log_telemetry(ctx.guild.id, "whois")
+
+    @commands.hybrid_command(name="avatar", description="Retrieve the high-resolution avatar of a user.")
     async def avatar(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         await ctx.defer() 
@@ -40,60 +102,21 @@ class Misc(commands.Cog):
             avatar_bytes = await asset.read()
             filename = f"avatar.{'gif' if asset.is_animated() else 'png'}"
             file = discord.File(io.BytesIO(avatar_bytes), filename=filename)
-            embed = discord.Embed(title=f"{member.display_name}'s Avatar", color=member.color)
+            embed = discord.Embed(title=f"Target: {member.name}", color=0x2b2d31)
             embed.set_image(url=f"attachment://{filename}")
             await ctx.send(embed=embed, file=file)
-        except Exception as e:
-            embed = discord.Embed(title=f"{member.display_name}'s Avatar", description=f"[Click here to view full image]({member.display_avatar.url})", color=member.color)
+        except Exception:
+            embed = discord.Embed(title=f"Target: {member.name}", description=f"[Direct Image Link]({member.display_avatar.url})", color=0x2b2d31)
             embed.set_image(url=member.display_avatar.url)
             await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="membercount", description="Get the membercount of the current server.")
-    async def membercount(self, ctx):
-        if not ctx.guild: return await ctx.send("❌ This command must be used inside a server.")
-        total, bots = ctx.guild.member_count, sum(1 for m in ctx.guild.members if m.bot)
-        embed = discord.Embed(title=f"👥 Member Count for {ctx.guild.name}", color=discord.Color.teal())
-        embed.add_field(name="Total", value=str(total), inline=True)
-        embed.add_field(name="Humans", value=str(total - bots), inline=True)
-        embed.add_field(name="Bots", value=str(bots), inline=True)
-        await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="serverinfo", description="Get information about the current server.")
-    async def serverinfo(self, ctx):
-        if not ctx.guild: return await ctx.send("❌ Server only command.")
-        guild = ctx.guild
-        embed = discord.Embed(title=f"Server Information: {guild.name}", color=discord.Color.gold())
-        if guild.icon: embed.set_thumbnail(url=guild.icon.url)
-        embed.add_field(name="👑 Owner", value=guild.owner.mention, inline=True)
-        embed.add_field(name="🆔 ID", value=guild.id, inline=True)
-        embed.add_field(name="📅 Created On", value=f"<t:{int(guild.created_at.timestamp())}:D>", inline=True)
-        embed.add_field(name="👥 Members", value=str(guild.member_count), inline=True)
-        embed.add_field(name="🎭 Roles", value=str(len(guild.roles)), inline=True)
-        embed.add_field(name="💬 Channels", value=str(len(guild.channels)), inline=True)
-        await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="whois", description="Get information about a user.")
-    async def whois(self, ctx, member: discord.Member = None):
-        member = member or ctx.author
-        embed = discord.Embed(title=f"User Info: {member}", color=member.color)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="ID", value=member.id, inline=False)
-        embed.add_field(name="Joined Server", value=f"<t:{int(member.joined_at.timestamp())}:D>", inline=True)
-        embed.add_field(name="Account Created", value=f"<t:{int(member.created_at.timestamp())}:D>", inline=True)
-        roles = [role.mention for role in reversed(member.roles[1:])] 
-        roles_str = " ".join(roles) if roles else "None"
-        if len(roles_str) > 1024: roles_str = roles_str[:1020] + "..."
-        embed.add_field(name=f"Roles [{len(roles)}]", value=roles_str, inline=False)
-        await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "avatar")
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not hasattr(self.bot, 'db') or not message.guild: return
 
-        # Verify the Misc module is active before processing AFK logic
         settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
-        if settings and settings.get("misc_enabled", True) is False:
-            return
+        if settings and settings.get("misc_enabled", True) is False: return
             
         afk_data = await self.bot.db.afk.find_one({"user_id": message.author.id})
         if afk_data:
