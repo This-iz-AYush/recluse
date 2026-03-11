@@ -17,16 +17,18 @@ class Recluse(commands.Bot):
         
         super().__init__(command_prefix=',', intents=intents)
         self.launch_time = datetime.datetime.utcnow()
-        self.remove_command("help") # Removing default help so our UI cog can take over
+        self.remove_command("help") 
+        self.global_lockdown = False # Wick-style kill switch state
 
     async def setup_hook(self):
-        # Bind the global slash command error handler
         self.tree.on_error = self.on_app_command_error
         
-        # Start the console reader task
-        #self.loop.create_task(self.console_reader())
+        # Bind the global security check to all slash commands
+        self.tree.interaction_check = self.global_interaction_check
+        
+        # Bind the global security check to all prefix commands
+        self.add_check(self.global_prefix_check)
 
-        # Dynamically load all cogs
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py') and not filename.startswith('_'):
                 try:
@@ -40,6 +42,74 @@ class Recluse(commands.Bot):
 
     async def on_ready(self):
         print(f'System Online: Authenticated to Gateway as {self.user}')
+
+    # --- WICK-STYLE GLOBAL SECURITY CHECKS ---
+    
+    async def _core_security_check(self, user_id: int, guild_id: int = None, is_owner: bool = False) -> tuple[bool, str]:
+        """The core engine that verifies if a user or guild is allowed to use the bot."""
+        if self.global_lockdown and not is_owner:
+            return False, "🛑 **Network Lockdown:** Recluse is currently under global maintenance or security lockdown. Commands are temporarily disabled."
+            
+        if hasattr(self, 'db'):
+            # Check User Blacklist
+            user_banned = await self.db.global_blacklist.find_one({"target_id": user_id, "type": "user"})
+            if user_banned:
+                return False, f"⛔ **Network Security:** You have been globally blacklisted from Recluse.\n**Reason:** {user_banned.get('reason', 'TOS Violation')}"
+                
+            # Check Guild Blacklist
+            if guild_id:
+                guild_banned = await self.db.global_blacklist.find_one({"target_id": guild_id, "type": "guild"})
+                if guild_banned:
+                    return False, "⛔ **Network Security:** This server is globally blacklisted. Initiating auto-leave."
+                    
+        return True, ""
+
+    async def global_interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Intercepts all slash commands."""
+        is_owner = await self.is_owner(interaction.user)
+        guild_id = interaction.guild_id if interaction.guild else None
+        
+        passed, error_msg = await self._core_security_check(interaction.user.id, guild_id, is_owner)
+        
+        if not passed:
+            if guild_id and "auto-leave" in error_msg:
+                try: await interaction.response.send_message(error_msg, ephemeral=True)
+                except: pass
+                await interaction.guild.leave()
+            else:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+            return False
+        return True
+
+    async def global_prefix_check(self, ctx: commands.Context) -> bool:
+        """Intercepts all prefix commands."""
+        is_owner = await self.is_owner(ctx.author)
+        guild_id = ctx.guild.id if ctx.guild else None
+        
+        passed, error_msg = await self._core_security_check(ctx.author.id, guild_id, is_owner)
+        
+        if not passed:
+            if guild_id and "auto-leave" in error_msg:
+                try: await ctx.send(error_msg)
+                except: pass
+                await ctx.guild.leave()
+            else:
+                await ctx.send(error_msg)
+            return False
+        return True
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """Wick-style auto-leave if added to a blacklisted server."""
+        if hasattr(self, 'db'):
+            is_blacklisted = await self.db.global_blacklist.find_one({"target_id": guild.id, "type": "guild"})
+            if is_blacklisted:
+                try:
+                    target_channel = guild.system_channel or next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
+                    if target_channel:
+                        await target_channel.send(f"⛔ **Network Security:** This server is globally blacklisted from the Recluse network. \n**Reason:** {is_blacklisted.get('reason', 'TOS Violation')}\nLeaving immediately.")
+                except discord.Forbidden:
+                    pass
+                await guild.leave()
 
     # --- GLOBAL ERROR LOGGING ---
     async def log_system_error(self, ctx_or_msg, error, is_command=True):
@@ -68,7 +138,6 @@ class Recluse(commands.Bot):
             print(f"CRITICAL: Failed to log error to channel. \n{traceback_str}")
 
     async def on_command_error(self, ctx, error):
-        # 1. Handle explicit permission and state errors first
         if isinstance(error, commands.NotOwner):
             return await ctx.send("❌ **Access Denied:** You must be the bot developer to execute this command.", ephemeral=True)
         if isinstance(error, commands.CommandOnCooldown):
@@ -82,16 +151,12 @@ class Recluse(commands.Bot):
         if isinstance(error, commands.BotMissingPermissions):
             return await ctx.send("❌ **Execution Blocked:** I don't have the necessary Discord permissions.", ephemeral=True)
         
-        # 2. Quietly ignore commands that don't exist
         if isinstance(error, commands.CommandNotFound):
             return
             
-        # 3. Quietly ignore generic CheckFailures. 
-        # (Our dashboard cog_checks already send the user a warning message, so we just stop execution here without logging an error)
         if isinstance(error, commands.CheckFailure):
             return
 
-        # 4. If it's none of the above, it's a real bug. Log it and notify the user.
         await self.log_system_error(ctx, error)
         try:
             await ctx.send("❌ An unexpected system error occurred. A telemetry report has been dispatched.", ephemeral=True)
@@ -99,11 +164,9 @@ class Recluse(commands.Bot):
             pass
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-        # Extract the original error if it's wrapped
         if isinstance(error, discord.app_commands.errors.CommandInvokeError):
             error = error.original
 
-        # 1. Handle Slash Command specific errors
         if isinstance(error, discord.app_commands.errors.CommandOnCooldown):
             return await interaction.response.send_message(f"⏳ **Chill out!** You can use this command again in `{error.retry_after:.1f}s`.", ephemeral=True)
         if isinstance(error, discord.app_commands.errors.MissingPermissions):
@@ -111,11 +174,9 @@ class Recluse(commands.Bot):
         if isinstance(error, discord.app_commands.errors.BotMissingPermissions):
              return await interaction.response.send_message("❌ **Execution Blocked:** I don't have the necessary permissions.", ephemeral=True)
              
-        # 2. Catch the dashboard toggle CheckFailures 
         if isinstance(error, discord.app_commands.errors.CheckFailure):
             return
         
-        # 3. Log actual application bugs
         class MockCtx:
             def __init__(self, interaction):
                 self.command = interaction.command
