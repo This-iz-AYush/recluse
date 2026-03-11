@@ -12,6 +12,15 @@ class Sports(commands.Cog):
         self.sports_cache = {"items": [], "last_updated": None}
         self.update_sports_cache.start()
 
+    async def log_telemetry(self, guild_id: int, command_name: str):
+        """Wick-style telemetry logging for dashboard usage graphs."""
+        if hasattr(self.bot, 'db'):
+            await self.bot.db.command_telemetry.update_one(
+                {"guild_id": guild_id, "command": command_name, "date": datetime.datetime.utcnow().strftime('%Y-%m-%d')},
+                {"$inc": {"uses": 1}},
+                upsert=True
+            )
+
     async def cog_check(self, ctx):
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
@@ -46,6 +55,7 @@ class Sports(commands.Cog):
     @commands.hybrid_group(name="score", fallback="menu", description="Base command for sports module.")
     async def score(self, ctx):
         await ctx.send("🏏 **Sports Module**\nUse `/score search <match>` for a one-time search, or `/score live <match>` to auto-refresh the score every 30 seconds!")
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_menu")
 
     @score.command(name="all", description="Fetches all live cricket match scores instantly.")
     async def score_all(self, ctx):
@@ -62,6 +72,7 @@ class Sports(commands.Cog):
         if self.sports_cache["last_updated"]:
             embed.set_footer(text=f"Data retrieved from internal cache • Last updated: {self.sports_cache['last_updated'].strftime('%H:%M:%S')} UTC")
         await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_all")
 
     @score.command(name="search", description="Fetches live cricket match scores with detailed extraction.")
     async def score_search(self, ctx, *, query: str = None):
@@ -93,6 +104,7 @@ class Sports(commands.Cog):
                 
             embed.add_field(name=title, value=formatted_stats, inline=False)
         await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_search")
 
     @score.command(name="live", description="Starts an auto-refreshing live score tracker.")
     async def score_live(self, ctx, *, query: str):
@@ -102,8 +114,10 @@ class Sports(commands.Cog):
         self.live_trackers[real_msg.id] = {"message": real_msg, "query": query, "channel": ctx.channel, "start_time": datetime.datetime.utcnow()}
         if not self.refresh_live_scores.is_running(): self.refresh_live_scores.start()
         await ctx.send(f"✅ Live tracking started for `{query}`.", ephemeral=True)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_live")
 
     @score.command(name="stop", description="Stops all active live score trackers in the current channel.")
+    @commands.has_permissions(manage_messages=True)
     async def score_stop(self, ctx):
         stopped = 0
         for msg_id, data in list(self.live_trackers.items()):
@@ -112,6 +126,7 @@ class Sports(commands.Cog):
                 stopped += 1
         if stopped > 0:
             await ctx.send(f"🛑 Terminated {stopped} live trackers.")
+            if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_stop")
             if not self.live_trackers: self.refresh_live_scores.cancel() 
         else: await ctx.send("❌ No active trackers found.")
 
