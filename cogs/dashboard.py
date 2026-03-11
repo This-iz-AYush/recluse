@@ -1122,6 +1122,11 @@ class Dashboard(commands.Cog):
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
                     </a>
                     
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
                     <a href="/logs/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
                         <i class="fa-solid fa-database w-5 text-center"></i> Logging
