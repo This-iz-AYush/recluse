@@ -113,14 +113,16 @@ class Core(commands.Cog):
 
         # --- Fetch UptimeRobot Stats ---
         api_key = os.getenv('UPTIMEROBOT_API_KEY')
+        status_display = "⚪ **Unknown**"
         uptime_display = "Configure `UPTIMEROBOT_API_KEY` in .env"
         
         if api_key:
             try:
+                import time
                 async with aiohttp.ClientSession() as session:
                     url = "https://api.uptimerobot.com/v2/getMonitors"
-                    # custom_uptime_ratios=30 gets the 30-day percentage
-                    payload = f"api_key={api_key.strip()}&format=json&custom_uptime_ratios=30"
+                    # We request logs=1 to get the event history
+                    payload = f"api_key={api_key.strip()}&format=json&logs=1"
                     headers = {
                         'content-type': "application/x-www-form-urlencoded",
                         'cache-control': "no-cache"
@@ -134,14 +136,34 @@ class Core(commands.Cog):
                                 
                                 # Status Codes: 2 = Up, 8 = Seems Down, 9 = Down, 0 = Paused
                                 if status_code == 2:
-                                    status_text = "🟢 **Operational**"
-                                elif status_code in [8, 9]:
-                                    status_text = "🔴 **Down**"
-                                else:
-                                    status_text = "⚪ **Paused/Unknown**"
+                                    status_display = "🟢 **Operational**"
                                     
-                                uptime_ratio = monitor.get("custom_uptime_ratio", "N/A")
-                                uptime_display = f"{status_text} ({uptime_ratio}% over 30 days)"
+                                    # Calculate continuous uptime from logs
+                                    logs = monitor.get("logs", [])
+                                    last_up_timestamp = None
+                                    
+                                    # Look for the most recent "Up" (type 2) or "Started" (type 98) event
+                                    for log in logs:
+                                        if log.get("type") in [2, 98]:
+                                            last_up_timestamp = log.get("datetime")
+                                            break
+                                            
+                                    if last_up_timestamp:
+                                        # UptimeRobot returns datetime as a Unix timestamp
+                                        uptime_seconds = int(time.time()) - int(last_up_timestamp)
+                                        days, remainder = divmod(uptime_seconds, 86400)
+                                        hours, remainder = divmod(remainder, 3600)
+                                        minutes, seconds = divmod(remainder, 60)
+                                        uptime_display = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+                                    else:
+                                        uptime_display = "Tracking..."
+
+                                elif status_code in [8, 9]:
+                                    status_display = "🔴 **Down**"
+                                    uptime_display = "0d 0h 0m 0s"
+                                else:
+                                    status_display = "⚪ **Paused**"
+                                    uptime_display = "N/A"
                             else:
                                 uptime_display = "⚠️ Monitor data unavailable."
                         else:
@@ -149,7 +171,8 @@ class Core(commands.Cog):
             except Exception:
                 uptime_display = "⚠️ Failed to connect to UptimeRobot."
 
-        embed.add_field(name="Service Status", value=uptime_display, inline=False)
+        embed.add_field(name="Service Status", value=status_display, inline=True)
+        embed.add_field(name="Continuous Uptime", value=uptime_display, inline=True)
         
         await ctx.send(embed=embed)
 
