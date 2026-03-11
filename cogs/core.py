@@ -101,7 +101,8 @@ class Core(commands.Cog):
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
-        await ctx.defer() # Defers the interaction since the API call might take a second
+        await ctx.defer() 
+        import time # Added at the top to ensure time parsing works safely
         
         active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
         app_info = await self.bot.application_info()
@@ -118,10 +119,8 @@ class Core(commands.Cog):
         
         if api_key:
             try:
-                import time
                 async with aiohttp.ClientSession() as session:
                     url = "https://api.uptimerobot.com/v2/getMonitors"
-                    # We request logs=1 to get the event history
                     payload = f"api_key={api_key.strip()}&format=json&logs=1"
                     headers = {
                         'content-type': "application/x-www-form-urlencoded",
@@ -132,25 +131,26 @@ class Core(commands.Cog):
                             data = await response.json()
                             if data.get("stat") == "ok" and data.get("monitors"):
                                 monitor = data["monitors"][0]
-                                status_code = monitor.get("status")
+                                status_code = int(monitor.get("status", 0))
                                 
-                                # Status Codes: 2 = Up, 8 = Seems Down, 9 = Down, 0 = Paused
                                 if status_code == 2:
                                     status_display = "🟢 **Operational**"
                                     
-                                    # Calculate continuous uptime from logs
+                                    # 1. Try to get uptime from the latest log
                                     logs = monitor.get("logs", [])
                                     last_up_timestamp = None
                                     
-                                    # Look for the most recent "Up" (type 2) or "Started" (type 98) event
                                     for log in logs:
-                                        if log.get("type") in [2, 98]:
+                                        if int(log.get("type", 0)) in [2, 98]:
                                             last_up_timestamp = log.get("datetime")
                                             break
                                             
+                                    # 2. Fallback: If no logs exist (brand new monitor), use creation time
+                                    if not last_up_timestamp:
+                                        last_up_timestamp = monitor.get("create_datetime")
+                                            
                                     if last_up_timestamp:
-                                        # UptimeRobot returns datetime as a Unix timestamp
-                                        uptime_seconds = int(time.time()) - int(last_up_timestamp)
+                                        uptime_seconds = max(0, int(time.time()) - int(last_up_timestamp))
                                         days, remainder = divmod(uptime_seconds, 86400)
                                         hours, remainder = divmod(remainder, 3600)
                                         minutes, seconds = divmod(remainder, 60)
