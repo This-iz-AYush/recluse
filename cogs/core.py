@@ -4,6 +4,7 @@ import os
 import aiohttp
 import datetime
 from itertools import cycle
+from typing import Optional
 
 class HelpSelect(discord.ui.Select):
     def __init__(self):
