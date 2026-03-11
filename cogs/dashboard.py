@@ -24,7 +24,8 @@ class Dashboard(commands.Cog):
             web.get('/logout', self.logout),
             web.get('/manage/{guild_id}', self.manage_server),
             web.get('/logs/{guild_id}', self.server_logs),
-            web.get('/automod/{guild_id}', self.auto_mod), # <-- ADD THIS LINE
+            web.get('/automod/{guild_id}', self.auto_mod),
+            web.get('/wizard/{guild_id}', self.wizard_setup),
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
             web.post('/api/ip_action', self.handle_ip_action),
@@ -471,6 +472,7 @@ class Dashboard(commands.Cog):
         </html>
         """
         return web.Response(text=owner_html, content_type='text/html')
+        
     async def handle_ip_action(self, request):
         user_session = await self.get_user_session(request)
         if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
@@ -598,22 +600,16 @@ class Dashboard(commands.Cog):
 
                 <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
-                    <a href="#" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                    <a href="/manage/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
                     </a>
-                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                    <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
-                    </a>
-                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
-                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
                     <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
-                    </a>
-                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
-                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
@@ -726,7 +722,7 @@ class Dashboard(commands.Cog):
                                     </div>
                                 </div>
                                 <p class="text-xs text-zinc-400 mb-4 h-8">Enables warn, ban, mute, and dynamic chat filters.</p>
-                                <button onclick="openModal('modModal')" class="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-medium py-2 rounded-lg transition border border-white/5"><i class="fa-solid fa-filter"></i> Edit Filters</button>
+                                <a href="/automod/__GUILD_ID__" class="w-full block text-center text-xs bg-white/5 hover:bg-white/10 text-white font-medium py-2 rounded-lg transition border border-white/5"><i class="fa-solid fa-filter"></i> Edit Filters</a>
                             </div>
 
                             <div class="glass-panel p-5 rounded-xl border border-white/5 relative overflow-hidden group transition-all" id="card-toggleAnime">
@@ -796,17 +792,6 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>
             </div>
-                    <p class="text-zinc-400 text-sm mb-4">Enter words or phrases that should be automatically deleted. Separate each word with a comma.</p>
-                    
-                    <div class="mb-6">
-                        <textarea id="banned_words_input" rows="4" class="w-full bg-[#0d1117] border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition resize-none placeholder-zinc-600">__BANNED_WORDS__</textarea>
-                    </div>
-                    <div class="flex justify-end gap-3">
-                        <button onclick="closeModal('modModal')" class="px-4 py-2 rounded-xl text-zinc-400 hover:text-white font-medium transition">Cancel</button>
-                        <button id="saveModBtn" onclick="saveAutomod()" class="px-5 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 shadow-lg text-white font-semibold transition">Save Rules</button>
-                    </div>
-                </div>
-            </div>
 
             <script>
                 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
@@ -817,13 +802,6 @@ class Dashboard(commands.Cog):
                     const btn = document.getElementById('saveAIBtn'); btn.innerText = 'Saving...';
                     await fetch(`/api/settings/__GUILD_ID__`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_ai_model', model: selectedModel }) });
                     closeModal('aiModal'); btn.innerText = 'Save Changes';
-                }
-
-                async function saveAutomod() {
-                    const words = document.getElementById('banned_words_input').value;
-                    const btn = document.getElementById('saveModBtn'); btn.innerText = 'Saving...';
-                    await fetch(`/api/settings/__GUILD_ID__`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_automod', words: words }) });
-                    closeModal('modModal'); btn.innerText = 'Save Rules';
                 }
 
                 document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
@@ -944,6 +922,16 @@ class Dashboard(commands.Cog):
                     await self.bot.db.guild_settings.update_one(
                         {"guild_id": guild_id_int},
                         {"$set": {db_field: enabled}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+                
+            elif action == 'bulk_update':
+                new_settings = data.get('settings', {})
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": new_settings},
                         upsert=True
                     )
                 return web.json_response({"success": True})
@@ -1113,6 +1101,9 @@ class Dashboard(commands.Cog):
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
                     <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
@@ -1293,6 +1284,9 @@ class Dashboard(commands.Cog):
                     <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
                     </a>
+                    <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
                     <a href="/automod/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
@@ -1427,7 +1421,373 @@ class Dashboard(commands.Cog):
         automod_html = automod_html.replace("__BANNED_WORDS_RAW__", banned_words_raw)
         automod_html = automod_html.replace("__BANNED_WORDS_PILLS__", pills_html)
         
-        return web.Response(text=automod_html, content_type='text/html')    
+        return web.Response(text=automod_html, content_type='text/html')
+
+    async def wizard_setup(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session:
+            return web.HTTPFound('/login')
+            
+        guild_id = request.match_info.get('guild_id')
+        try:
+            guild_id_int = int(guild_id)
+        except ValueError:
+            return web.Response(text="Invalid Server ID.", status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild:
+            return web.Response(text="Recluse is not in this server.", status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        # --- FETCH CURRENT SETTINGS FOR DEFAULTS ---
+        default_ai_model = "nexusify"
+        automod_enabled = True
+        anime_enabled = True
+        sports_enabled = True
+        misc_enabled = True
+        
+        if hasattr(self.bot, 'db'):
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
+            if settings:
+                default_ai_model = settings.get("default_ai_model", "nexusify")
+                automod_enabled = settings.get("automod_enabled", True)
+                anime_enabled = settings.get("anime_enabled", True)
+                sports_enabled = settings.get("sports_enabled", True)
+                misc_enabled = settings.get("misc_enabled", True)
+
+        nexusify_checked = "checked" if default_ai_model == "nexusify" else ""
+        gemini_checked = "checked" if default_ai_model == "gemini" else ""
+        sarvam_checked = "checked" if default_ai_model == "sarvam" else ""
+        
+        mod_checked = "checked" if automod_enabled else ""
+        anime_checked = "checked" if anime_enabled else ""
+        sports_checked = "checked" if sports_enabled else ""
+        misc_checked = "checked" if misc_enabled else ""
+
+        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        user_name = user_session.get('username', 'Admin')
+        user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
+
+        wizard_html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>__GUILD_NAME__ | Setup Wizard</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                body { background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }
+                .glass-panel { background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }
+                .sidebar-link { transition: all 0.2s; }
+                .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
+                .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
+                
+                .step-content { display: none; animation: fadeIn 0.4s ease-in-out; }
+                .step-content.active { display: block; }
+                @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+                
+                .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
+                .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+            </style>
+        </head>
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
+
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="__GUILD_ICON__" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">__GUILD_NAME__</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">__GUILD_ID__</p>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    <a href="/wizard/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="/logs/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+            </aside>
+
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="flex items-center gap-3 md:hidden">
+                        <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
+                        <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
+                    </div>
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Configuration Wizard</div> 
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">__USER_NAME__</span>
+                            <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20 flex flex-col items-center justify-center">
+                    
+                    <div class="w-full max-w-3xl glass-panel rounded-2xl shadow-2xl overflow-hidden border border-white/5">
+                        
+                        <div class="bg-[#12161f] border-b border-white/5 p-6 flex items-center justify-between relative overflow-hidden">
+                            <div class="absolute bottom-0 left-0 h-1 bg-blue-500 transition-all duration-500 ease-in-out" id="progressBar" style="width: 25%;"></div>
+                            <div class="flex flex-col">
+                                <span class="text-blue-500 font-bold text-xs tracking-widest mb-1" id="stepIndicatorText">STEP 1 OF 4</span>
+                                <h2 class="text-white font-bold text-xl" id="stepTitle">Select AI Core</h2>
+                            </div>
+                            <i class="fa-solid fa-wand-magic-sparkles text-3xl text-zinc-700"></i>
+                        </div>
+
+                        <div class="p-8 min-h-[350px]">
+                            
+                            <div id="step1" class="step-content active">
+                                <p class="text-zinc-400 text-sm mb-6">Select the primary generative intelligence engine Recluse will use to interact with your members.</p>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                        <input type="radio" name="wiz_ai_model" value="nexusify" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __NEXUSIFY_CHECKED__>
+                                        <i class="fa-solid fa-network-wired text-2xl text-blue-400 mb-3 group-hover:scale-110 transition"></i>
+                                        <span class="text-white font-bold text-sm">Nexusify</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Grok-3 architecture. Deep reasoning and web search enabled.</span>
+                                    </label>
+                                    
+                                    <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                        <input type="radio" name="wiz_ai_model" value="gemini" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __GEMINI_CHECKED__>
+                                        <i class="fa-brands fa-google text-2xl text-emerald-400 mb-3 group-hover:scale-110 transition"></i>
+                                        <span class="text-white font-bold text-sm">Google Gemini</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Flash 2.5 model. Excellent vision and image analysis.</span>
+                                    </label>
+
+                                    <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                        <input type="radio" name="wiz_ai_model" value="sarvam" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __SARVAM_CHECKED__>
+                                        <i class="fa-solid fa-language text-2xl text-orange-400 mb-3 group-hover:scale-110 transition"></i>
+                                        <span class="text-white font-bold text-sm">Sarvam AI</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Text-only model specialized in multilingual processing.</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div id="step2" class="step-content">
+                                <div class="flex items-center gap-4 mb-6">
+                                    <div class="w-12 h-12 rounded-xl bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                                        <i class="fa-solid fa-hammer text-red-500 text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-white font-bold text-lg">Automated Moderation</h3>
+                                        <p class="text-zinc-400 text-sm">Protect your server from harmful content.</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-[#0d1117] p-5 rounded-xl border border-white/5 flex justify-between items-center mb-4">
+                                    <div>
+                                        <span class="text-white font-bold block">Enable AI Auto Mod</span>
+                                        <span class="text-xs text-zinc-500">Allows Recluse to delete messages containing blacklisted lexicon terms and issue strikes automatically.</span>
+                                    </div>
+                                    <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in ml-4">
+                                        <input type="checkbox" id="wiz_mod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                        <label class="toggle-label block overflow-hidden h-6 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                    </div>
+                                </div>
+                                
+                                <p class="text-xs text-zinc-500"><i class="fa-solid fa-info-circle mr-1"></i> Note: You can edit the exact words to filter on the <b>Auto Mod Rules</b> page later.</p>
+                            </div>
+
+                            <div id="step3" class="step-content">
+                                <p class="text-zinc-400 text-sm mb-6">Toggle the entertainment and utility modules you want active in your server.</p>
+                                
+                                <div class="space-y-3">
+                                    <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                                        <div>
+                                            <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-tv text-pink-400"></i> Anime API</span>
+                                            <span class="text-xs text-zinc-500">Allow users to look up Anime and Manga data.</span>
+                                        </div>
+                                        <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
+                                            <input type="checkbox" id="wiz_anime" __ANIME_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                            <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                                        <div>
+                                            <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-baseball-bat-ball text-orange-400"></i> Live Sports</span>
+                                            <span class="text-xs text-zinc-500">Live cricket score tracking and updates.</span>
+                                        </div>
+                                        <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
+                                            <input type="checkbox" id="wiz_sports" __SPORTS_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                            <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                                        <div>
+                                            <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-box-open text-teal-400"></i> Miscellaneous</span>
+                                            <span class="text-xs text-zinc-500">AFK statuses, server info, and telemetry.</span>
+                                        </div>
+                                        <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
+                                            <input type="checkbox" id="wiz_misc" __MISC_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                            <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="step4" class="step-content text-center py-8">
+                                <div class="w-20 h-20 mx-auto bg-emerald-500/10 border border-emerald-500/20 rounded-full flex items-center justify-center mb-4">
+                                    <i class="fa-solid fa-check text-4xl text-emerald-400"></i>
+                                </div>
+                                <h2 class="text-2xl font-bold text-white mb-2">Ready for Deployment</h2>
+                                <p class="text-zinc-400 max-w-sm mx-auto">Your configuration is ready. Click the deploy button below to push these settings to Recluse's active memory.</p>
+                            </div>
+
+                        </div>
+
+                        <div class="bg-[#12161f] border-t border-white/5 p-4 flex justify-between items-center">
+                            <button id="prevBtn" class="px-5 py-2 rounded-lg text-zinc-400 hover:text-white font-medium transition invisible" onclick="changeStep(-1)">Back</button>
+                            <button id="nextBtn" class="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 shadow-lg text-white font-bold transition" onclick="changeStep(1)">Next Step</button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <script>
+                let currentStep = 1;
+                const totalSteps = 4;
+                const titles = ["Select AI Core", "Network Security", "Utility Modules", "Finalize Configuration"];
+
+                function updateUI() {
+                    document.querySelectorAll('.step-content').forEach((el, index) => {
+                        if (index + 1 === currentStep) el.classList.add('active');
+                        else el.classList.remove('active');
+                    });
+
+                    document.getElementById('stepIndicatorText').innerText = `STEP ${currentStep} OF ${totalSteps}`;
+                    document.getElementById('stepTitle').innerText = titles[currentStep - 1];
+                    document.getElementById('progressBar').style.width = `${(currentStep / totalSteps) * 100}%`;
+
+                    const prevBtn = document.getElementById('prevBtn');
+                    const nextBtn = document.getElementById('nextBtn');
+
+                    if (currentStep === 1) prevBtn.classList.add('invisible');
+                    else prevBtn.classList.remove('invisible');
+
+                    if (currentStep === totalSteps) {
+                        nextBtn.innerHTML = '<i class="fa-solid fa-rocket mr-2"></i> Deploy Settings';
+                        nextBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                        nextBtn.classList.add('bg-emerald-500', 'hover:bg-emerald-600', 'shadow-emerald-500/20');
+                    } else {
+                        nextBtn.innerText = 'Next Step';
+                        nextBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                        nextBtn.classList.remove('bg-emerald-500', 'hover:bg-emerald-600', 'shadow-emerald-500/20');
+                    }
+                }
+
+                async function changeStep(direction) {
+                    if (direction === 1 && currentStep === totalSteps) {
+                        await finalizeSetup();
+                        return;
+                    }
+                    
+                    currentStep += direction;
+                    if (currentStep < 1) currentStep = 1;
+                    if (currentStep > totalSteps) currentStep = totalSteps;
+                    
+                    updateUI();
+                }
+
+                async function finalizeSetup() {
+                    const nextBtn = document.getElementById('nextBtn');
+                    nextBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deploying...';
+                    nextBtn.disabled = true;
+
+                    const payload = {
+                        action: 'bulk_update',
+                        settings: {
+                            default_ai_model: document.querySelector('input[name="wiz_ai_model"]:checked').value,
+                            automod_enabled: document.getElementById('wiz_mod').checked,
+                            anime_enabled: document.getElementById('wiz_anime').checked,
+                            sports_enabled: document.getElementById('wiz_sports').checked,
+                            misc_enabled: document.getElementById('wiz_misc').checked
+                        }
+                    };
+
+                    try {
+                        const response = await fetch(`/api/settings/__GUILD_ID__`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            window.location.href = `/manage/__GUILD_ID__`;
+                        } else {
+                            throw new Error('Failed to save');
+                        }
+                    } catch (e) {
+                        alert("Error saving configuration. Please try again.");
+                        nextBtn.innerHTML = '<i class="fa-solid fa-rocket mr-2"></i> Deploy Settings';
+                        nextBtn.disabled = false;
+                    }
+                }
+                
+                // Toggle Switch Visuals
+                document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
+                    const updateVisuals = (element) => {
+                        const label = element.nextElementSibling;
+                        if(element.checked) {
+                            element.style.left = 'auto'; element.style.right = '0';
+                            element.style.borderColor = '#3b82f6'; label.style.backgroundColor = '#3b82f6';
+                            label.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
+                        } else {
+                            element.style.right = 'auto'; element.style.left = '0';
+                            element.style.borderColor = '#52525b'; label.style.backgroundColor = '#52525b';
+                            label.style.boxShadow = 'none';
+                        }
+                    };
+                    updateVisuals(toggle);
+                    toggle.addEventListener('change', function() { updateVisuals(this); });
+                });
+            </script>
+        </body>
+        </html>
+        """
+        
+        wizard_html = wizard_html.replace("__GUILD_NAME__", str(guild.name))
+        wizard_html = wizard_html.replace("__GUILD_ICON__", str(guild_icon))
+        wizard_html = wizard_html.replace("__GUILD_ID__", str(guild_id_int))
+        wizard_html = wizard_html.replace("__USER_NAME__", str(user_name))
+        wizard_html = wizard_html.replace("__USER_AVATAR__", str(user_avatar))
+        
+        wizard_html = wizard_html.replace("__NEXUSIFY_CHECKED__", nexusify_checked)
+        wizard_html = wizard_html.replace("__GEMINI_CHECKED__", gemini_checked)
+        wizard_html = wizard_html.replace("__SARVAM_CHECKED__", sarvam_checked)
+        wizard_html = wizard_html.replace("__MOD_CHECKED__", mod_checked)
+        wizard_html = wizard_html.replace("__ANIME_CHECKED__", anime_checked)
+        wizard_html = wizard_html.replace("__SPORTS_CHECKED__", sports_checked)
+        wizard_html = wizard_html.replace("__MISC_CHECKED__", misc_checked)
+        
+        return web.Response(text=wizard_html, content_type='text/html')
 
     async def start_server(self):
         port = int(os.getenv("PORT", 8080))
