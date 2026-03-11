@@ -80,7 +80,7 @@ class AI(commands.Cog):
                 default_ai_model = settings.get("default_ai_model", "nexusify")
                 banned_words = settings.get("banned_words", [])
 
-        # --- AUTOMOD CHECK ---
+        # --- AUTOMOD CHECK (ENTERPRISE UPGRADE) ---
         if automod_enabled:
             check_words = banned_words if banned_words else self.RESTRICTED_LEXICON
             if any(restricted in content_lower for restricted in check_words):
@@ -88,6 +88,25 @@ class AI(commands.Cog):
                     await message.delete()
                     warning = await message.channel.send(f"⚠️ {message.author.mention}, the usage of that terminology is strictly prohibited.")
                     await warning.delete(delay=5)
+                    
+                    # Log the security infraction to the database for the dashboard
+                    if hasattr(self.bot, 'db'):
+                        infraction_data = {
+                            "guild_id": message.guild.id,
+                            "user_id": message.author.id,
+                            "user_name": str(message.author),
+                            "action": "Automod Trigger (AI Module)",
+                            "content": message.content,
+                            "timestamp": datetime.datetime.utcnow().timestamp()
+                        }
+                        await self.bot.db.security_logs.insert_one(infraction_data)
+                        
+                        # Add a strike to the user
+                        await self.bot.db.user_strikes.update_one(
+                            {"guild_id": message.guild.id, "user_id": message.author.id},
+                            {"$inc": {"strikes": 1}, "$set": {"last_strike": datetime.datetime.utcnow().timestamp()}},
+                            upsert=True
+                        )
                 except discord.Forbidden:
                     pass 
                 return # Stop execution so the bot doesn't reply to deleted bad words
