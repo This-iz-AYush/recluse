@@ -616,7 +616,7 @@ class Dashboard(commands.Cog):
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
-                    <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                    <a href="/logs/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-database w-5 text-center"></i> Logging
                     </a>
                 </nav>
