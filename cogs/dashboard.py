@@ -796,13 +796,6 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>
             </div>
-
-            <div id="modModal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
-                <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-xl font-bold text-white"><i class="fa-solid fa-filter text-red-500 mr-2"></i> Edit Lexicon Rules</h3>
-                        <button onclick="closeModal('modModal')" class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-times"></i></button>
-                    </div>
                     <p class="text-zinc-400 text-sm mb-4">Enter words or phrases that should be automatically deleted. Separate each word with a comma.</p>
                     
                     <div class="mb-6">
