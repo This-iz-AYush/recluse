@@ -23,7 +23,8 @@ class Dashboard(commands.Cog):
             web.get('/callback', self.callback),
             web.get('/logout', self.logout),
             web.get('/manage/{guild_id}', self.manage_server),
-            web.get('/logs/{guild_id}', self.server_logs), # <-- ADD THIS LINE
+            web.get('/logs/{guild_id}', self.server_logs),
+            web.get('/automod/{guild_id}', self.auto_mod), # <-- ADD THIS LINE
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
             web.post('/api/ip_action', self.handle_ip_action),
