@@ -16,7 +16,7 @@ class Dashboard(commands.Cog):
         # Initialize aiohttp Application with our custom IP Blocker & Verification Middleware
         self.app = web.Application(middlewares=[self.security_middleware])
         
-        # Registering our dynamic web routes
+        # Registering all dynamic web routes
         self.app.add_routes([
             web.get('/', self.home),
             web.get('/login', self.login),
@@ -26,6 +26,8 @@ class Dashboard(commands.Cog):
             web.get('/logs/{guild_id}', self.server_logs),
             web.get('/automod/{guild_id}', self.auto_mod),
             web.get('/wizard/{guild_id}', self.wizard_setup),
+            web.get('/misc/{guild_id}', self.misc_settings),
+            web.get('/lockdown/{guild_id}', self.server_lockdown),
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
             web.post('/api/ip_action', self.handle_ip_action),
@@ -142,6 +144,193 @@ class Dashboard(commands.Cog):
         if session and (datetime.datetime.utcnow().timestamp() - session['created_at'] < 86400):
             return session
         return None
+
+    # -------------------------------------------------------------------------------------------------
+    # API ENDPOINTS
+    # -------------------------------------------------------------------------------------------------
+
+    async def update_settings(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+            
+        guild_id = request.match_info.get('guild_id')
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.json_response({"error": "Invalid Server ID"}, status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild: return web.json_response({"error": "Recluse is not in this server"}, status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.json_response({"error": "Forbidden: Missing Permissions"}, status=403)
+            
+        try:
+            data = await request.json()
+            action = data.get('action')
+            
+            if action == 'update_ai_model':
+                model = data.get('model')
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {"default_ai_model": model}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+                
+            elif action == 'update_automod':
+                words_string = data.get('words', '')
+                words_list = [w.strip().lower() for w in words_string.split(',') if w.strip()]
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {"banned_words": words_list}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+                
+            elif action == 'toggle':
+                module = data.get('module')
+                enabled = data.get('enabled')
+                
+                db_mapping = {
+                    'toggleAI': 'ai_enabled',
+                    'toggleMod': 'automod_enabled',
+                    'toggleAnime': 'anime_enabled',
+                    'toggleSports': 'sports_enabled',
+                    'toggleMisc': 'misc_enabled'
+                }
+                
+                if module not in db_mapping:
+                    return web.json_response({"error": "Invalid module name"}, status=400)
+                    
+                db_field = db_mapping[module]
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": {db_field: enabled}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+                
+            elif action == 'bulk_update':
+                new_settings = data.get('settings', {})
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id_int},
+                        {"$set": new_settings},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+
+            elif action == 'toggle_lockdown':
+                state = data.get('state', True)
+                try:
+                    if hasattr(self.bot, 'db'):
+                        await self.bot.db.guild_settings.update_one(
+                            {"guild_id": guild_id_int},
+                            {"$set": {"lockdown_active": state}},
+                            upsert=True
+                        )
+                    
+                    # Physically alter the server's @everyone role to stop raids
+                    default_role = guild.default_role
+                    await default_role.edit(send_messages=not state, reason="Dashboard: Emergency Lockdown Toggled")
+                    return web.json_response({"success": True})
+                except discord.Forbidden:
+                    return web.json_response({"error": "Recluse lacks the 'Manage Roles' permission needed to lock the server."}, status=403)
+            
+            return web.json_response({"error": "Invalid action"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_ip_action(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
+        
+        app_info = await self.bot.application_info()
+        if int(user_session['discord_id']) != app_info.owner.id:
+            return web.json_response({"error": "Forbidden"}, status=403)
+            
+        data = await request.json()
+        action = data.get('action')
+        target_ip = data.get('ip')
+        
+        if not target_ip or not hasattr(self.bot, 'db'): 
+            return web.json_response({"error": "Invalid request"}, status=400)
+            
+        try:
+            if action == 'ban':
+                await self.bot.db.ip_bans.update_one(
+                    {"ip": target_ip}, 
+                    {"$set": {"banned_at": datetime.datetime.utcnow().timestamp()}}, 
+                    upsert=True
+                )
+            elif action == 'unban':
+                await self.bot.db.ip_bans.delete_one({"ip": target_ip})
+                
+            return web.json_response({"success": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # -------------------------------------------------------------------------------------------------
+    # AUTHENTICATION ROUTES
+    # -------------------------------------------------------------------------------------------------
+
+    async def login(self, request):
+        client_id = os.getenv("DISCORD_CLIENT_ID")
+        redirect_uri = os.getenv("REDIRECT_URI")
+        if not client_id or not redirect_uri:
+            return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing.", status=500)
+        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
+        raise web.HTTPFound(oauth_url)
+
+    async def callback(self, request):
+        code = request.query.get("code")
+        if not code: return web.Response(text="Login failed. No code provided by Discord.", status=400)
+
+        data = {
+            "client_id": os.getenv("DISCORD_CLIENT_ID"),
+            "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": os.getenv("REDIRECT_URI")
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
+                if resp.status != 200: return web.Response(text=f"Failed to authenticate with Discord.", status=500)
+                access_token = (await resp.json()).get("access_token")
+
+            async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
+                user_data = await resp.json()
+
+        session_id = str(uuid.uuid4())
+        
+        if hasattr(self.bot, 'db'):
+            await self.bot.db.sessions.update_one(
+                {"discord_id": user_data["id"]},
+                {"$set": {"session_id": session_id, "username": user_data.get("username", "Unknown"), "avatar": user_data.get("avatar", ""), "access_token": access_token, "created_at": datetime.datetime.utcnow().timestamp()}},
+                upsert=True
+            )
+
+        response = web.HTTPFound('/')
+        response.set_cookie('recluse_session', session_id, max_age=86400, httponly=True)
+        return response
+
+    async def logout(self, request):
+        session_id = request.cookies.get("recluse_session")
+        if session_id and hasattr(self.bot, 'db'):
+            await self.bot.db.sessions.delete_one({"session_id": session_id})
+        response = web.HTTPFound('/')
+        response.del_cookie('recluse_session')
+        return response
+
+    # -------------------------------------------------------------------------------------------------
+    # DASHBOARD UI PAGES
+    # -------------------------------------------------------------------------------------------------
 
     async def home(self, request):
         user_session = await self.get_user_session(request)
@@ -319,12 +508,10 @@ class Dashboard(commands.Cog):
         banned_html = ""
         
         if hasattr(self.bot, 'db'):
-            # Fetch Visitors
             visits_cursor = self.bot.db.visit_logs.find().sort("last_visit", -1)
             async for v in visits_cursor:
                 time_str = datetime.datetime.fromtimestamp(v['last_visit']).strftime('%Y-%m-%d %H:%M')
                 last_user = v.get('last_user', 'Guest')
-                
                 user_badge_color = "bg-violet-500/20 text-violet-300 border-violet-500/30" if last_user != 'Guest' else "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
                 
                 visitor_html += f"""
@@ -344,7 +531,6 @@ class Dashboard(commands.Cog):
                 
             if not visitor_html: visitor_html = "<p class='text-zinc-500 text-sm p-3'>No visitors logged yet.</p>"
 
-            # Fetch Banned IPs (These already have auto-unban buttons!)
             bans_cursor = self.bot.db.ip_bans.find().limit(50)
             async for b in bans_cursor:
                 banned_html += f"""
@@ -450,7 +636,6 @@ class Dashboard(commands.Cog):
                 async function submitIPAction(action, ip) {{
                     if(!ip) return alert("Please provide an IP address.");
                     if(action === 'ban' && !confirm(`Are you sure you want to permanently IP ban ${{ip}}?`)) return;
-                    // Added unban confirmation
                     if(action === 'unban' && !confirm(`Are you sure you want to unban the IP: ${{ip}}?`)) return;
                     
                     try {{
@@ -472,51 +657,17 @@ class Dashboard(commands.Cog):
         </html>
         """
         return web.Response(text=owner_html, content_type='text/html')
-        
-    async def handle_ip_action(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
-        
-        app_info = await self.bot.application_info()
-        if int(user_session['discord_id']) != app_info.owner.id:
-            return web.json_response({"error": "Forbidden"}, status=403)
-            
-        data = await request.json()
-        action = data.get('action')
-        target_ip = data.get('ip')
-        
-        if not target_ip or not hasattr(self.bot, 'db'): 
-            return web.json_response({"error": "Invalid request"}, status=400)
-            
-        try:
-            if action == 'ban':
-                await self.bot.db.ip_bans.update_one(
-                    {"ip": target_ip}, 
-                    {"$set": {"banned_at": datetime.datetime.utcnow().timestamp()}}, 
-                    upsert=True
-                )
-            elif action == 'unban':
-                await self.bot.db.ip_bans.delete_one({"ip": target_ip})
-                
-            return web.json_response({"success": True})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
 
     async def manage_server(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
             
         guild_id = request.match_info.get('guild_id')
-        
-        try:
-            guild_id_int = int(guild_id)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
             
         guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            return web.Response(text="Recluse is not in this server. Please invite the bot first.", status=404)
+        if not guild: return web.Response(text="Recluse is not in this server. Please invite the bot first.", status=404)
             
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
@@ -527,14 +678,12 @@ class Dashboard(commands.Cog):
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
 
-        # --- FETCH SAVED SETTINGS FROM DATABASE ---
         ai_enabled = True
         automod_enabled = True
         anime_enabled = True
         sports_enabled = True
         misc_enabled = True
         default_ai_model = "nexusify"
-        banned_words = []
         
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
@@ -545,7 +694,6 @@ class Dashboard(commands.Cog):
                 sports_enabled = settings.get("sports_enabled", True)
                 misc_enabled = settings.get("misc_enabled", True)
                 default_ai_model = settings.get("default_ai_model", "nexusify")
-                banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"])
                 
         ai_checked = "checked" if ai_enabled else ""
         mod_checked = "checked" if automod_enabled else ""
@@ -556,7 +704,6 @@ class Dashboard(commands.Cog):
         nexusify_checked = "checked" if default_ai_model == "nexusify" else ""
         gemini_checked = "checked" if default_ai_model == "gemini" else ""
         sarvam_checked = "checked" if default_ai_model == "sarvam" else ""
-        banned_words_str = ", ".join(banned_words)
 
         manage_html = """
         <!DOCTYPE html>
@@ -573,14 +720,11 @@ class Dashboard(commands.Cog):
                 .sidebar-link { transition: all 0.2s; }
                 .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
                 .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
-                
-                /* Circular Progress Bar CSS */
                 .circular-chart { display: block; margin: 0 auto; max-width: 80%; max-height: 250px; }
                 .circle-bg { fill: none; stroke: rgba(255, 255, 255, 0.1); stroke-width: 3.8; }
                 .circle { fill: none; stroke-width: 2.8; stroke-linecap: round; animation: progress 1s ease-out forwards; }
                 @keyframes progress { 0% { stroke-dasharray: 0 100; } }
                 .percentage { fill: #fff; font-family: sans-serif; font-size: 0.5em; text-anchor: middle; font-weight: bold; }
-                
                 .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
                 .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
             </style>
@@ -600,16 +744,22 @@ class Dashboard(commands.Cog):
 
                 <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
-                    <a href="/manage/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                    <a href="/manage/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
                     </a>
                     <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
                     </a>
+                    <a href="/misc/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
                     <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="/lockdown/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
@@ -632,9 +782,8 @@ class Dashboard(commands.Cog):
                         <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
                         <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
                     </div>
-                    <div class="hidden md:block"></div> <div class="flex items-center gap-4">
-                        <button class="text-zinc-400 hover:text-white transition"><i class="fa-solid fa-bell"></i></button>
-                        <div class="h-5 w-px bg-white/10"></div>
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Overview</div>
+                    <div class="flex items-center gap-4">
                         <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
                             <span class="text-xs font-medium text-white">__USER_NAME__</span>
                             <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
@@ -650,10 +799,8 @@ class Dashboard(commands.Cog):
                     </div>
 
                     <div class="max-w-5xl mx-auto glass-panel rounded-xl shadow-2xl flex flex-col md:flex-row overflow-hidden mb-12 border border-white/5">
-                        
                         <div class="flex-1 p-8">
                             <h3 class="text-white font-bold text-lg mb-6 border-b border-white/5 pb-2">DETAILS</h3>
-                            
                             <div class="grid grid-cols-2 gap-y-8 gap-x-4">
                                 <div>
                                     <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Server Name <i class="fa-regular fa-copy cursor-pointer hover:text-white" onclick="navigator.clipboard.writeText('__GUILD_NAME__')"></i></p>
@@ -664,7 +811,7 @@ class Dashboard(commands.Cog):
                                     <p class="text-white text-sm font-medium font-mono">__GUILD_ID__</p>
                                 </div>
                                 <div>
-                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Shard ID <i class="fa-regular fa-copy cursor-pointer hover:text-white"></i></p>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Shard ID</p>
                                     <p class="text-white text-sm font-medium">0</p>
                                 </div>
                                 <div>
@@ -672,7 +819,7 @@ class Dashboard(commands.Cog):
                                     <span class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg shadow-blue-500/20">STANDARD</span>
                                 </div>
                                 <div>
-                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Members <i class="fa-regular fa-copy cursor-pointer hover:text-white"></i></p>
+                                    <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-2">Members</p>
                                     <p class="text-white text-sm font-medium">__MEMBER_COUNT__</p>
                                 </div>
                             </div>
@@ -760,7 +907,6 @@ class Dashboard(commands.Cog):
 
                         </div>
                     </div>
-
                 </div>
             </main>
 
@@ -844,189 +990,45 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
         manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
         manage_html = manage_html.replace("__MEMBER_COUNT__", str(guild.member_count))
-        
         manage_html = manage_html.replace("__AI_CHECKED__", ai_checked)
         manage_html = manage_html.replace("__MOD_CHECKED__", mod_checked)
         manage_html = manage_html.replace("__ANIME_CHECKED__", anime_checked)
         manage_html = manage_html.replace("__SPORTS_CHECKED__", sports_checked)
         manage_html = manage_html.replace("__MISC_CHECKED__", misc_checked)
-        
         manage_html = manage_html.replace("__NEXUSIFY_CHECKED__", nexusify_checked)
         manage_html = manage_html.replace("__GEMINI_CHECKED__", gemini_checked)
         manage_html = manage_html.replace("__SARVAM_CHECKED__", sarvam_checked)
-        manage_html = manage_html.replace("__BANNED_WORDS__", banned_words_str)
         
         return web.Response(text=manage_html, content_type='text/html')
 
-    async def update_settings(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.json_response({"error": "Unauthorized"}, status=401)
-            
-        guild_id = request.match_info.get('guild_id')
-        try:
-            guild_id_int = int(guild_id)
-        except ValueError:
-            return web.json_response({"error": "Invalid Server ID"}, status=400)
-            
-        guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            return web.json_response({"error": "Recluse is not in this server"}, status=404)
-            
-        member = guild.get_member(int(user_session['discord_id']))
-        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
-            return web.json_response({"error": "Forbidden: Missing Permissions"}, status=403)
-            
-        try:
-            data = await request.json()
-            action = data.get('action')
-            
-            if action == 'update_ai_model':
-                model = data.get('model')
-                if hasattr(self.bot, 'db'):
-                    await self.bot.db.guild_settings.update_one(
-                        {"guild_id": guild_id_int},
-                        {"$set": {"default_ai_model": model}},
-                        upsert=True
-                    )
-                return web.json_response({"success": True})
-                
-            elif action == 'update_automod':
-                words_string = data.get('words', '')
-                words_list = [w.strip().lower() for w in words_string.split(',') if w.strip()]
-                if hasattr(self.bot, 'db'):
-                    await self.bot.db.guild_settings.update_one(
-                        {"guild_id": guild_id_int},
-                        {"$set": {"banned_words": words_list}},
-                        upsert=True
-                    )
-                return web.json_response({"success": True})
-                
-            elif action == 'toggle':
-                module = data.get('module')
-                enabled = data.get('enabled')
-                
-                db_mapping = {
-                    'toggleAI': 'ai_enabled',
-                    'toggleMod': 'automod_enabled',
-                    'toggleAnime': 'anime_enabled',
-                    'toggleSports': 'sports_enabled',
-                    'toggleMisc': 'misc_enabled'
-                }
-                
-                if module not in db_mapping:
-                    return web.json_response({"error": "Invalid module name"}, status=400)
-                    
-                db_field = db_mapping[module]
-                if hasattr(self.bot, 'db'):
-                    await self.bot.db.guild_settings.update_one(
-                        {"guild_id": guild_id_int},
-                        {"$set": {db_field: enabled}},
-                        upsert=True
-                    )
-                return web.json_response({"success": True})
-                
-            elif action == 'bulk_update':
-                new_settings = data.get('settings', {})
-                if hasattr(self.bot, 'db'):
-                    await self.bot.db.guild_settings.update_one(
-                        {"guild_id": guild_id_int},
-                        {"$set": new_settings},
-                        upsert=True
-                    )
-                return web.json_response({"success": True})
-            
-            return web.json_response({"error": "Invalid action"}, status=400)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def login(self, request):
-        client_id = os.getenv("DISCORD_CLIENT_ID")
-        redirect_uri = os.getenv("REDIRECT_URI")
-        if not client_id or not redirect_uri:
-            return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing.", status=500)
-        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
-        raise web.HTTPFound(oauth_url)
-
-    async def callback(self, request):
-        code = request.query.get("code")
-        if not code: return web.Response(text="Login failed. No code provided by Discord.", status=400)
-
-        data = {
-            "client_id": os.getenv("DISCORD_CLIENT_ID"),
-            "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": os.getenv("REDIRECT_URI")
-        }
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
-                if resp.status != 200: return web.Response(text=f"Failed to authenticate with Discord.", status=500)
-                access_token = (await resp.json()).get("access_token")
-
-            async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
-                user_data = await resp.json()
-
-        session_id = str(uuid.uuid4())
-        
-        if hasattr(self.bot, 'db'):
-            await self.bot.db.sessions.update_one(
-                {"discord_id": user_data["id"]},
-                {"$set": {"session_id": session_id, "username": user_data.get("username", "Unknown"), "avatar": user_data.get("avatar", ""), "access_token": access_token, "created_at": datetime.datetime.utcnow().timestamp()}},
-                upsert=True
-            )
-
-        response = web.HTTPFound('/')
-        response.set_cookie('recluse_session', session_id, max_age=86400, httponly=True)
-        return response
-
-    async def logout(self, request):
-        session_id = request.cookies.get("recluse_session")
-        if session_id and hasattr(self.bot, 'db'):
-            await self.bot.db.sessions.delete_one({"session_id": session_id})
-        response = web.HTTPFound('/')
-        response.del_cookie('recluse_session')
-        return response
-        
     async def server_logs(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
             
         guild_id = request.match_info.get('guild_id')
-        try:
-            guild_id_int = int(guild_id)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
             
         guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            return web.Response(text="Recluse is not in this server.", status=404)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
             
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.Response(text="Access Denied.", status=403)
 
-        # --- FETCH LOGS FROM MONGODB ---
         mod_logs_html = ""
         security_logs_html = ""
         
         if hasattr(self.bot, 'db'):
-            # Fetch Moderation Logs (Bans, Kicks, Warns)
             mod_cursor = self.bot.db.mod_logs.find({"guild_id": guild_id_int}).sort("timestamp", -1).limit(50)
             async for log in mod_cursor:
                 action = log.get('action', 'Unknown')
-                
-                # Dynamic styling based on action
                 if action == 'Ban': badge = '<span class="px-2 py-1 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Ban</span>'
                 elif action == 'Kick': badge = '<span class="px-2 py-1 bg-orange-500/10 text-orange-500 border border-orange-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Kick</span>'
                 elif action == 'Warn': badge = '<span class="px-2 py-1 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Warn</span>'
                 else: badge = f'<span class="px-2 py-1 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded text-[10px] font-bold uppercase tracking-wider">{action}</span>'
 
                 time_str = datetime.datetime.utcfromtimestamp(log['timestamp']).strftime('%Y-%m-%d %H:%M:%S UTC')
-                
                 mod_logs_html += f"""
                 <tr class="border-b border-white/5 hover:bg-white/5 transition text-sm text-zinc-300">
                     <td class="py-3 px-4">{badge}</td>
@@ -1040,11 +1042,9 @@ class Dashboard(commands.Cog):
             if not mod_logs_html:
                 mod_logs_html = '<tr><td colspan="5" class="py-8 text-center text-zinc-500">No manual moderation logs found for this server.</td></tr>'
 
-            # Fetch Security Logs (Automod AI Filters)
             sec_cursor = self.bot.db.security_logs.find({"guild_id": guild_id_int}).sort("timestamp", -1).limit(50)
             async for log in sec_cursor:
                 time_str = datetime.datetime.utcfromtimestamp(log['timestamp']).strftime('%Y-%m-%d %H:%M:%S UTC')
-                
                 security_logs_html += f"""
                 <tr class="border-b border-white/5 hover:bg-white/5 transition text-sm text-zinc-300">
                     <td class="py-3 px-4"><span class="px-2 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[10px] font-bold uppercase tracking-wider"><i class="fa-solid fa-robot mr-1"></i> Auto Mod</span></td>
@@ -1057,8 +1057,6 @@ class Dashboard(commands.Cog):
             if not security_logs_html:
                 security_logs_html = '<tr><td colspan="4" class="py-8 text-center text-zinc-500">No automated security infractions logged yet.</td></tr>'
 
-        # UI Replacements
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1078,7 +1076,6 @@ class Dashboard(commands.Cog):
                 .sidebar-link { transition: all 0.2s; }
                 .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
                 .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
-                /* Custom Scrollbar for tables */
                 .table-container::-webkit-scrollbar { height: 8px; width: 8px; }
                 .table-container::-webkit-scrollbar-track { background: #0d1117; }
                 .table-container::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
@@ -1105,28 +1102,38 @@ class Dashboard(commands.Cog):
                     <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
                     </a>
+                    <a href="/misc/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
                     <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
                     </a>
+                    <a href="/lockdown/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
+                    </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
-                    <a href="/logs/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                    <a href="/logs/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
                         <i class="fa-solid fa-database w-5 text-center"></i> Logging
                     </a>
                 </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
             </aside>
 
             <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
-                
                 <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
                     <div class="flex items-center gap-3 md:hidden">
                         <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
                         <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
                     </div>
                     <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Security Audits</div> 
-                    
                     <div class="flex items-center gap-4">
                         <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
                             <span class="text-xs font-medium text-white">__USER_NAME__</span>
@@ -1136,7 +1143,6 @@ class Dashboard(commands.Cog):
                 </header>
 
                 <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20">
-                    
                     <div class="mb-8">
                         <h1 class="text-3xl font-extrabold text-white mb-2"><i class="fa-solid fa-server text-blue-500 mr-2"></i> Server Audit Logs</h1>
                         <p class="text-zinc-400 text-sm">Review manual moderation actions and automated security interventions in real-time.</p>
@@ -1186,13 +1192,11 @@ class Dashboard(commands.Cog):
                             </table>
                         </div>
                     </div>
-
                 </div>
             </main>
         </body>
         </html>
         """
-        
         logs_html = logs_html.replace("__GUILD_NAME__", str(guild.name))
         logs_html = logs_html.replace("__GUILD_ICON__", str(guild_icon))
         logs_html = logs_html.replace("__GUILD_ID__", str(guild_id_int))
@@ -1200,38 +1204,30 @@ class Dashboard(commands.Cog):
         logs_html = logs_html.replace("__USER_AVATAR__", str(user_avatar))
         logs_html = logs_html.replace("__MOD_LOGS__", mod_logs_html)
         logs_html = logs_html.replace("__SECURITY_LOGS__", security_logs_html)
-        
         return web.Response(text=logs_html, content_type='text/html')
 
     async def auto_mod(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
             
         guild_id = request.match_info.get('guild_id')
-        try:
-            guild_id_int = int(guild_id)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
             
         guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            return web.Response(text="Recluse is not in this server.", status=404)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
             
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.Response(text="Access Denied.", status=403)
 
-        # --- FETCH CURRENT SETTINGS ---
-        banned_words = ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"] # Defaults
+        banned_words = ["unauthorized_term_1", "prohibited_phrase", "blacklisted_word"]
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
             if settings and "banned_words" in settings:
                 banned_words = settings["banned_words"]
 
         banned_words_raw = ", ".join(banned_words)
-        
-        # Generate the HTML pills for the UI
         pills_html = ""
         if not banned_words or (len(banned_words) == 1 and banned_words[0] == ""):
             pills_html = "<p class='text-zinc-500 text-sm'>No words currently blacklisted. The AI will not filter any specific terms.</p>"
@@ -1240,8 +1236,6 @@ class Dashboard(commands.Cog):
                 if word.strip():
                     pills_html += f'<span class="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono rounded-md shadow-sm">{word}</span>\n'
 
-        # UI Replacements
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1261,9 +1255,6 @@ class Dashboard(commands.Cog):
                 .sidebar-link { transition: all 0.2s; }
                 .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
                 .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
-                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
             </style>
         </head>
         <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
@@ -1287,10 +1278,16 @@ class Dashboard(commands.Cog):
                     <a href="/wizard/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
                     </a>
+                    <a href="/misc/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
-                    <a href="/automod/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                    <a href="/automod/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="/lockdown/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
@@ -1298,17 +1295,21 @@ class Dashboard(commands.Cog):
                         <i class="fa-solid fa-database w-5 text-center"></i> Logging
                     </a>
                 </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
             </aside>
 
             <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
-                
                 <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
                     <div class="flex items-center gap-3 md:hidden">
                         <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
                         <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
                     </div>
                     <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Content Filtration</div> 
-                    
                     <div class="flex items-center gap-4">
                         <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
                             <span class="text-xs font-medium text-white">__USER_NAME__</span>
@@ -1318,24 +1319,20 @@ class Dashboard(commands.Cog):
                 </header>
 
                 <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20 custom-scrollbar">
-                    
                     <div class="mb-8 max-w-4xl mx-auto">
                         <h1 class="text-3xl font-extrabold text-white mb-2"><i class="fa-solid fa-shield-halved text-red-500 mr-2"></i> Auto Mod Lexicon</h1>
                         <p class="text-zinc-400 text-sm">Configure the exact terminology and phrasing that will trigger the AI's automated deletion and strike protocols.</p>
                     </div>
 
                     <div class="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6">
-                        
                         <div class="lg:col-span-3 glass-panel rounded-xl shadow-2xl overflow-hidden border border-white/5">
                             <div class="bg-[#12161f] border-b border-white/5 px-6 py-4">
                                 <h3 class="text-white font-bold tracking-wide flex items-center gap-2"><i class="fa-solid fa-pen-to-square text-zinc-400"></i> Edit Rule Set</h3>
                             </div>
                             <div class="p-6">
                                 <label class="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Blacklisted Terminology</label>
-                                <p class="text-xs text-zinc-400 mb-4">Enter words or exact phrases you wish to ban. Separate each entry with a comma. The AI will enforce these globally across the server.</p>
-                                
-                                <textarea id="banned_words_input" rows="6" class="w-full bg-[#0d1117] border border-white/10 rounded-lg p-4 text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition resize-none placeholder-zinc-700 shadow-inner" placeholder="e.g. term1, term2, forbidden phrase">__BANNED_WORDS_RAW__</textarea>
-                                
+                                <p class="text-xs text-zinc-400 mb-4">Enter words or exact phrases you wish to ban. Separate each entry with a comma.</p>
+                                <textarea id="banned_words_input" rows="6" class="w-full bg-[#0d1117] border border-white/10 rounded-lg p-4 text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition resize-none placeholder-zinc-700 shadow-inner">__BANNED_WORDS_RAW__</textarea>
                                 <div class="mt-6 flex justify-end">
                                     <button id="saveModBtn" onclick="saveAutomod()" class="px-6 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 shadow-lg shadow-blue-500/20 text-white font-bold text-sm transition flex items-center gap-2">
                                         <i class="fa-solid fa-cloud-arrow-up"></i> Deploy Rules
@@ -1350,13 +1347,11 @@ class Dashboard(commands.Cog):
                             </div>
                             <div class="p-6 flex-1 bg-red-500/5">
                                 <p class="text-xs text-zinc-400 mb-4">The following terms are currently loaded into the active memory bank.</p>
-                                
                                 <div class="flex flex-wrap gap-2">
                                     __BANNED_WORDS_PILLS__
                                 </div>
                             </div>
                         </div>
-
                     </div>
                     
                     <div class="max-w-4xl mx-auto mt-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 flex gap-4 items-start">
@@ -1368,7 +1363,6 @@ class Dashboard(commands.Cog):
                             </p>
                         </div>
                     </div>
-
                 </div>
             </main>
 
@@ -1392,8 +1386,6 @@ class Dashboard(commands.Cog):
                             btn.innerHTML = '<i class="fa-solid fa-check"></i> Deployed';
                             btn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
                             btn.classList.add('bg-emerald-500', 'hover:bg-emerald-600', 'shadow-emerald-500/20');
-                            
-                            // Reload page after 1 second to update the visual pills
                             setTimeout(() => { window.location.reload(); }, 1000);
                         } else {
                             throw new Error("Failed to save");
@@ -1412,7 +1404,6 @@ class Dashboard(commands.Cog):
         </body>
         </html>
         """
-        
         automod_html = automod_html.replace("__GUILD_NAME__", str(guild.name))
         automod_html = automod_html.replace("__GUILD_ICON__", str(guild_icon))
         automod_html = automod_html.replace("__GUILD_ID__", str(guild_id_int))
@@ -1420,29 +1411,23 @@ class Dashboard(commands.Cog):
         automod_html = automod_html.replace("__USER_AVATAR__", str(user_avatar))
         automod_html = automod_html.replace("__BANNED_WORDS_RAW__", banned_words_raw)
         automod_html = automod_html.replace("__BANNED_WORDS_PILLS__", pills_html)
-        
         return web.Response(text=automod_html, content_type='text/html')
 
     async def wizard_setup(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
             
         guild_id = request.match_info.get('guild_id')
-        try:
-            guild_id_int = int(guild_id)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
             
         guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            return web.Response(text="Recluse is not in this server.", status=404)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
             
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.Response(text="Access Denied.", status=403)
 
-        # --- FETCH CURRENT SETTINGS FOR DEFAULTS ---
         default_ai_model = "nexusify"
         automod_enabled = True
         anime_enabled = True
@@ -1461,13 +1446,11 @@ class Dashboard(commands.Cog):
         nexusify_checked = "checked" if default_ai_model == "nexusify" else ""
         gemini_checked = "checked" if default_ai_model == "gemini" else ""
         sarvam_checked = "checked" if default_ai_model == "sarvam" else ""
-        
         mod_checked = "checked" if automod_enabled else ""
         anime_checked = "checked" if anime_enabled else ""
         sports_checked = "checked" if sports_enabled else ""
         misc_checked = "checked" if misc_enabled else ""
 
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1487,11 +1470,9 @@ class Dashboard(commands.Cog):
                 .sidebar-link { transition: all 0.2s; }
                 .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
                 .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
-                
                 .step-content { display: none; animation: fadeIn 0.4s ease-in-out; }
                 .step-content.active { display: block; }
                 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-                
                 .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
                 .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
             </style>
@@ -1514,13 +1495,19 @@ class Dashboard(commands.Cog):
                     <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
                     </a>
-                    <a href="/wizard/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                    <a href="/wizard/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
                         <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
+                    <a href="/misc/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
                     <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="/lockdown/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
@@ -1528,17 +1515,21 @@ class Dashboard(commands.Cog):
                         <i class="fa-solid fa-database w-5 text-center"></i> Logging
                     </a>
                 </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
             </aside>
 
             <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
-                
                 <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
                     <div class="flex items-center gap-3 md:hidden">
                         <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
                         <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
                     </div>
                     <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Configuration Wizard</div> 
-                    
                     <div class="flex items-center gap-4">
                         <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
                             <span class="text-xs font-medium text-white">__USER_NAME__</span>
@@ -1548,9 +1539,7 @@ class Dashboard(commands.Cog):
                 </header>
 
                 <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20 flex flex-col items-center justify-center">
-                    
                     <div class="w-full max-w-3xl glass-panel rounded-2xl shadow-2xl overflow-hidden border border-white/5">
-                        
                         <div class="bg-[#12161f] border-b border-white/5 p-6 flex items-center justify-between relative overflow-hidden">
                             <div class="absolute bottom-0 left-0 h-1 bg-blue-500 transition-all duration-500 ease-in-out" id="progressBar" style="width: 25%;"></div>
                             <div class="flex flex-col">
@@ -1561,30 +1550,26 @@ class Dashboard(commands.Cog):
                         </div>
 
                         <div class="p-8 min-h-[350px]">
-                            
                             <div id="step1" class="step-content active">
-                                <p class="text-zinc-400 text-sm mb-6">Select the primary generative intelligence engine Recluse will use to interact with your members.</p>
-                                
+                                <p class="text-zinc-400 text-sm mb-6">Select the primary generative intelligence engine Recluse will use.</p>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
                                         <input type="radio" name="wiz_ai_model" value="nexusify" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __NEXUSIFY_CHECKED__>
                                         <i class="fa-solid fa-network-wired text-2xl text-blue-400 mb-3 group-hover:scale-110 transition"></i>
                                         <span class="text-white font-bold text-sm">Nexusify</span>
-                                        <span class="text-zinc-500 text-xs mt-1">Grok-3 architecture. Deep reasoning and web search enabled.</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Grok-3 architecture. Deep reasoning enabled.</span>
                                     </label>
-                                    
                                     <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
                                         <input type="radio" name="wiz_ai_model" value="gemini" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __GEMINI_CHECKED__>
                                         <i class="fa-brands fa-google text-2xl text-emerald-400 mb-3 group-hover:scale-110 transition"></i>
                                         <span class="text-white font-bold text-sm">Google Gemini</span>
-                                        <span class="text-zinc-500 text-xs mt-1">Flash 2.5 model. Excellent vision and image analysis.</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Flash 2.5 model. Excellent vision analysis.</span>
                                     </label>
-
                                     <label class="flex flex-col p-4 rounded-xl border border-white/10 bg-[#0d1117] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
                                         <input type="radio" name="wiz_ai_model" value="sarvam" class="absolute right-4 top-4 text-blue-500 bg-zinc-800 border-zinc-700" __SARVAM_CHECKED__>
                                         <i class="fa-solid fa-language text-2xl text-orange-400 mb-3 group-hover:scale-110 transition"></i>
                                         <span class="text-white font-bold text-sm">Sarvam AI</span>
-                                        <span class="text-zinc-500 text-xs mt-1">Text-only model specialized in multilingual processing.</span>
+                                        <span class="text-zinc-500 text-xs mt-1">Text-only multilingual processing.</span>
                                     </label>
                                 </div>
                             </div>
@@ -1599,51 +1584,42 @@ class Dashboard(commands.Cog):
                                         <p class="text-zinc-400 text-sm">Protect your server from harmful content.</p>
                                     </div>
                                 </div>
-                                
                                 <div class="bg-[#0d1117] p-5 rounded-xl border border-white/5 flex justify-between items-center mb-4">
                                     <div>
                                         <span class="text-white font-bold block">Enable AI Auto Mod</span>
-                                        <span class="text-xs text-zinc-500">Allows Recluse to delete messages containing blacklisted lexicon terms and issue strikes automatically.</span>
+                                        <span class="text-xs text-zinc-500">Allows Recluse to delete messages containing blacklisted terms.</span>
                                     </div>
                                     <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in ml-4">
                                         <input type="checkbox" id="wiz_mod" __MOD_CHECKED__ class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
                                         <label class="toggle-label block overflow-hidden h-6 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
                                     </div>
                                 </div>
-                                
-                                <p class="text-xs text-zinc-500"><i class="fa-solid fa-info-circle mr-1"></i> Note: You can edit the exact words to filter on the <b>Auto Mod Rules</b> page later.</p>
                             </div>
 
                             <div id="step3" class="step-content">
-                                <p class="text-zinc-400 text-sm mb-6">Toggle the entertainment and utility modules you want active in your server.</p>
-                                
+                                <p class="text-zinc-400 text-sm mb-6">Toggle the utility modules you want active.</p>
                                 <div class="space-y-3">
                                     <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
                                         <div>
                                             <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-tv text-pink-400"></i> Anime API</span>
-                                            <span class="text-xs text-zinc-500">Allow users to look up Anime and Manga data.</span>
                                         </div>
                                         <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
                                             <input type="checkbox" id="wiz_anime" __ANIME_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
                                             <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
                                         </div>
                                     </div>
-                                    
                                     <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
                                         <div>
                                             <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-baseball-bat-ball text-orange-400"></i> Live Sports</span>
-                                            <span class="text-xs text-zinc-500">Live cricket score tracking and updates.</span>
                                         </div>
                                         <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
                                             <input type="checkbox" id="wiz_sports" __SPORTS_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
                                             <label class="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
                                         </div>
                                     </div>
-                                    
                                     <div class="bg-[#0d1117] p-4 rounded-xl border border-white/5 flex justify-between items-center">
                                         <div>
                                             <span class="text-white font-bold text-sm flex items-center gap-2"><i class="fa-solid fa-box-open text-teal-400"></i> Miscellaneous</span>
-                                            <span class="text-xs text-zinc-500">AFK statuses, server info, and telemetry.</span>
                                         </div>
                                         <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
                                             <input type="checkbox" id="wiz_misc" __MISC_CHECKED__ class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
@@ -1658,9 +1634,8 @@ class Dashboard(commands.Cog):
                                     <i class="fa-solid fa-check text-4xl text-emerald-400"></i>
                                 </div>
                                 <h2 class="text-2xl font-bold text-white mb-2">Ready for Deployment</h2>
-                                <p class="text-zinc-400 max-w-sm mx-auto">Your configuration is ready. Click the deploy button below to push these settings to Recluse's active memory.</p>
+                                <p class="text-zinc-400 max-w-sm mx-auto">Your configuration is ready. Click the deploy button below to push these settings.</p>
                             </div>
-
                         </div>
 
                         <div class="bg-[#12161f] border-t border-white/5 p-4 flex justify-between items-center">
@@ -1681,14 +1656,12 @@ class Dashboard(commands.Cog):
                         if (index + 1 === currentStep) el.classList.add('active');
                         else el.classList.remove('active');
                     });
-
                     document.getElementById('stepIndicatorText').innerText = `STEP ${currentStep} OF ${totalSteps}`;
                     document.getElementById('stepTitle').innerText = titles[currentStep - 1];
                     document.getElementById('progressBar').style.width = `${(currentStep / totalSteps) * 100}%`;
 
                     const prevBtn = document.getElementById('prevBtn');
                     const nextBtn = document.getElementById('nextBtn');
-
                     if (currentStep === 1) prevBtn.classList.add('invisible');
                     else prevBtn.classList.remove('invisible');
 
@@ -1704,15 +1677,10 @@ class Dashboard(commands.Cog):
                 }
 
                 async function changeStep(direction) {
-                    if (direction === 1 && currentStep === totalSteps) {
-                        await finalizeSetup();
-                        return;
-                    }
-                    
+                    if (direction === 1 && currentStep === totalSteps) { await finalizeSetup(); return; }
                     currentStep += direction;
                     if (currentStep < 1) currentStep = 1;
                     if (currentStep > totalSteps) currentStep = totalSteps;
-                    
                     updateUI();
                 }
 
@@ -1734,24 +1702,17 @@ class Dashboard(commands.Cog):
 
                     try {
                         const response = await fetch(`/api/settings/__GUILD_ID__`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
                         });
-
-                        if (response.ok) {
-                            window.location.href = `/manage/__GUILD_ID__`;
-                        } else {
-                            throw new Error('Failed to save');
-                        }
+                        if (response.ok) window.location.href = `/manage/__GUILD_ID__`;
+                        else throw new Error('Failed to save');
                     } catch (e) {
-                        alert("Error saving configuration. Please try again.");
+                        alert("Error saving configuration.");
                         nextBtn.innerHTML = '<i class="fa-solid fa-rocket mr-2"></i> Deploy Settings';
                         nextBtn.disabled = false;
                     }
                 }
                 
-                // Toggle Switch Visuals
                 document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
                     const updateVisuals = (element) => {
                         const label = element.nextElementSibling;
@@ -1772,13 +1733,11 @@ class Dashboard(commands.Cog):
         </body>
         </html>
         """
-        
         wizard_html = wizard_html.replace("__GUILD_NAME__", str(guild.name))
         wizard_html = wizard_html.replace("__GUILD_ICON__", str(guild_icon))
         wizard_html = wizard_html.replace("__GUILD_ID__", str(guild_id_int))
         wizard_html = wizard_html.replace("__USER_NAME__", str(user_name))
         wizard_html = wizard_html.replace("__USER_AVATAR__", str(user_avatar))
-        
         wizard_html = wizard_html.replace("__NEXUSIFY_CHECKED__", nexusify_checked)
         wizard_html = wizard_html.replace("__GEMINI_CHECKED__", gemini_checked)
         wizard_html = wizard_html.replace("__SARVAM_CHECKED__", sarvam_checked)
@@ -1786,8 +1745,339 @@ class Dashboard(commands.Cog):
         wizard_html = wizard_html.replace("__ANIME_CHECKED__", anime_checked)
         wizard_html = wizard_html.replace("__SPORTS_CHECKED__", sports_checked)
         wizard_html = wizard_html.replace("__MISC_CHECKED__", misc_checked)
-        
         return web.Response(text=wizard_html, content_type='text/html')
+
+    async def server_lockdown(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.HTTPFound('/login')
+            
+        guild_id = request.match_info.get('guild_id')
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        lockdown_active = False
+        if hasattr(self.bot, 'db'):
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
+            if settings: lockdown_active = settings.get("lockdown_active", False)
+
+        user_name = user_session.get('username', 'Admin')
+        user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
+
+        status_color = "text-red-500" if lockdown_active else "text-emerald-500"
+        status_text = "LOCKED DOWN" if lockdown_active else "SECURE"
+        status_bg = "bg-red-500/10 border-red-500/20" if lockdown_active else "bg-emerald-500/10 border-emerald-500/20"
+        status_icon = "fa-lock" if lockdown_active else "fa-shield-check"
+        btn_text = "Lift Lockdown" if lockdown_active else "Engage Emergency Lockdown"
+        btn_class = "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20" if lockdown_active else "bg-red-600 hover:bg-red-700 shadow-red-500/20"
+
+        lockdown_html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{guild.name} | Lockdown</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                body {{ background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }}
+                .glass-panel {{ background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }}
+                .sidebar-link {{ transition: all 0.2s; }}
+                .sidebar-link.active {{ background-color: #3b82f6; color: white; border-radius: 0.5rem; }}
+                .sidebar-link:hover:not(.active) {{ background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }}
+            </style>
+        </head>
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
+
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="{guild_icon}" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">{guild.name}</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">{guild_id_int}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="/manage/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    <a href="/wizard/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
+                    <a href="/misc/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="/automod/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="/lockdown/{guild_id_int}" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="/logs/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
+            </aside>
+
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Emergency Protocols</div> 
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">{user_name}</span>
+                            <img src="{user_avatar}" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20 flex items-center justify-center">
+                    <div class="max-w-2xl w-full text-center">
+                        <div class="mb-8">
+                            <h1 class="text-4xl font-extrabold text-white mb-2"><i class="fa-solid fa-triangle-exclamation text-red-500 mr-2"></i> Server Lockdown</h1>
+                            <p class="text-zinc-400">Instantly halt raids by severing messaging capabilities across the network.</p>
+                        </div>
+
+                        <div class="glass-panel p-10 rounded-2xl shadow-2xl border border-white/10 relative overflow-hidden">
+                            <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+                            
+                            <div class="relative z-10">
+                                <div class="w-24 h-24 mx-auto rounded-full border-4 {status_bg} {status_color} flex items-center justify-center mb-6 shadow-lg shadow-black/50">
+                                    <i class="fa-solid {status_icon} text-4xl"></i>
+                                </div>
+                                
+                                <h2 class="text-zinc-500 text-sm font-bold tracking-widest uppercase mb-1">Current Status</h2>
+                                <p class="text-3xl font-black {status_color} tracking-wider mb-8">{status_text}</p>
+
+                                <div class="bg-[#0d1117] border border-white/5 rounded-xl p-5 mb-8 text-left">
+                                    <h3 class="text-white font-bold text-sm mb-2"><i class="fa-solid fa-circle-info text-blue-400 mr-1"></i> Protocol Details</h3>
+                                    <p class="text-xs text-zinc-400 leading-relaxed">
+                                        Engaging a lockdown will physically edit your server's <code>@everyone</code> role, instantly revoking the <code>Send Messages</code> permission. This halts all unprivileged chat activity while your moderation team handles the ongoing threat. Ensure Recluse has the <b>Manage Roles</b> permission.
+                                    </p>
+                                </div>
+
+                                <button id="lockdownBtn" onclick="toggleLockdown({str(not lockdown_active).lower()})" class="w-full py-4 rounded-xl {btn_class} shadow-lg text-white font-bold text-lg transition flex items-center justify-center gap-3">
+                                    <i class="fa-solid fa-power-off"></i> {btn_text}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <script>
+                async function toggleLockdown(targetState) {{
+                    if (targetState && !confirm("WARNING: This will revoke Send Messages from @everyone. Are you sure you want to engage lockdown?")) return;
+                    
+                    const btn = document.getElementById('lockdownBtn');
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+                    btn.disabled = true;
+
+                    try {{
+                        const res = await fetch(`/api/settings/{guild_id_int}`, {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'toggle_lockdown', state: targetState }})
+                        }});
+                        
+                        const data = await res.json();
+                        if (res.ok && data.success) {{
+                            window.location.reload();
+                        }} else {{
+                            throw new Error(data.error || "Failed to execute");
+                        }}
+                    }} catch (e) {{
+                        alert("Error: " + e.message);
+                        window.location.reload();
+                    }}
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        return web.Response(text=lockdown_html, content_type='text/html')
+
+    async def misc_settings(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.HTTPFound('/login')
+            
+        guild_id = request.match_info.get('guild_id')
+        try: guild_id_int = int(guild_id)
+        except ValueError: return web.Response(text="Invalid Server ID.", status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        misc_enabled = True
+        if hasattr(self.bot, 'db'):
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
+            if settings: misc_enabled = settings.get("misc_enabled", True)
+
+        misc_checked = "checked" if misc_enabled else ""
+        user_name = user_session.get('username', 'Admin')
+        user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
+        
+        misc_html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{guild.name} | Miscellaneous</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                body {{ background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }}
+                .glass-panel {{ background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }}
+                .sidebar-link {{ transition: all 0.2s; }}
+                .sidebar-link.active {{ background-color: #3b82f6; color: white; border-radius: 0.5rem; }}
+                .sidebar-link:hover:not(.active) {{ background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }}
+                .toggle-checkbox:checked {{ right: 0; border-color: #3b82f6; }}
+                .toggle-checkbox:checked + .toggle-label {{ background-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }}
+            </style>
+        </head>
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
+
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="{guild_icon}" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">{guild.name}</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">{guild_id_int}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="/manage/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    <a href="/wizard/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-wand-magic-sparkles w-5 text-center"></i> Wizard Setup
+                    </a>
+                    <a href="/misc/{guild_id_int}" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-white">
+                        <i class="fa-solid fa-box-open w-5 text-center"></i> Miscellaneous
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
+                    <a href="/automod/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
+                    </a>
+                    <a href="/lockdown/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-lock w-5 text-center"></i> Lockdown
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="/logs/{guild_id_int}" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+                
+                <div class="p-4 border-t border-white/5">
+                    <a href="/" class="flex items-center gap-3 text-sm text-zinc-400 hover:text-white transition">
+                        <i class="fa-solid fa-arrow-left"></i> Back to Servers
+                    </a>
+                </div>
+            </aside>
+
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Utility Configuration</div> 
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">{user_name}</span>
+                            <img src="{user_avatar}" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20">
+                    <div class="mb-8 max-w-4xl mx-auto">
+                        <h1 class="text-3xl font-extrabold text-white mb-2"><i class="fa-solid fa-box-open text-teal-400 mr-2"></i> Miscellaneous Utilities</h1>
+                        <p class="text-zinc-400 text-sm">Manage quality-of-life commands and server information tools.</p>
+                    </div>
+
+                    <div class="max-w-4xl mx-auto glass-panel p-8 rounded-2xl border border-white/5">
+                        <div class="flex justify-between items-start mb-8 border-b border-white/5 pb-6">
+                            <div>
+                                <h3 class="text-white font-bold text-lg flex items-center gap-2">Global Module Status</h3>
+                                <p class="text-xs text-zinc-400 mt-1">Disabling this completely turns off commands like /ping, /afk, /serverinfo, and /whois.</p>
+                            </div>
+                            <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in ml-4">
+                                <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-blue-500"/>
+                                <label class="toggle-label block overflow-hidden h-6 rounded-full bg-blue-500 cursor-pointer transition-colors duration-300"></label>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-[#0d1117] p-5 rounded-xl border border-white/5">
+                                <i class="fa-solid fa-bed text-xl text-blue-400 mb-3"></i>
+                                <h4 class="text-white font-bold text-sm mb-1">Dynamic AFK System</h4>
+                                <p class="text-xs text-zinc-500">Allows users to use <code>/afk</code>. Recluse will automatically notify users who mention them and welcome them back upon their return.</p>
+                            </div>
+                            <div class="bg-[#0d1117] p-5 rounded-xl border border-white/5">
+                                <i class="fa-solid fa-magnifying-glass-chart text-xl text-emerald-400 mb-3"></i>
+                                <h4 class="text-white font-bold text-sm mb-1">Security Dossiers</h4>
+                                <p class="text-xs text-zinc-500">Enables the highly detailed <code>/whois</code> and <code>/serverinfo</code> commands for user auditing and investigation.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <script>
+                document.getElementById('toggleMisc').addEventListener('change', async function() {{
+                    const label = this.nextElementSibling;
+                    if(this.checked) {{
+                        this.style.left = 'auto'; this.style.right = '0';
+                        this.style.borderColor = '#3b82f6'; label.style.backgroundColor = '#3b82f6';
+                        label.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
+                    }} else {{
+                        this.style.right = 'auto'; this.style.left = '0';
+                        this.style.borderColor = '#52525b'; label.style.backgroundColor = '#52525b';
+                        label.style.boxShadow = 'none';
+                    }}
+                    
+                    try {{
+                        const response = await fetch(`/api/settings/{guild_id_int}`, {{
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'toggle', module: 'toggleMisc', enabled: this.checked }})
+                        }});
+                    }} catch (error) {{ console.error(error); }}
+                }});
+            </script>
+        </body>
+        </html>
+        """
+        return web.Response(text=misc_html, content_type='text/html')
 
     async def start_server(self):
         port = int(os.getenv("PORT", 8080))
