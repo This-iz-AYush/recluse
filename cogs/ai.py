@@ -484,7 +484,7 @@ class AI(commands.Cog):
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload, timeout=60) as response:
+                async with session.post(url, headers=headers, json=payload, timeout=300) as response:
                     if response.status == 200:
                         try:
                             data = await response.json()
