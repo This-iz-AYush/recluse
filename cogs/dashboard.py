@@ -1007,6 +1007,211 @@ class Dashboard(commands.Cog):
         response = web.HTTPFound('/')
         response.del_cookie('recluse_session')
         return response
+        
+    async def server_logs(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session:
+            return web.HTTPFound('/login')
+            
+        guild_id = request.match_info.get('guild_id')
+        try:
+            guild_id_int = int(guild_id)
+        except ValueError:
+            return web.Response(text="Invalid Server ID.", status=400)
+            
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild:
+            return web.Response(text="Recluse is not in this server.", status=404)
+            
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        # --- FETCH LOGS FROM MONGODB ---
+        mod_logs_html = ""
+        security_logs_html = ""
+        
+        if hasattr(self.bot, 'db'):
+            # Fetch Moderation Logs (Bans, Kicks, Warns)
+            mod_cursor = self.bot.db.mod_logs.find({"guild_id": guild_id_int}).sort("timestamp", -1).limit(50)
+            async for log in mod_cursor:
+                action = log.get('action', 'Unknown')
+                
+                # Dynamic styling based on action
+                if action == 'Ban': badge = '<span class="px-2 py-1 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Ban</span>'
+                elif action == 'Kick': badge = '<span class="px-2 py-1 bg-orange-500/10 text-orange-500 border border-orange-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Kick</span>'
+                elif action == 'Warn': badge = '<span class="px-2 py-1 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-[10px] font-bold uppercase tracking-wider">Warn</span>'
+                else: badge = f'<span class="px-2 py-1 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded text-[10px] font-bold uppercase tracking-wider">{action}</span>'
+
+                time_str = datetime.datetime.utcfromtimestamp(log['timestamp']).strftime('%Y-%m-%d %H:%M:%S UTC')
+                
+                mod_logs_html += f"""
+                <tr class="border-b border-white/5 hover:bg-white/5 transition text-sm text-zinc-300">
+                    <td class="py-3 px-4">{badge}</td>
+                    <td class="py-3 px-4 font-medium text-white">{log.get('target_name')} <span class="text-xs text-zinc-500 block">{log.get('target_id')}</span></td>
+                    <td class="py-3 px-4">{log.get('moderator_name')}</td>
+                    <td class="py-3 px-4 max-w-xs truncate" title="{log.get('reason')}">{log.get('reason')}</td>
+                    <td class="py-3 px-4 text-xs font-mono text-zinc-500">{time_str}</td>
+                </tr>
+                """
+                
+            if not mod_logs_html:
+                mod_logs_html = '<tr><td colspan="5" class="py-8 text-center text-zinc-500">No manual moderation logs found for this server.</td></tr>'
+
+            # Fetch Security Logs (Automod AI Filters)
+            sec_cursor = self.bot.db.security_logs.find({"guild_id": guild_id_int}).sort("timestamp", -1).limit(50)
+            async for log in sec_cursor:
+                time_str = datetime.datetime.utcfromtimestamp(log['timestamp']).strftime('%Y-%m-%d %H:%M:%S UTC')
+                
+                security_logs_html += f"""
+                <tr class="border-b border-white/5 hover:bg-white/5 transition text-sm text-zinc-300">
+                    <td class="py-3 px-4"><span class="px-2 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[10px] font-bold uppercase tracking-wider"><i class="fa-solid fa-robot mr-1"></i> Auto Mod</span></td>
+                    <td class="py-3 px-4 font-medium text-white">{log.get('user_name')} <span class="text-xs text-zinc-500 block">{log.get('user_id')}</span></td>
+                    <td class="py-3 px-4 text-red-400 font-mono text-xs max-w-xs truncate" title="{log.get('content')}">{log.get('content')}</td>
+                    <td class="py-3 px-4 text-xs font-mono text-zinc-500">{time_str}</td>
+                </tr>
+                """
+                
+            if not security_logs_html:
+                security_logs_html = '<tr><td colspan="4" class="py-8 text-center text-zinc-500">No automated security infractions logged yet.</td></tr>'
+
+        # UI Replacements
+        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        user_name = user_session.get('username', 'Admin')
+        user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
+
+        logs_html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>__GUILD_NAME__ | Audit Logs</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                body { background: radial-gradient(circle at top right, #111827, #0f1219, #09090b); background-attachment: fixed; }
+                .glass-panel { background: #161b22; border: 1px solid rgba(255, 255, 255, 0.05); }
+                .sidebar-link { transition: all 0.2s; }
+                .sidebar-link.active { background-color: #3b82f6; color: white; border-radius: 0.5rem; }
+                .sidebar-link:hover:not(.active) { background-color: rgba(255,255,255,0.05); color: white; border-radius: 0.5rem; }
+                /* Custom Scrollbar for tables */
+                .table-container::-webkit-scrollbar { height: 8px; width: 8px; }
+                .table-container::-webkit-scrollbar-track { background: #0d1117; }
+                .table-container::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+            </style>
+        </head>
+        <body class="text-zinc-300 font-sans h-screen flex overflow-hidden selection:bg-blue-500 selection:text-white">
+
+            <aside class="w-64 bg-[#0d1117] border-r border-white/5 flex flex-col hidden md:flex flex-shrink-0 z-20 shadow-2xl">
+                <div class="p-4 border-b border-white/5 relative group cursor-pointer hover:bg-white/5 transition">
+                    <div class="flex items-center gap-3">
+                        <img src="__GUILD_ICON__" alt="Server" class="w-10 h-10 rounded-full shadow-lg">
+                        <div class="overflow-hidden">
+                            <h2 class="text-white font-bold truncate text-sm">__GUILD_NAME__</h2>
+                            <p class="text-[10px] text-zinc-500 font-mono">__GUILD_ID__</p>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto p-3 space-y-1 mt-2 custom-scrollbar">
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-4">Main Menu</p>
+                    <a href="/manage/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Overview
+                    </a>
+                    
+                    <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">System</p>
+                    <a href="/logs/__GUILD_ID__" class="sidebar-link active flex items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                        <i class="fa-solid fa-database w-5 text-center"></i> Logging
+                    </a>
+                </nav>
+            </aside>
+
+            <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
+                
+                <header class="h-16 border-b border-white/5 bg-[#090b10]/80 backdrop-blur flex items-center justify-between px-6 z-10 shrink-0">
+                    <div class="flex items-center gap-3 md:hidden">
+                        <img src="__GUILD_ICON__" class="w-8 h-8 rounded-full">
+                        <span class="font-bold text-white text-sm">__GUILD_NAME__</span>
+                    </div>
+                    <div class="hidden md:block text-sm font-bold text-zinc-400 tracking-widest uppercase">Security Audits</div> 
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1.5 rounded-lg transition">
+                            <span class="text-xs font-medium text-white">__USER_NAME__</span>
+                            <img src="__USER_AVATAR__" alt="User" class="w-7 h-7 rounded-full">
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 lg:p-10 pb-20">
+                    
+                    <div class="mb-8">
+                        <h1 class="text-3xl font-extrabold text-white mb-2"><i class="fa-solid fa-server text-blue-500 mr-2"></i> Server Audit Logs</h1>
+                        <p class="text-zinc-400 text-sm">Review manual moderation actions and automated security interventions in real-time.</p>
+                    </div>
+
+                    <div class="glass-panel rounded-xl shadow-2xl overflow-hidden mb-10 border border-emerald-500/20">
+                        <div class="bg-emerald-500/10 border-b border-emerald-500/20 px-6 py-4 flex justify-between items-center">
+                            <h3 class="text-emerald-400 font-bold tracking-wide flex items-center gap-2"><i class="fa-solid fa-shield-halved"></i> Automated Security Interventions</h3>
+                            <span class="text-xs text-emerald-500/70 font-mono">Last 50 Events</span>
+                        </div>
+                        <div class="overflow-x-auto table-container">
+                            <table class="w-full text-left whitespace-nowrap">
+                                <thead class="bg-[#0d1117] text-zinc-500 text-xs uppercase tracking-wider">
+                                    <tr>
+                                        <th class="py-3 px-4 font-medium">Trigger</th>
+                                        <th class="py-3 px-4 font-medium">Offender</th>
+                                        <th class="py-3 px-4 font-medium">Intercepted Content</th>
+                                        <th class="py-3 px-4 font-medium">Timestamp</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    __SECURITY_LOGS__
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel rounded-xl shadow-2xl overflow-hidden border border-white/5">
+                        <div class="bg-[#12161f] border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                            <h3 class="text-white font-bold tracking-wide flex items-center gap-2"><i class="fa-solid fa-gavel text-zinc-400"></i> Manual Moderation History</h3>
+                            <span class="text-xs text-zinc-500 font-mono">Last 50 Events</span>
+                        </div>
+                        <div class="overflow-x-auto table-container">
+                            <table class="w-full text-left whitespace-nowrap">
+                                <thead class="bg-[#0d1117] text-zinc-500 text-xs uppercase tracking-wider">
+                                    <tr>
+                                        <th class="py-3 px-4 font-medium">Action</th>
+                                        <th class="py-3 px-4 font-medium">Target</th>
+                                        <th class="py-3 px-4 font-medium">Moderator</th>
+                                        <th class="py-3 px-4 font-medium">Provided Reason</th>
+                                        <th class="py-3 px-4 font-medium">Timestamp</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    __MOD_LOGS__
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </main>
+        </body>
+        </html>
+        """
+        
+        logs_html = logs_html.replace("__GUILD_NAME__", str(guild.name))
+        logs_html = logs_html.replace("__GUILD_ICON__", str(guild_icon))
+        logs_html = logs_html.replace("__GUILD_ID__", str(guild_id_int))
+        logs_html = logs_html.replace("__USER_NAME__", str(user_name))
+        logs_html = logs_html.replace("__USER_AVATAR__", str(user_avatar))
+        logs_html = logs_html.replace("__MOD_LOGS__", mod_logs_html)
+        logs_html = logs_html.replace("__SECURITY_LOGS__", security_logs_html)
+        
+        return web.Response(text=logs_html, content_type='text/html')    
 
     async def start_server(self):
         port = int(os.getenv("PORT", 8080))
