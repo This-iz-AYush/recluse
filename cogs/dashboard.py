@@ -609,7 +609,7 @@ class Dashboard(commands.Cog):
                     </a>
                     
                     <p class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest pl-3 mb-2 mt-6">Security</p>
-                    <a href="#" onclick="openModal('modModal')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
+                    <a href="/automod/__GUILD_ID__" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
                         <i class="fa-solid fa-shield-halved w-5 text-center"></i> Auto Mod Rules
                     </a>
                     <a href="#" class="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-zinc-400">
