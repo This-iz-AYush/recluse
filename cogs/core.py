@@ -198,5 +198,120 @@ class Core(commands.Cog):
     async def before_cycle_bot_status(self):
         await self.bot.wait_until_ready()
 
+    # --- WICK-STYLE SECURITY HELPERS ---
+    async def hierarchy_check(self, ctx, member: discord.Member) -> bool:
+        """Ensures moderators cannot target users higher or equal to them in the role hierarchy."""
+        if ctx.guild.owner == member:
+            await ctx.send("❌ **Security Override:** You cannot target the server owner.", ephemeral=True)
+            return False
+        if ctx.author != ctx.guild.owner and ctx.author.top_role <= member.top_role:
+            await ctx.send("❌ **Hierarchy Error:** You lack the clearance to target a member with an equal or higher role.", ephemeral=True)
+            return False
+        if ctx.guild.me.top_role <= member.top_role:
+            await ctx.send("❌ **Execution Blocked:** My highest role is below the target's highest role. Move my bot role higher in server settings.", ephemeral=True)
+            return False
+        return True
+
+    async def log_mod_action(self, ctx, action: str, target: discord.User, reason: str):
+        """Pushes moderation telemetry to the database for the Web Dashboard Audit Logs."""
+        if hasattr(self.bot, 'db'):
+            log_data = {
+                "guild_id": ctx.guild.id,
+                "moderator_id": ctx.author.id,
+                "moderator_name": str(ctx.author),
+                "target_id": target.id,
+                "target_name": str(target),
+                "action": action,
+                "reason": reason,
+                "timestamp": datetime.datetime.utcnow().timestamp()
+            }
+            await self.bot.db.mod_logs.insert_one(log_data)
+
+    # --- MODERATION COMMANDS ---
+
+    @commands.hybrid_command(name="ban", description="Permanently removes a member utilizing API-level bans.")
+    @commands.has_permissions(ban_members=True)
+    async def ban(self, ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
+        await ctx.defer()
+        if not await self.hierarchy_check(ctx, member): return
+        
+        # Wick-style: Attempt to DM the user before banning
+        try:
+            await member.send(f"🔨 You have been banned from **{ctx.guild.name}**.\n**Reason:** {reason}")
+        except discord.Forbidden:
+            pass # User has DMs off
+            
+        await member.ban(reason=f"Action by {ctx.author} | {reason}")
+        await self.log_mod_action(ctx, "Ban", member, reason)
+        
+        embed = discord.Embed(title="🔨 Target Neutralized", description=f"Successfully banned {member.mention}.", color=discord.Color.red())
+        embed.add_field(name="Reason", value=reason)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="kick", description="Kicks a member from the server.")
+    @commands.has_permissions(kick_members=True)
+    async def kick(self, ctx, member: discord.Member, *, reason: Optional[str] = "No reason provided."):
+        await ctx.defer()
+        if not await self.hierarchy_check(ctx, member): return
+        
+        try:
+            await member.send(f"👢 You have been kicked from **{ctx.guild.name}**.\n**Reason:** {reason}")
+        except discord.Forbidden:
+            pass
+            
+        await member.kick(reason=f"Action by {ctx.author} | {reason}")
+        await self.log_mod_action(ctx, "Kick", member, reason)
+        
+        embed = discord.Embed(title="👢 Target Expelled", description=f"Successfully kicked {member.mention}.", color=discord.Color.orange())
+        embed.add_field(name="Reason", value=reason)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="purge", description="Executes a bulk-delete payload.")
+    @commands.has_permissions(manage_messages=True)
+    async def purge(self, ctx, amount: int):
+        if amount < 1 or amount > 1000:
+            return await ctx.send("❌ Please specify an amount between 1 and 1000.", ephemeral=True)
+            
+        await ctx.defer(ephemeral=True) # Hide the command execution
+        deleted = await ctx.channel.purge(limit=amount)
+        
+        await self.log_mod_action(ctx, "Purge", ctx.author, f"Purged {len(deleted)} messages in #{ctx.channel.name}")
+        await ctx.send(f"✅ Successfully sanitized **{len(deleted)}** messages.", ephemeral=True)
+
+    @commands.hybrid_command(name="warn", description="Issues a formal warning. Auto-punishes on thresholds.")
+    @commands.has_permissions(moderate_members=True)
+    async def warn(self, ctx, member: discord.Member, *, reason: str):
+        await ctx.defer()
+        if not await self.hierarchy_check(ctx, member): return
+        
+        if not hasattr(self.bot, 'db'):
+            return await ctx.send("❌ **Database Error:** Cannot process warnings right now.")
+            
+        # Insert warning to database
+        warning_id = str(ctx.message.id) if ctx.message else str(datetime.datetime.utcnow().timestamp())
+        warning_data = {
+            "guild_id": ctx.guild.id,
+            "user_id": member.id,
+            "moderator_id": ctx.author.id,
+            "reason": reason,
+            "timestamp": datetime.datetime.utcnow().timestamp(),
+            "warning_id": warning_id
+        }
+        await self.bot.db.warnings.insert_one(warning_data)
+        await self.log_mod_action(ctx, "Warn", member, reason)
+        
+        # Calculate total warnings for Wick-style escalation
+        total_warns = await self.bot.db.warnings.count_documents({"guild_id": ctx.guild.id, "user_id": member.id})
+        
+        try:
+            await member.send(f"⚠️ You have been formally warned in **{ctx.guild.name}**.\n**Reason:** {reason}\n*You now have {total_warns} total warnings.*")
+        except discord.Forbidden:
+            pass
+
+        embed = discord.Embed(title="⚠️ Warning Issued", description=f"{member.mention} has been warned.", color=discord.Color.yellow())
+        embed.add_field(name="Reason", value=reason)
+        embed.set_footer(text=f"User now has {total_warns} warnings.")
+        await ctx.send(embed=embed)
+
 async def setup(bot):
     await bot.add_cog(Core(bot))
