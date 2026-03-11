@@ -246,6 +246,51 @@ class Dashboard(commands.Cog):
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_owner_action(self, request):
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
+        
+        app_info = await self.bot.application_info()
+        if int(user_session['discord_id']) != app_info.owner.id:
+            return web.json_response({"error": "Forbidden"}, status=403)
+            
+        try:
+            data = await request.json()
+            action = data.get('action')
+            
+            if action == 'global_lockdown':
+                state = data.get('state', False)
+                self.bot.global_lockdown = state # Flips the switch in bot.py
+                return web.json_response({"success": True})
+                
+            elif action == 'blacklist':
+                target_id = int(data.get('target_id'))
+                b_type = data.get('type') # 'user' or 'guild'
+                reason = data.get('reason') or "Dashboard System Override"
+                
+                if hasattr(self.bot, 'db'):
+                    await self.bot.db.global_blacklist.update_one(
+                        {"target_id": target_id, "type": b_type},
+                        {"$set": {"reason": reason, "timestamp": datetime.datetime.utcnow().timestamp()}},
+                        upsert=True
+                    )
+                    # If blacklisting a server, force the bot to leave it instantly
+                    if b_type == 'guild':
+                        guild = self.bot.get_guild(target_id)
+                        if guild: await guild.leave()
+                return web.json_response({"success": True})
+                
+            elif action == 'reload_cog':
+                cog_name = data.get('cog')
+                if not cog_name.startswith('cogs.'):
+                    cog_name = f"cogs.{cog_name}"
+                await self.bot.reload_extension(cog_name)
+                return web.json_response({"success": True})
+                
+            return web.json_response({"error": "Invalid action"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+    
     async def handle_ip_action(self, request):
         user_session = await self.get_user_session(request)
         if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
