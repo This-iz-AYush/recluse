@@ -90,6 +90,11 @@ class Core(commands.Cog):
     @commands.hybrid_command(name="help", description="Generates and deploys the interactive dynamic help menu.")
     async def custom_help(self, ctx):
         embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
+        
+        # Added Dashboard and Uptime Status links
+        embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
+        embed.add_field(name="📈 Uptime Status", value="[Check Status](https://stats.uptimerobot.com/njZB3KSajf)", inline=True)
+        
         await ctx.send(embed=embed, view=HelpView())
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
