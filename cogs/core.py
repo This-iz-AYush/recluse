@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands, tasks
+import os
+import aiohttp
 import datetime
 from itertools import cycle
 
