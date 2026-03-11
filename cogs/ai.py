@@ -252,7 +252,7 @@ class AI(commands.Cog):
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            "model": "kimi-k2.5",
+            "model": "grok-3",
             "messages": messages
         }
         
