@@ -31,7 +31,7 @@ class Dashboard(commands.Cog):
             web.get('/owner_panel', self.owner_panel),
             web.post('/api/settings/{guild_id}', self.update_settings),
             web.post('/api/ip_action', self.handle_ip_action),
-            web.post('/api/verify_visitor', self.verify_visitor)
+            web.post('/api/verify_visitor', self.verify_visitor),
             web.post('/api/owner_action', self.handle_owner_action)
         ])
         
