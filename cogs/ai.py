@@ -115,9 +115,18 @@ class AI(commands.Cog):
             await message.channel.send("Automated evaluation response successfully actuated.")
         
         if self.bot.user in message.mentions:
-            # --- AI TOGGLE CHECK ---
+            # --- AI TOGGLE & CHANNEL SECURITY CHECK ---
             if not ai_enabled:
-                return # AI is disabled in this server, so ignore mentions silently
+                return # AI is disabled in this server
+                
+            # Check if the dashboard has locked AI to specific channels
+            if hasattr(self.bot, 'db'):
+                settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
+                if settings:
+                    allowed_channels = settings.get("ai_allowed_channels", [])
+                    # If the array isn't empty, and the current channel isn't in it, ignore the mention
+                    if allowed_channels and message.channel.id not in allowed_channels:
+                        return
                 
             clean_prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             
