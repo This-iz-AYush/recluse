@@ -40,8 +40,14 @@ class Dashboard(commands.Cog):
         self.site = None
         self.bot.loop.create_task(self.start_server())
 
-@web.middleware
-async def security_middleware(self, request, handler):
+    def get_bot_avatar(self):
+        """Forces Discord to return a PNG/GIF instead of WebP, ensuring the browser can render the Favicon."""
+        if self.bot and self.bot.user:
+            return str(self.bot.user.display_avatar.url).replace(".webp", ".png")
+        return "https://cdn.discordapp.com/embed/avatars/0.png"
+
+    @web.middleware
+    async def security_middleware(self, request, handler):
         """Intercepts traffic for IP logging, ban enforcement, Maintenance, and Anti-Bot Verification."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
@@ -276,7 +282,7 @@ async def security_middleware(self, request, handler):
     async def home(self, request):
         user_session = await self.get_user_session(request)
         bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         client_id = os.getenv("DISCORD_CLIENT_ID", "")
         invite_link = f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions=8&scope=bot"
 
@@ -289,27 +295,36 @@ async def security_middleware(self, request, handler):
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>__BOT_NAME__ | Next-Gen Security</title>
-                <link rel="icon" href="__BOT_AVATAR__">
+                <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+                <link rel="shortcut icon" href="__BOT_AVATAR__">
                 <script src="https://cdn.tailwindcss.com"></script>
                 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
                 <style>
                     body { background-color: #0b1121; color: white; overflow-x: hidden; font-family: system-ui, -apple-system, sans-serif; }
+                    
+                    /* Vibrant Wick-Style Background Gradients */
                     .wick-bg {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: -2;
                         background: radial-gradient(120% 100% at 80% -10%, #d83b9e 0%, transparent 45%),
                                     radial-gradient(120% 100% at 0% 0%, #0ea5e9 0%, transparent 50%),
                                     radial-gradient(100% 100% at 100% 100%, #1e1b4b 0%, transparent 50%);
-                        opacity: 0.6; pointer-events: none;
+                        opacity: 0.6;
+                        pointer-events: none;
                     }
                     .shape {
                         position: absolute; width: 150vw; height: 100vh; z-index: -1; transform-origin: top left;
                         background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(216, 59, 158, 0.1) 100%);
-                        clip-path: polygon(0 0, 100% 0, 100% 40%, 0 80%); pointer-events: none;
+                        clip-path: polygon(0 0, 100% 0, 100% 40%, 0 80%);
+                        pointer-events: none;
                     }
+
+                    /* Mockup CSS for visual flair */
                     .dashboard-mockup { background: #161b22; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); transform: perspective(1000px) rotateY(-15deg) rotateX(5deg); transition: transform 0.5s ease; }
                     .dashboard-mockup:hover { transform: perspective(1000px) rotateY(-5deg) rotateX(2deg); }
                     .discord-msg-mockup { background: #313338; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
                     .pill { background: rgba(14, 165, 233, 0.2); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3); }
+                    
+                    /* Confetti Simulation */
                     .confetti { position: absolute; width: 8px; height: 8px; background-color: #fce7f3; opacity: 0; animation: fall linear infinite; z-index: 0;}
                     @keyframes fall { 0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; } 100% { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
                 </style>
@@ -317,6 +332,7 @@ async def security_middleware(self, request, handler):
             <body class="relative min-h-screen flex flex-col selection:bg-pink-500 selection:text-white">
                 <div class="wick-bg"></div>
                 <div class="shape"></div>
+                
                 <div id="confetti-container" class="absolute inset-0 overflow-hidden pointer-events-none opacity-40"></div>
 
                 <nav class="flex items-center justify-between px-8 py-5 relative z-10 max-w-7xl mx-auto w-full">
@@ -512,7 +528,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__BOT_NAME__ | Select Server</title>
-            <link rel="icon" href="__BOT_AVATAR__">
+            <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+            <link rel="shortcut icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -565,6 +582,7 @@ async def security_middleware(self, request, handler):
             </main>
 
             <script>
+                // Live Server Filtering Logic
                 document.getElementById('serverSearch').addEventListener('input', function(e) {
                     const query = e.target.value.toLowerCase();
                     const cards = document.querySelectorAll('.server-card');
@@ -602,7 +620,7 @@ async def security_middleware(self, request, handler):
             return web.Response(text="Access Denied: You do not possess Developer clearance.", status=403)
 
         bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         server_count = len(self.bot.guilds)
         member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
         
@@ -675,7 +693,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{bot_name} | Developer Override</title>
-            <link rel="icon" href="{bot_avatar}">
+            <link rel="icon" type="image/png" href="{bot_avatar}">
+            <link rel="shortcut icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -744,7 +763,7 @@ async def security_middleware(self, request, handler):
                     </div>
                     
                     <div class="glass-panel p-6 rounded-2xl border border-yellow-500/30 flex flex-col relative overflow-hidden">
-                        <div class="absolute -right-6 -top-6 text-yellow-500/5 text-9xl {maint_icon_anim}"><i class="fa-solid fa-person-digging"></i></div>
+                        <div class="absolute -right-6 -top-6 text-yellow-500/5 text-9xl {maint_icon_anim}"><i class="fa-solid fa-gear"></i></div>
                         <h3 class="{maint_title_color} font-bold text-lg mb-2 relative z-10"><i class="fa-solid fa-wrench"></i> Web Maintenance</h3>
                         <p class="text-xs text-zinc-400 mb-6 relative z-10 leading-relaxed">Lock public access to the dashboard site. Bot commands remain fully functional in Discord.</p>
                         <div class="mt-auto relative z-10">
@@ -999,7 +1018,7 @@ async def security_middleware(self, request, handler):
             return web.Response(text="Access Denied: You do not have permission to manage this server.", status=403)
 
         bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1042,7 +1061,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | __BOT_NAME__ Dashboard</title>
-            <link rel="icon" href="__BOT_AVATAR__">
+            <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+            <link rel="shortcut icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1489,7 +1509,7 @@ async def security_middleware(self, request, handler):
             if not security_logs_html:
                 security_logs_html = '<tr><td colspan="4" class="py-8 text-center text-zinc-500">No automated security infractions logged yet.</td></tr>'
 
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1501,7 +1521,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Audit Logs</title>
-            <link rel="icon" href="__BOT_AVATAR__">
+            <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+            <link rel="shortcut icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1671,7 +1692,7 @@ async def security_middleware(self, request, handler):
                 if word.strip():
                     pills_html += f'<span class="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono rounded-md shadow-sm">{word}</span>\n'
 
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1683,7 +1704,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Auto Mod</title>
-            <link rel="icon" href="__BOT_AVATAR__">
+            <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+            <link rel="shortcut icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1889,7 +1911,7 @@ async def security_middleware(self, request, handler):
         sports_checked = "checked" if sports_enabled else ""
         misc_checked = "checked" if misc_enabled else ""
 
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1901,7 +1923,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Setup Wizard</title>
-            <link rel="icon" href="__BOT_AVATAR__">
+            <link rel="icon" type="image/png" href="__BOT_AVATAR__">
+            <link rel="shortcut icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -2208,7 +2231,7 @@ async def security_middleware(self, request, handler):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
             if settings: lockdown_active = settings.get("lockdown_active", False)
 
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -2227,7 +2250,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{guild.name} | Lockdown</title>
-            <link rel="icon" href="{bot_avatar}">
+            <link rel="icon" type="image/png" href="{bot_avatar}">
+            <link rel="shortcut icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -2382,7 +2406,7 @@ async def security_middleware(self, request, handler):
             if settings: misc_enabled = settings.get("misc_enabled", True)
 
         misc_checked = "checked" if misc_enabled else ""
-        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+        bot_avatar = self.get_bot_avatar()
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -2394,7 +2418,8 @@ async def security_middleware(self, request, handler):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{guild.name} | Miscellaneous</title>
-            <link rel="icon" href="{bot_avatar}">
+            <link rel="icon" type="image/png" href="{bot_avatar}">
+            <link rel="shortcut icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
