@@ -289,8 +289,7 @@ class AI(commands.Cog):
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            # Changed from grok-3 to a supported vision-capable model
-            "model": "llama-3.2-90b-vision-instruct", 
+            "model": "grok-4.1-expert", 
             "messages": messages
         }
         
