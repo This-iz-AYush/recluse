@@ -12,6 +12,7 @@ import string
 class Dashboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.bot.dashboard_maintenance = False # Independent state for the website
         
         # Initialize aiohttp Application with our custom IP Blocker & Verification Middleware
         self.app = web.Application(middlewares=[self.security_middleware])
@@ -41,16 +42,79 @@ class Dashboard(commands.Cog):
 
     @web.middleware
     async def security_middleware(self, request, handler):
-        """Intercepts traffic for IP logging, ban enforcement, and Anti-Bot Verification."""
+        """Intercepts traffic for IP logging, ban enforcement, Maintenance, and Anti-Bot Verification."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
         request['visitor_ip'] = ip
 
+        # 1. IP Ban Check
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             is_banned = await self.bot.db.ip_bans.find_one({"ip": ip})
             if is_banned:
                 return web.Response(text="403 Forbidden: Your IP address has been permanently restricted from accessing this network.", status=403)
 
+        # 2. INDEPENDENT DASHBOARD MAINTENANCE CHECK
+        if getattr(self.bot, 'dashboard_maintenance', False):
+            # Paths the owner must be able to hit to login and lift the maintenance
+            allowed_paths = ['/login', '/callback', '/logout', '/owner_panel', '/api/owner_action']
+            if request.path not in allowed_paths:
+                is_owner = False
+                user_session = await self.get_user_session(request)
+                
+                # Check if the user trying to visit is the Bot Developer
+                if user_session:
+                    owner_id = getattr(self.bot, 'owner_id', None)
+                    if not owner_id:
+                        app_info = await self.bot.application_info()
+                        self.bot.owner_id = app_info.owner.id
+                        owner_id = self.bot.owner_id
+                        
+                    if int(user_session['discord_id']) == owner_id:
+                        is_owner = True
+                
+                # If they aren't the developer, trap them in the Maintenance Window
+                if not is_owner:
+                    bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+                    maintenance_html = f"""
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>Recluse.OS | Maintenance</title>
+                        <link rel="icon" href="{bot_avatar}">
+                        <script src="https://cdn.tailwindcss.com"></script>
+                        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+                        <style>
+                            body {{ background-color: #09090b; color: white; overflow: hidden; }}
+                            .glass-panel {{ background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); }}
+                            .gradient-bg {{ position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle at center, rgba(234, 179, 8, 0.15) 0%, transparent 50%); z-index: -1; animation: pulse 10s infinite alternate; }}
+                        </style>
+                    </head>
+                    <body class="min-h-screen flex items-center justify-center relative">
+                        <div class="gradient-bg"></div>
+                        <div class="glass-panel p-10 rounded-3xl max-w-lg w-full text-center shadow-2xl z-10 mx-4 border border-yellow-500/20">
+                            <div class="w-20 h-20 mx-auto rounded-2xl bg-yellow-500/10 flex items-center justify-center mb-6 border border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.3)]">
+                                <i class="fa-solid fa-person-digging text-yellow-500 text-4xl"></i>
+                            </div>
+                            <h1 class="text-3xl font-bold mb-2 tracking-wide text-white">SYSTEM <span class="text-yellow-500">MAINTENANCE</span></h1>
+                            <p class="text-zinc-400 mb-8 leading-relaxed">The Recluse dashboard is currently undergoing scheduled upgrades or maintenance. All bot functions in Discord are still 100% operational.</p>
+                            
+                            <div class="bg-[#000] rounded-xl p-4 border border-white/5 flex items-center justify-between">
+                                <span class="text-sm font-medium text-zinc-300">Web Interface</span>
+                                <span class="text-xs font-bold text-yellow-500 bg-yellow-500/10 px-3 py-1 rounded border border-yellow-500/20 flex items-center gap-2">
+                                    <i class="fa-solid fa-wrench"></i> UPGRADING
+                                </span>
+                            </div>
+                            
+                            <p class="text-[10px] text-zinc-600 mt-8 font-mono uppercase tracking-widest">Recluse.OS Web Infrastructure</p>
+                        </div>
+                    </body>
+                    </html>
+                    """
+                    return web.Response(text=maintenance_html, content_type='text/html', status=503)
+
+        # 3. Cloudflare-style Anti-Bot Verification Check
         if request.path == '/api/verify_visitor':
             return await handler(request)
 
@@ -112,6 +176,7 @@ class Dashboard(commands.Cog):
             """
             return web.Response(text=verify_html, content_type='text/html')
 
+        # 4. Visit Telemetry Logging
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             session_id = request.cookies.get("recluse_session")
             discord_username = None
@@ -227,30 +292,22 @@ class Dashboard(commands.Cog):
                 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
                 <style>
                     body { background-color: #0b1121; color: white; overflow-x: hidden; font-family: system-ui, -apple-system, sans-serif; }
-                    
-                    /* Vibrant Wick-Style Background Gradients */
                     .wick-bg {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: -2;
                         background: radial-gradient(120% 100% at 80% -10%, #d83b9e 0%, transparent 45%),
                                     radial-gradient(120% 100% at 0% 0%, #0ea5e9 0%, transparent 50%),
                                     radial-gradient(100% 100% at 100% 100%, #1e1b4b 0%, transparent 50%);
-                        opacity: 0.6;
-                        pointer-events: none;
+                        opacity: 0.6; pointer-events: none;
                     }
                     .shape {
                         position: absolute; width: 150vw; height: 100vh; z-index: -1; transform-origin: top left;
                         background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(216, 59, 158, 0.1) 100%);
-                        clip-path: polygon(0 0, 100% 0, 100% 40%, 0 80%);
-                        pointer-events: none;
+                        clip-path: polygon(0 0, 100% 0, 100% 40%, 0 80%); pointer-events: none;
                     }
-
-                    /* Mockup CSS for visual flair */
                     .dashboard-mockup { background: #161b22; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); transform: perspective(1000px) rotateY(-15deg) rotateX(5deg); transition: transform 0.5s ease; }
                     .dashboard-mockup:hover { transform: perspective(1000px) rotateY(-5deg) rotateX(2deg); }
                     .discord-msg-mockup { background: #313338; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
                     .pill { background: rgba(14, 165, 233, 0.2); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3); }
-                    
-                    /* Confetti Simulation */
                     .confetti { position: absolute; width: 8px; height: 8px; background-color: #fce7f3; opacity: 0; animation: fall linear infinite; z-index: 0;}
                     @keyframes fall { 0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; } 100% { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
                 </style>
@@ -258,7 +315,6 @@ class Dashboard(commands.Cog):
             <body class="relative min-h-screen flex flex-col selection:bg-pink-500 selection:text-white">
                 <div class="wick-bg"></div>
                 <div class="shape"></div>
-                
                 <div id="confetti-container" class="absolute inset-0 overflow-hidden pointer-events-none opacity-40"></div>
 
                 <nav class="flex items-center justify-between px-8 py-5 relative z-10 max-w-7xl mx-auto w-full">
@@ -373,7 +429,6 @@ class Dashboard(commands.Cog):
                 </div>
 
                 <script>
-                    // Simple confetti effect for the background
                     const container = document.getElementById('confetti-container');
                     const colors = ['#0ea5e9', '#d83b9e', '#8b5cf6', '#38bdf8', '#fce7f3'];
                     for(let i=0; i<30; i++) {
@@ -508,7 +563,6 @@ class Dashboard(commands.Cog):
             </main>
 
             <script>
-                // Live Server Filtering Logic
                 document.getElementById('serverSearch').addEventListener('input', function(e) {
                     const query = e.target.value.toLowerCase();
                     const cards = document.querySelectorAll('.server-card');
@@ -551,6 +605,7 @@ class Dashboard(commands.Cog):
         member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
         
         is_locked = getattr(self.bot, 'global_lockdown', False)
+        is_maintenance = getattr(self.bot, 'dashboard_maintenance', False)
 
         # Build Hot-Reload Cog List
         cogs_html = ""
@@ -600,11 +655,16 @@ class Dashboard(commands.Cog):
                 
             if not banned_html: banned_html = "<p class='text-zinc-500 text-sm p-3'>No IPs are currently banned.</p>"
 
-        # Dynamic Lock UI States
+        # Dynamic UI States
         lock_btn_color = "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20" if is_locked else "bg-red-600 hover:bg-red-700 shadow-red-500/20"
         lock_btn_text = "LIFT LOCKDOWN" if is_locked else "ENGAGE DEFCON LOCKDOWN"
         lock_title_color = "text-red-500" if is_locked else "text-zinc-400"
         lock_icon_anim = "animate-pulse" if is_locked else ""
+        
+        maint_btn_color = "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20" if is_maintenance else "bg-yellow-600 hover:bg-yellow-700 shadow-yellow-500/20"
+        maint_btn_text = "LIFT MAINTENANCE" if is_maintenance else "ENABLE MAINTENANCE"
+        maint_title_color = "text-yellow-500" if is_maintenance else "text-zinc-400"
+        maint_icon_anim = "animate-pulse" if is_maintenance else ""
 
         owner_html = f"""
         <!DOCTYPE html>
@@ -634,7 +694,7 @@ class Dashboard(commands.Cog):
                 </div>
             </nav>
 
-            <main class="flex-1 max-w-6xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8 pb-20">
+            <main class="flex-1 max-w-7xl w-full mx-auto p-6 lg:p-8 flex flex-col gap-8 pb-20">
                 <div>
                     <h1 class="text-3xl font-extrabold text-white mb-2">Owner Control Panel</h1>
                     <p class="text-zinc-400">Global telemetry and administrative actions for {bot_name}.</p>
@@ -668,7 +728,7 @@ class Dashboard(commands.Cog):
                     <i class="fa-solid fa-bolt text-yellow-500"></i> Global System Overrides
                 </h2>
 
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
                     
                     <div class="glass-panel p-6 rounded-2xl border border-red-500/30 flex flex-col relative overflow-hidden">
                         <div class="absolute -right-6 -top-6 text-red-500/5 text-9xl {lock_icon_anim}"><i class="fa-solid fa-power-off"></i></div>
@@ -677,6 +737,17 @@ class Dashboard(commands.Cog):
                         <div class="mt-auto relative z-10">
                             <button onclick="toggleGlobalLockdown({str(not is_locked).lower()})" class="w-full py-3.5 rounded-xl {lock_btn_color} font-bold text-white transition shadow-lg tracking-wider" id="globalLockBtn">
                                 {lock_btn_text}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="glass-panel p-6 rounded-2xl border border-yellow-500/30 flex flex-col relative overflow-hidden">
+                        <div class="absolute -right-6 -top-6 text-yellow-500/5 text-9xl {maint_icon_anim}"><i class="fa-solid fa-person-digging"></i></div>
+                        <h3 class="{maint_title_color} font-bold text-lg mb-2 relative z-10"><i class="fa-solid fa-wrench"></i> Web Maintenance</h3>
+                        <p class="text-xs text-zinc-400 mb-6 relative z-10 leading-relaxed">Lock public access to the dashboard site. Bot commands remain fully functional in Discord.</p>
+                        <div class="mt-auto relative z-10">
+                            <button onclick="toggleDashboardMaintenance({str(not is_maintenance).lower()})" class="w-full py-3.5 rounded-xl {maint_btn_color} font-bold text-white transition shadow-lg tracking-wider" id="maintBtn">
+                                {maint_btn_text}
                             </button>
                         </div>
                     </div>
@@ -774,6 +845,22 @@ class Dashboard(commands.Cog):
                         else throw new Error("Failed");
                     }} catch (e) {{ alert("Network error."); window.location.reload(); }}
                 }}
+                
+                async function toggleDashboardMaintenance(targetState) {{
+                    if (targetState && !confirm("Enable Web Maintenance? Users will not be able to access the dashboard. Bot commands will continue to work.")) return;
+                    
+                    const btn = document.getElementById('maintBtn');
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+                    
+                    try {{
+                        const res = await fetch('/api/owner_action', {{
+                            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{action: 'dashboard_maintenance', state: targetState}})
+                        }});
+                        if (res.ok) window.location.reload();
+                        else throw new Error("Failed");
+                    }} catch (e) {{ alert("Network error."); window.location.reload(); }}
+                }}
 
                 async function submitBlacklist() {{
                     const target_id = document.getElementById('bl_id').value;
@@ -826,6 +913,11 @@ class Dashboard(commands.Cog):
             if action == 'global_lockdown':
                 state = data.get('state', False)
                 self.bot.global_lockdown = state
+                return web.json_response({"success": True})
+                
+            elif action == 'dashboard_maintenance':
+                state = data.get('state', False)
+                self.bot.dashboard_maintenance = state
                 return web.json_response({"success": True})
                 
             elif action == 'blacklist':
