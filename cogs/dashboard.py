@@ -57,6 +57,7 @@ class Dashboard(commands.Cog):
         is_verified = request.cookies.get("recluse_verified")
         if not is_verified:
             ray_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
+            bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
             
             verify_html = f"""
             <!DOCTYPE html>
@@ -65,6 +66,7 @@ class Dashboard(commands.Cog):
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Recluse.OS | Security Verification</title>
+                <link rel="icon" href="{bot_avatar}">
                 <script src="https://cdn.tailwindcss.com"></script>
                 <style>
                     body {{ background-color: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; min-height: 100vh; }}
@@ -147,7 +149,7 @@ class Dashboard(commands.Cog):
         return None
 
     # -------------------------------------------------------------------------------------------------
-    # AUTHENTICATION ROUTES (Restored!)
+    # AUTHENTICATION ROUTES
     # -------------------------------------------------------------------------------------------------
 
     async def login(self, request):
@@ -206,7 +208,8 @@ class Dashboard(commands.Cog):
 
     async def home(self, request):
         user_session = await self.get_user_session(request)
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         client_id = os.getenv("DISCORD_CLIENT_ID", "")
         invite_link = f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions=8&scope=bot"
 
@@ -219,6 +222,7 @@ class Dashboard(commands.Cog):
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>__BOT_NAME__ | Next-Gen Security</title>
+                <link rel="icon" href="__BOT_AVATAR__">
                 <script src="https://cdn.tailwindcss.com"></script>
                 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
                 <style>
@@ -260,7 +264,7 @@ class Dashboard(commands.Cog):
                 <nav class="flex items-center justify-between px-8 py-5 relative z-10 max-w-7xl mx-auto w-full">
                     <div class="flex items-center gap-6">
                         <div class="flex items-center gap-3 text-white font-bold text-xl tracking-tight">
-                            <i class="fa-solid fa-shield-halved text-pink-500 text-2xl"></i>
+                            <img src="__BOT_AVATAR__" class="w-8 h-8 rounded-full border border-white/10" alt="Icon">
                             __BOT_NAME__
                         </div>
                         <div class="hidden md:flex gap-6 text-sm font-semibold text-zinc-300">
@@ -351,7 +355,7 @@ class Dashboard(commands.Cog):
                                 </div>
                             </div>
                             <div class="flex gap-4">
-                                <div class="w-10 h-10 rounded-full bg-pink-500 flex-shrink-0 flex items-center justify-center text-white border border-pink-400"><i class="fa-solid fa-shield-halved"></i></div>
+                                <img src="__BOT_AVATAR__" class="w-10 h-10 rounded-full flex-shrink-0 border border-white/10">
                                 <div class="w-full">
                                     <div class="flex items-baseline gap-2 mb-2">
                                         <span class="text-pink-400 font-semibold text-[15px]">__BOT_NAME__</span>
@@ -386,6 +390,7 @@ class Dashboard(commands.Cog):
             </html>
             """
             landing_html = landing_html.replace("__BOT_NAME__", str(bot_name))
+            landing_html = landing_html.replace("__BOT_AVATAR__", str(bot_avatar))
             landing_html = landing_html.replace("__INVITE_LINK__", invite_link)
             return web.Response(text=landing_html, content_type='text/html')
 
@@ -450,6 +455,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__BOT_NAME__ | Select Server</title>
+            <link rel="icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -467,7 +473,7 @@ class Dashboard(commands.Cog):
 
             <nav class="flex items-center justify-between px-8 py-5 relative z-10 w-full">
                 <div class="flex items-center gap-3 text-white font-bold text-xl tracking-tight">
-                    <i class="fa-solid fa-shield-halved text-white text-2xl"></i>
+                    <img src="__BOT_AVATAR__" class="w-8 h-8 rounded-full border border-white/10" alt="Icon">
                 </div>
                 <div class="flex items-center gap-6 text-zinc-400">
                     __OWNER_BUTTON__
@@ -522,6 +528,7 @@ class Dashboard(commands.Cog):
         """
         
         dashboard_html = dashboard_html.replace("__BOT_NAME__", str(bot_name))
+        dashboard_html = dashboard_html.replace("__BOT_AVATAR__", str(bot_avatar))
         dashboard_html = dashboard_html.replace("__USER_NAME__", str(user_name))
         dashboard_html = dashboard_html.replace("__USER_AVATAR__", str(user_avatar))
         dashboard_html = dashboard_html.replace("__OWNER_BUTTON__", owner_button_html)
@@ -538,7 +545,8 @@ class Dashboard(commands.Cog):
         if int(user_session['discord_id']) != app_info.owner.id:
             return web.Response(text="Access Denied: You do not possess Developer clearance.", status=403)
 
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         server_count = len(self.bot.guilds)
         member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
         
@@ -605,6 +613,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{bot_name} | Developer Override</title>
+            <link rel="icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -895,7 +904,8 @@ class Dashboard(commands.Cog):
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
             return web.Response(text="Access Denied: You do not have permission to manage this server.", status=403)
 
-        bot_name = self.bot.user.name if self.bot.user else "Recluse"
+        bot_name = self.bot.user.name if self.bot and self.bot.user else "Recluse"
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -938,6 +948,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | __BOT_NAME__ Dashboard</title>
+            <link rel="icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1215,6 +1226,7 @@ class Dashboard(commands.Cog):
         manage_html = manage_html.replace("__GUILD_NAME__", str(guild.name))
         manage_html = manage_html.replace("__GUILD_ICON__", str(guild_icon))
         manage_html = manage_html.replace("__BOT_NAME__", str(bot_name))
+        manage_html = manage_html.replace("__BOT_AVATAR__", str(bot_avatar))
         manage_html = manage_html.replace("__USER_NAME__", str(user_name))
         manage_html = manage_html.replace("__USER_AVATAR__", str(user_avatar))
         manage_html = manage_html.replace("__GUILD_ID__", str(guild_id_int))
@@ -1383,6 +1395,7 @@ class Dashboard(commands.Cog):
             if not security_logs_html:
                 security_logs_html = '<tr><td colspan="4" class="py-8 text-center text-zinc-500">No automated security infractions logged yet.</td></tr>'
 
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1394,6 +1407,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Audit Logs</title>
+            <link rel="icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1525,6 +1539,7 @@ class Dashboard(commands.Cog):
         """
         logs_html = logs_html.replace("__GUILD_NAME__", str(guild.name))
         logs_html = logs_html.replace("__GUILD_ICON__", str(guild_icon))
+        logs_html = logs_html.replace("__BOT_AVATAR__", str(bot_avatar))
         logs_html = logs_html.replace("__GUILD_ID__", str(guild_id_int))
         logs_html = logs_html.replace("__USER_NAME__", str(user_name))
         logs_html = logs_html.replace("__USER_AVATAR__", str(user_avatar))
@@ -1562,6 +1577,7 @@ class Dashboard(commands.Cog):
                 if word.strip():
                     pills_html += f'<span class="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono rounded-md shadow-sm">{word}</span>\n'
 
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1573,6 +1589,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Auto Mod</title>
+            <link rel="icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -1732,6 +1749,7 @@ class Dashboard(commands.Cog):
         """
         automod_html = automod_html.replace("__GUILD_NAME__", str(guild.name))
         automod_html = automod_html.replace("__GUILD_ICON__", str(guild_icon))
+        automod_html = automod_html.replace("__BOT_AVATAR__", str(bot_avatar))
         automod_html = automod_html.replace("__GUILD_ID__", str(guild_id_int))
         automod_html = automod_html.replace("__USER_NAME__", str(user_name))
         automod_html = automod_html.replace("__USER_AVATAR__", str(user_avatar))
@@ -1777,6 +1795,7 @@ class Dashboard(commands.Cog):
         sports_checked = "checked" if sports_enabled else ""
         misc_checked = "checked" if misc_enabled else ""
 
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -1788,6 +1807,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>__GUILD_NAME__ | Setup Wizard</title>
+            <link rel="icon" href="__BOT_AVATAR__">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -2061,6 +2081,7 @@ class Dashboard(commands.Cog):
         """
         wizard_html = wizard_html.replace("__GUILD_NAME__", str(guild.name))
         wizard_html = wizard_html.replace("__GUILD_ICON__", str(guild_icon))
+        wizard_html = wizard_html.replace("__BOT_AVATAR__", str(bot_avatar))
         wizard_html = wizard_html.replace("__GUILD_ID__", str(guild_id_int))
         wizard_html = wizard_html.replace("__USER_NAME__", str(user_name))
         wizard_html = wizard_html.replace("__USER_AVATAR__", str(user_avatar))
@@ -2093,6 +2114,7 @@ class Dashboard(commands.Cog):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id_int})
             if settings: lockdown_active = settings.get("lockdown_active", False)
 
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -2111,6 +2133,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{guild.name} | Lockdown</title>
+            <link rel="icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
@@ -2265,6 +2288,7 @@ class Dashboard(commands.Cog):
             if settings: misc_enabled = settings.get("misc_enabled", True)
 
         misc_checked = "checked" if misc_enabled else ""
+        bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
         user_name = user_session.get('username', 'Admin')
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={user_name}&background=8b5cf6&color=fff"
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=27272a&color=fff"
@@ -2276,6 +2300,7 @@ class Dashboard(commands.Cog):
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{guild.name} | Miscellaneous</title>
+            <link rel="icon" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
             <style>
