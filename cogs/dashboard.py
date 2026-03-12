@@ -40,7 +40,7 @@ class Dashboard(commands.Cog):
         self.site = None
         self.bot.loop.create_task(self.start_server())
 
-    @web.middleware
+@web.middleware
     async def security_middleware(self, request, handler):
         """Intercepts traffic for IP logging, ban enforcement, Maintenance, and Anti-Bot Verification."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
@@ -74,7 +74,7 @@ class Dashboard(commands.Cog):
                 
                 # If they aren't the developer, trap them in the Maintenance Window
                 if not is_owner:
-                    bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+                    bot_avatar = self.get_bot_avatar()
                     maintenance_html = f"""
                     <!DOCTYPE html>
                     <html lang="en">
@@ -82,7 +82,8 @@ class Dashboard(commands.Cog):
                         <meta charset="UTF-8">
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>Recluse.OS | Maintenance</title>
-                        <link rel="icon" href="{bot_avatar}">
+                        <link rel="icon" type="image/png" href="{bot_avatar}">
+                        <link rel="shortcut icon" href="{bot_avatar}">
                         <script src="https://cdn.tailwindcss.com"></script>
                         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
                         <style>
@@ -95,7 +96,7 @@ class Dashboard(commands.Cog):
                         <div class="gradient-bg"></div>
                         <div class="glass-panel p-10 rounded-3xl max-w-lg w-full text-center shadow-2xl z-10 mx-4 border border-yellow-500/20">
                             <div class="w-20 h-20 mx-auto rounded-2xl bg-yellow-500/10 flex items-center justify-center mb-6 border border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.3)]">
-                                <i class="fa-solid fa-person-digging text-yellow-500 text-4xl"></i>
+                                <i class="fa-solid fa-gear fa-spin text-yellow-500 text-4xl"></i>
                             </div>
                             <h1 class="text-3xl font-bold mb-2 tracking-wide text-white">SYSTEM <span class="text-yellow-500">MAINTENANCE</span></h1>
                             <p class="text-zinc-400 mb-8 leading-relaxed">The Recluse dashboard is currently undergoing scheduled upgrades or maintenance. All bot functions in Discord are still 100% operational.</p>
@@ -121,7 +122,7 @@ class Dashboard(commands.Cog):
         is_verified = request.cookies.get("recluse_verified")
         if not is_verified:
             ray_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
-            bot_avatar = self.bot.user.display_avatar.url if self.bot and self.bot.user else "https://cdn.discordapp.com/embed/avatars/0.png"
+            bot_avatar = self.get_bot_avatar()
             
             verify_html = f"""
             <!DOCTYPE html>
@@ -130,7 +131,8 @@ class Dashboard(commands.Cog):
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Recluse.OS | Security Verification</title>
-                <link rel="icon" href="{bot_avatar}">
+                <link rel="icon" type="image/png" href="{bot_avatar}">
+                <link rel="shortcut icon" href="{bot_avatar}">
                 <script src="https://cdn.tailwindcss.com"></script>
                 <style>
                     body {{ background-color: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; min-height: 100vh; }}
