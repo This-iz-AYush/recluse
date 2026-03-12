@@ -147,6 +147,60 @@ class Dashboard(commands.Cog):
         return None
 
     # -------------------------------------------------------------------------------------------------
+    # AUTHENTICATION ROUTES (Restored!)
+    # -------------------------------------------------------------------------------------------------
+
+    async def login(self, request):
+        client_id = os.getenv("DISCORD_CLIENT_ID")
+        redirect_uri = os.getenv("REDIRECT_URI")
+        if not client_id or not redirect_uri:
+            return web.Response(text="Configuration Error: DISCORD_CLIENT_ID or REDIRECT_URI is missing.", status=500)
+        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
+        raise web.HTTPFound(oauth_url)
+
+    async def callback(self, request):
+        code = request.query.get("code")
+        if not code: return web.Response(text="Login failed. No code provided by Discord.", status=400)
+
+        data = {
+            "client_id": os.getenv("DISCORD_CLIENT_ID"),
+            "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": os.getenv("REDIRECT_URI")
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://discord.com/api/oauth2/token", data=data, headers=headers) as resp:
+                if resp.status != 200: return web.Response(text=f"Failed to authenticate with Discord.", status=500)
+                access_token = (await resp.json()).get("access_token")
+
+            async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
+                user_data = await resp.json()
+
+        session_id = str(uuid.uuid4())
+        
+        if hasattr(self.bot, 'db'):
+            await self.bot.db.sessions.update_one(
+                {"discord_id": user_data["id"]},
+                {"$set": {"session_id": session_id, "username": user_data.get("username", "Unknown"), "avatar": user_data.get("avatar", ""), "access_token": access_token, "created_at": datetime.datetime.utcnow().timestamp()}},
+                upsert=True
+            )
+
+        response = web.HTTPFound('/')
+        response.set_cookie('recluse_session', session_id, max_age=86400, httponly=True)
+        return response
+
+    async def logout(self, request):
+        session_id = request.cookies.get("recluse_session")
+        if session_id and hasattr(self.bot, 'db'):
+            await self.bot.db.sessions.delete_one({"session_id": session_id})
+        response = web.HTTPFound('/')
+        response.del_cookie('recluse_session')
+        return response
+
+    # -------------------------------------------------------------------------------------------------
     # DASHBOARD UI PAGES
     # -------------------------------------------------------------------------------------------------
 
@@ -678,6 +732,7 @@ class Dashboard(commands.Cog):
             </main>
             
             <script>
+                // --- IP FIREWALL ---
                 async function submitIPAction(action, ip) {{
                     if(!ip) return alert("Please provide an IP address.");
                     if(action === 'ban' && !confirm(`Are you sure you want to permanently IP ban ${{ip}}?`)) return;
@@ -693,6 +748,7 @@ class Dashboard(commands.Cog):
                     }} catch (e) {{ alert("Network error."); }}
                 }}
 
+                // --- SYSTEM OVERRIDES ---
                 async function toggleGlobalLockdown(targetState) {{
                     if (targetState && !confirm("CRITICAL WARNING: This will immediately paralyze the entire bot network. Proceed?")) return;
                     if (!targetState && !confirm("Lift global lockdown and resume normal operations?")) return;
