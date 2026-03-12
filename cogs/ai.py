@@ -249,7 +249,8 @@ class AI(commands.Cog):
         if not api_key:
             return "⚙️ Configuration Error: `NEXUSIFY_API_KEY` is missing from your .env file."
             
-        api_key = api_key.strip()
+        # Safely remove any accidental quotes from the .env file
+        api_key = api_key.strip().replace('"', '').replace("'", "")
 
         url = "https://api.nexusify.co/v1/chat/completions" 
         
@@ -288,7 +289,8 @@ class AI(commands.Cog):
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            "model": "grok-3",
+            # Changed from grok-3 to a supported vision-capable model
+            "model": "llama-3.2-90b-vision-instruct", 
             "messages": messages
         }
         
