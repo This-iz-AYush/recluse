@@ -41,7 +41,7 @@ class Dashboard(commands.Cog):
         self.bot.loop.create_task(self.start_server())
 
 @web.middleware
-    async def security_middleware(self, request, handler):
+async def security_middleware(self, request, handler):
         """Intercepts traffic for IP logging, ban enforcement, Maintenance, and Anti-Bot Verification."""
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
