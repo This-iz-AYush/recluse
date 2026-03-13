@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os
-import aiohttp
+import time
 import datetime
 from itertools import cycle
 from typing import Optional
@@ -83,6 +83,7 @@ class HelpView(discord.ui.View):
 class Core(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.start_time = time.time()
         self.STATUS_MESSAGES = ['active in {servers} servers with {members} members', '/help']
         self.status_cycle = cycle(self.STATUS_MESSAGES)
         self.cycle_bot_status.start()
@@ -103,7 +104,6 @@ class Core(commands.Cog):
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
         await ctx.defer() 
-        import time # Added at the top to ensure time parsing works safely
         
         active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
         app_info = await self.bot.application_info()
@@ -113,65 +113,14 @@ class Core(commands.Cog):
         embed.add_field(name="Websocket Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
         embed.add_field(name="Your Active AI", value=f"🧠 **{active_ai}**", inline=True)
         
-
-        # --- Fetch UptimeRobot Stats ---
-        api_key = os.getenv('UPTIMEROBOT_API_KEY')
-        status_display = "⚪ **Unknown**"
-        uptime_display = "Configure `UPTIMEROBOT_API_KEY` in .env"
+        # --- Native Uptime Calculation ---
+        uptime_seconds = max(0, int(time.time() - self.start_time))
+        days, remainder = divmod(uptime_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
         
-        if api_key:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    url = "https://api.uptimerobot.com/v2/getMonitors"
-                    payload = f"api_key={api_key.strip()}&format=json&logs=1"
-                    headers = {
-                        'content-type': "application/x-www-form-urlencoded",
-                        'cache-control': "no-cache"
-                    }
-                    async with session.post(url, data=payload, headers=headers, timeout=10) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            if data.get("stat") == "ok" and data.get("monitors"):
-                                monitor = data["monitors"][0]
-                                status_code = int(monitor.get("status", 0))
-                                
-                                if status_code == 2:
-                                    status_display = "🟢 **Operational**"
-                                    
-                                    # 1. Try to get uptime from the latest log
-                                    logs = monitor.get("logs", [])
-                                    last_up_timestamp = None
-                                    
-                                    for log in logs:
-                                        if int(log.get("type", 0)) in [2, 98]:
-                                            last_up_timestamp = log.get("datetime")
-                                            break
-                                            
-                                    # 2. Fallback: If no logs exist (brand new monitor), use creation time
-                                    if not last_up_timestamp:
-                                        last_up_timestamp = monitor.get("create_datetime")
-                                            
-                                    if last_up_timestamp:
-                                        uptime_seconds = max(0, int(time.time()) - int(last_up_timestamp))
-                                        days, remainder = divmod(uptime_seconds, 86400)
-                                        hours, remainder = divmod(remainder, 3600)
-                                        minutes, seconds = divmod(remainder, 60)
-                                        uptime_display = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
-                                    else:
-                                        uptime_display = "Tracking..."
-
-                                elif status_code in [8, 9]:
-                                    status_display = "🔴 **Down**"
-                                    uptime_display = "0d 0h 0m 0s"
-                                else:
-                                    status_display = "⚪ **Paused**"
-                                    uptime_display = "N/A"
-                            else:
-                                uptime_display = "⚠️ Monitor data unavailable."
-                        else:
-                            uptime_display = f"⚠️ API Error: {response.status}"
-            except Exception:
-                uptime_display = "⚠️ Failed to connect to UptimeRobot."
+        uptime_display = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+        status_display = "🟢 **Operational**"
 
         embed.add_field(name="Service Status", value=status_display, inline=True)
         embed.add_field(name="Continuous Uptime", value=uptime_display, inline=True)
