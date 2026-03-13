@@ -227,17 +227,16 @@ class AI(commands.Cog):
     async def perform_web_search(self, query: str) -> str:
         """Executes a web search using DuckDuckGo without blocking the bot."""
         try:
-            # Create a synchronous helper function for the new library format
+            # CRITICAL FIX: Cast to list() inside the thread so the network connection 
+            # doesn't close before the data is actually downloaded!
             def search_sync():
-                return DDGS().text(query, max_results=3)
+                return list(DDGS().text(query, max_results=3))
             
-            # Offload the synchronous search to a background thread to prevent bot lag
             results = await asyncio.to_thread(search_sync)
             
             if not results:
                 return "No search results found for this query."
             
-            # Format the results into a clean string for the AI to read
             formatted = "\n\n".join([
                 f"Title: {r.get('title', 'Unknown')}\nSnippet: {r.get('body', 'No description')}\nLink: {r.get('href', 'No link')}" 
                 for r in results
@@ -246,7 +245,7 @@ class AI(commands.Cog):
             
         except Exception as e:
             return f"Search failed with error: {str(e)}"
-    
+            
     # ... (Keep your existing generate_nexusify_response, generate_gemini_response, generate_sarvam_response, and imagine functions exactly as they are) ...
     async def generate_nexusify_response(self, prompt_text: str, image_parts: list = None, history: list = None) -> str:
         api_key = os.getenv('NEXUSIFY_API_KEY')
@@ -335,11 +334,15 @@ class AI(commands.Cog):
                         # 2. Execute every tool the AI asked for
                         for tool_call in response_message['tool_calls']:
                             if tool_call['function']['name'] == 'web_search':
-                                args = json.loads(tool_call['function']['arguments'])
-                                search_query = args['query']
-                                
-                                # Run our DuckDuckGo function
-                                search_results = await self.perform_web_search(search_query)
+                                # SAFER JSON PARSING: Catch AI hallucinations
+                                try:
+                                    args = json.loads(tool_call['function']['arguments'])
+                                    search_query = args.get('query', '')
+                                    search_results = await self.perform_web_search(search_query)
+                                except json.JSONDecodeError:
+                                    search_results = "System Error: Your tool arguments were malformed JSON. Please try again."
+                                except Exception as e:
+                                    search_results = f"System Error executing search: {str(e)}"
                                 
                                 # 3. Append the raw search results back to the conversation
                                 messages.append({
@@ -351,6 +354,7 @@ class AI(commands.Cog):
                         
                         # 4. Make a SECOND request to the AI with the new search context
                         payload["messages"] = messages
+                        # (Ensure this block uses the correct url/headers/timeout for Nexusify vs Sarvam)
                         async with session.post(url, headers=headers, json=payload, timeout=120) as final_response:
                             if final_response.status == 200:
                                 final_data = await final_response.json()
