@@ -264,7 +264,7 @@ class AI(commands.Cog):
         messages = [
             {
                 "role": "system",
-                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the exact factual answer to a question, use your web_search tool to find it. Do not guess. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text."
+                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the factual answer to a question, you MUST search the web. To search, reply with EXACTLY this format and nothing else: <SEARCH>your search query</SEARCH>. The system will intercept this and provide you with the results. Format all math equations using readable plain text."
             }
         ]
 
@@ -287,88 +287,56 @@ class AI(commands.Cog):
 
         messages.append({"role": "user", "content": user_content})
 
-        # --- TOOL DEFINITION ---
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Perform a live web search to get up-to-date information, news, or facts.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The exact search query to look up."
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            }
-        ]
-
+        # Notice: The 'tools' and 'tool_choice' arrays have been completely removed 
+        # to prevent the Nexusify 500 Server Crash.
         payload = {
             "model": "gpt-5.4", 
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": "auto"
+            "messages": messages
         }
         
         try:
             async with aiohttp.ClientSession() as session:
-                # --- FIRST REQUEST: Ask the AI for an answer (or a tool call) ---
+                # --- FIRST REQUEST: Ask the AI for an answer (or a search tag) ---
                 async with session.post(url, headers=headers, json=payload, timeout=120) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         return f"❌ **Nexusify API Error {response.status}:** `{error_text[:150]}`"
                     
                     data = await response.json()
-                    response_message = data['choices'][0]['message']
+                    response_text = data['choices'][0]['message'].get('content', '').strip()
 
-                    # --- TOOL EXECUTION LOGIC ---
-                    if response_message.get('tool_calls'):
-                        # 1. Append the AI's tool request to the conversation history
-                        messages.append(response_message)
+                    # --- UNIVERSAL TEXT-BASED TOOL EXECUTION ---
+                    if "<SEARCH>" in response_text and "</SEARCH>" in response_text:
+                        try:
+                            # Extract the query from between the tags
+                            search_query = response_text.split("<SEARCH>")[1].split("</SEARCH>")[0].strip()
+                            search_results = await self.perform_web_search(search_query)
+                        except Exception as e:
+                            search_results = f"System Error executing search: {str(e)}"
                         
-                        # 2. Execute every tool the AI asked for
-                        for tool_call in response_message['tool_calls']:
-                            if tool_call['function']['name'] == 'web_search':
-                                # SAFER JSON PARSING: Catch AI hallucinations
-                                try:
-                                    args = json.loads(tool_call['function']['arguments'])
-                                    search_query = args.get('query', '')
-                                    search_results = await self.perform_web_search(search_query)
-                                except json.JSONDecodeError:
-                                    search_results = "System Error: Your tool arguments were malformed JSON. Please try again."
-                                except Exception as e:
-                                    search_results = f"System Error executing search: {str(e)}"
-                                
-                                # 3. Append the raw search results back to the conversation
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call['id'],
-                                    "name": "web_search",
-                                    "content": search_results
-                                })
+                        # Append the AI's search attempt and the results to the history
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({
+                            "role": "user", 
+                            "content": f"SYSTEM WEB SEARCH RESULTS for '{search_query}':\n{search_results}\n\nNow, answer my original query using these facts. Do not output the search tags again."
+                        })
                         
-                        # 4. Make a SECOND request to the AI with the new search context
+                        # --- SECOND REQUEST: Send the search results back to the AI ---
                         payload["messages"] = messages
-                        # (Ensure this block uses the correct url/headers/timeout for Nexusify vs Sarvam)
                         async with session.post(url, headers=headers, json=payload, timeout=120) as final_response:
                             if final_response.status == 200:
                                 final_data = await final_response.json()
-                                return final_data['choices'][0]['message']['content'].strip()
+                                return final_data['choices'][0]['message'].get('content', '').strip()
                             else:
-                                return "❌ **Error:** Failed to generate response after reading search results."
+                                return f"❌ **Error:** Nexusify rejected the search results (Status {final_response.status})."
 
-                    # If no tools were called, just return the standard text response
-                    return response_message.get('content', "I couldn't process that.").strip()
+                    # If no search tags were used, just return the normal response
+                    return response_text
 
         except asyncio.TimeoutError:
              return "⏳ **Nexusify Timeout:** The API took too long to respond. Please try again."
         except Exception as e:
-            return f"❌ **Network Exception:** `{type(e).__name__}`. Something went wrong during the connection."
+            return f"❌ **Network Exception:** `{type(e).__name__}`."
 
     async def generate_gemini_response(self, prompt_text: str, image_parts: list = None, history: list = None) -> str:
         api_key = os.getenv('GEMINI_API_KEY')
