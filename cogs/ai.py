@@ -289,7 +289,7 @@ class AI(commands.Cog):
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            "model": "grok-4.1-expert", 
+            "model": "gpt-5.4", 
             "messages": messages
         }
         
