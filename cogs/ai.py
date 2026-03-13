@@ -6,9 +6,9 @@ import aiohttp
 import base64
 import datetime
 import io
-import asyncio
 import json
-from duckduckgo_search import AsyncDDGS
+import asyncio
+from duckduckgo_search import DDGS  
 
 class AI(commands.Cog):
     def __init__(self, bot):
@@ -225,16 +225,25 @@ class AI(commands.Cog):
                         await message.channel.send(f"{message.author.mention} ❌ **Brain Freeze:** An unexpected error occurred while generating my response. A report has been filed.")
 
     async def perform_web_search(self, query: str) -> str:
-        """Executes an asynchronous web search using DuckDuckGo."""
+        """Executes a web search using DuckDuckGo without blocking the bot."""
         try:
-            async with AsyncDDGS() as ddgs:
-                results = [r async for r in ddgs.text(query, max_results=3)]
-                if not results:
-                    return "No search results found for this query."
-                
-                # Format the results into a clean string for the AI to read
-                formatted = "\n\n".join([f"Title: {r['title']}\nSnippet: {r['body']}\nLink: {r['href']}" for r in results])
-                return formatted
+            # Create a synchronous helper function for the new library format
+            def search_sync():
+                return DDGS().text(query, max_results=3)
+            
+            # Offload the synchronous search to a background thread to prevent bot lag
+            results = await asyncio.to_thread(search_sync)
+            
+            if not results:
+                return "No search results found for this query."
+            
+            # Format the results into a clean string for the AI to read
+            formatted = "\n\n".join([
+                f"Title: {r.get('title', 'Unknown')}\nSnippet: {r.get('body', 'No description')}\nLink: {r.get('href', 'No link')}" 
+                for r in results
+            ])
+            return formatted
+            
         except Exception as e:
             return f"Search failed with error: {str(e)}"
     
