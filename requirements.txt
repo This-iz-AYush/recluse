@@ -4,3 +4,4 @@ aiohttp
 python-dotenv
 motor
 quart
+duckduckgo-search
