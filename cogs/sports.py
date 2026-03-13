@@ -157,7 +157,23 @@ class Sports(commands.Cog):
                 for item in filtered_items[:3]:
                     title = item.find('title').text if item.find('title') is not None else 'Unknown Match'
                     description = item.find('description').text if item.find('description') is not None else 'No score data'
-                    embed.add_field(name=title, value=description, inline=False)
+                    
+                    # --- ADDED EXTRACTION LOGIC HERE ---
+                    overs, batsman, bowler = "N/A", "N/A", "N/A"
+                    details_match = re.search(r'\((.*?)\)', description)
+                    if details_match:
+                        details = details_match.group(1).split(', ')
+                        overs = details[0] if len(details) > 0 else "N/A"
+                        batsman = details[1] if len(details) > 1 else "N/A"
+                        bowler = details[2] if len(details) > 2 else "N/A"
+                        
+                    main_score = re.sub(r'\(.*?\)', '', description).strip()
+                    formatted_stats = f"**Score:** {main_score}\n"
+                    if overs != "N/A": formatted_stats += f"**Overs/Status:** {overs}\n"
+                    if batsman != "N/A": formatted_stats += f"**Batsman:** {batsman}\n"
+                    if bowler != "N/A": formatted_stats += f"**Bowler:** {bowler}"
+                    
+                    embed.add_field(name=title, value=formatted_stats, inline=False)
             try: await message.edit(embed=embed)
             except discord.NotFound: del self.live_trackers[msg_id]
             except Exception: pass
