@@ -515,8 +515,8 @@ class AI(commands.Cog):
         payload = {
             "prompt": prompt,
             "model": selected_model_value,
-            "width": 1024,
-            "height": 1024
+            "width": 2048,
+            "height": 2048
         }
         
         try:
