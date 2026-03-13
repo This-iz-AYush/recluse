@@ -7,6 +7,8 @@ import base64
 import datetime
 import io
 import asyncio
+import json
+from duckduckgo_search import AsyncDDGS
 
 class AI(commands.Cog):
     def __init__(self, bot):
@@ -222,27 +224,39 @@ class AI(commands.Cog):
                         print(f"AI Generation Error: {e}")
                         await message.channel.send(f"{message.author.mention} ❌ **Brain Freeze:** An unexpected error occurred while generating my response. A report has been filed.")
 
+    async def perform_web_search(self, query: str) -> str:
+        """Executes an asynchronous web search using DuckDuckGo."""
+        try:
+            async with AsyncDDGS() as ddgs:
+                results = [r async for r in ddgs.text(query, max_results=3)]
+                if not results:
+                    return "No search results found for this query."
+                
+                # Format the results into a clean string for the AI to read
+                formatted = "\n\n".join([f"Title: {r['title']}\nSnippet: {r['body']}\nLink: {r['href']}" for r in results])
+                return formatted
+        except Exception as e:
+            return f"Search failed with error: {str(e)}"
+    
     # ... (Keep your existing generate_nexusify_response, generate_gemini_response, generate_sarvam_response, and imagine functions exactly as they are) ...
     async def generate_nexusify_response(self, prompt_text: str, image_parts: list = None, history: list = None) -> str:
         api_key = os.getenv('NEXUSIFY_API_KEY')
         if not api_key:
             return "⚙️ Configuration Error: `NEXUSIFY_API_KEY` is missing from your .env file."
             
-        # Safely remove any accidental quotes from the .env file
         api_key = api_key.strip().replace('"', '').replace("'", "")
-
         url = "https://api.nexusify.co/v1/chat/completions" 
         
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "User-Agent": "RecluseBot/1.0"
         }
         
         messages = [
             {
                 "role": "system",
-                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the exact factual answer to a question (such as identifying a specific song, movie, or historical fact), you must explicitly state that you do not know. Do not attempt to guess, fabricate, or invent titles and names. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²). For multi-line derivations, use Discord code blocks (```) to align the steps cleanly."
+                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the exact factual answer to a question, use your web_search tool to find it. Do not guess. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text."
             }
         ]
 
@@ -258,46 +272,86 @@ class AI(commands.Cog):
                 mime_type = img["inlineData"]["mimeType"]
                 user_content.append({
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{b64_data}"
-                    }
+                    "image_url": {"url": f"data:{mime_type};base64,{b64_data}"}
                 })
         else:
             user_content = prompt_text
 
         messages.append({"role": "user", "content": user_content})
 
+        # --- TOOL DEFINITION ---
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Perform a live web search to get up-to-date information, news, or facts.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The exact search query to look up."
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+
         payload = {
             "model": "gpt-5.4", 
-            "messages": messages
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto"
         }
         
         try:
             async with aiohttp.ClientSession() as session:
+                # --- FIRST REQUEST: Ask the AI for an answer (or a tool call) ---
                 async with session.post(url, headers=headers, json=payload, timeout=120) as response:
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                        except Exception:
-                            return "❌ **API Error:** Received HTML instead of JSON. Cloudflare may be blocking the request."
-                            
-                        if 'choices' in data and len(data['choices']) > 0:
-                            return data['choices'][0]['message']['content'].strip()
-                        elif 'completion' in data: 
-                            return data['completion'].strip()
-                        return "I received a response, but couldn't understand the format."
-                    else:
-                        try:
-                            error_data = await response.json()
-                            error_msg = str(error_data.get('error', error_data))[:150]
-                        except Exception:
-                            error_text = await response.text()
-                            if error_text.strip().startswith('<'):
-                                error_msg = "Cloudflare / Gateway Error: The Nexusify server is currently offline or blocking the request."
-                            else:
-                                error_msg = error_text[:150]
+                    if response.status != 200:
+                        error_text = await response.text()
+                        return f"❌ **Nexusify API Error {response.status}:** `{error_text[:150]}`"
+                    
+                    data = await response.json()
+                    response_message = data['choices'][0]['message']
+
+                    # --- TOOL EXECUTION LOGIC ---
+                    if response_message.get('tool_calls'):
+                        # 1. Append the AI's tool request to the conversation history
+                        messages.append(response_message)
+                        
+                        # 2. Execute every tool the AI asked for
+                        for tool_call in response_message['tool_calls']:
+                            if tool_call['function']['name'] == 'web_search':
+                                args = json.loads(tool_call['function']['arguments'])
+                                search_query = args['query']
                                 
-                        return f"❌ **Nexusify API Error {response.status}:** `{error_msg}`"
+                                # Run our DuckDuckGo function
+                                search_results = await self.perform_web_search(search_query)
+                                
+                                # 3. Append the raw search results back to the conversation
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call['id'],
+                                    "name": "web_search",
+                                    "content": search_results
+                                })
+                        
+                        # 4. Make a SECOND request to the AI with the new search context
+                        payload["messages"] = messages
+                        async with session.post(url, headers=headers, json=payload, timeout=120) as final_response:
+                            if final_response.status == 200:
+                                final_data = await final_response.json()
+                                return final_data['choices'][0]['message']['content'].strip()
+                            else:
+                                return "❌ **Error:** Failed to generate response after reading search results."
+
+                    # If no tools were called, just return the standard text response
+                    return response_message.get('content', "I couldn't process that.").strip()
+
         except asyncio.TimeoutError:
              return "⏳ **Nexusify Timeout:** The API took too long to respond. Please try again."
         except Exception as e:
