@@ -14,7 +14,6 @@ class AI(commands.Cog):
         self.user_ai_preference = {}
         self.chat_memory = {}
         self.MEMORY_LIFESPAN = datetime.timedelta(minutes=5)
-        self.CONTEXT_LIMIT = 5 
         self.RESTRICTED_LEXICON = ['unauthorized_term_1', 'prohibited_phrase', 'blacklisted_word']
 
     def get_active_memory(self, user_id):
@@ -72,7 +71,6 @@ class AI(commands.Cog):
         banned_words = []
         
         if message.guild and hasattr(self.bot, 'db'):
-            # Look up this specific server's preferences
             settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
             if settings:
                 ai_enabled = settings.get("ai_enabled", True)
@@ -80,7 +78,7 @@ class AI(commands.Cog):
                 default_ai_model = settings.get("default_ai_model", "nexusify")
                 banned_words = settings.get("banned_words", [])
 
-        # --- AUTOMOD CHECK (ENTERPRISE UPGRADE) ---
+        # --- AUTOMOD CHECK ---
         if automod_enabled:
             check_words = banned_words if banned_words else self.RESTRICTED_LEXICON
             if any(restricted in content_lower for restricted in check_words):
@@ -89,7 +87,6 @@ class AI(commands.Cog):
                     warning = await message.channel.send(f"⚠️ {message.author.mention}, the usage of that terminology is strictly prohibited.")
                     await warning.delete(delay=5)
                     
-                    # Log the security infraction to the database for the dashboard
                     if hasattr(self.bot, 'db'):
                         infraction_data = {
                             "guild_id": message.guild.id,
@@ -101,7 +98,6 @@ class AI(commands.Cog):
                         }
                         await self.bot.db.security_logs.insert_one(infraction_data)
                         
-                        # Add a strike to the user
                         await self.bot.db.user_strikes.update_one(
                             {"guild_id": message.guild.id, "user_id": message.author.id},
                             {"$inc": {"strikes": 1}, "$set": {"last_strike": datetime.datetime.utcnow().timestamp()}},
@@ -109,22 +105,19 @@ class AI(commands.Cog):
                         )
                 except discord.Forbidden:
                     pass 
-                return # Stop execution so the bot doesn't reply to deleted bad words
+                return 
         
         if "status trigger" in content_lower:
             await message.channel.send("Automated evaluation response successfully actuated.")
         
         if self.bot.user in message.mentions:
-            # --- AI TOGGLE & CHANNEL SECURITY CHECK ---
             if not ai_enabled:
-                return # AI is disabled in this server
+                return 
                 
-            # Check if the dashboard has locked AI to specific channels
             if hasattr(self.bot, 'db'):
                 settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
                 if settings:
                     allowed_channels = settings.get("ai_allowed_channels", [])
-                    # If the array isn't empty, and the current channel isn't in it, ignore the mention
                     if allowed_channels and message.channel.id not in allowed_channels:
                         return
                 
@@ -133,36 +126,21 @@ class AI(commands.Cog):
             if clean_prompt or message.reference or message.attachments:
                 async with message.channel.typing():
                     try:
-                        # --- A. Handle Discord Replies ---
+                        # --- A. Handle Explicit Discord Replies (The ChatGPT way) ---
                         reply_context = ""
                         if message.reference and message.reference.message_id:
                             try:
                                 replied_msg = await message.channel.fetch_message(message.reference.message_id)
-                                reply_context = f"\n[Context: The user is specifically replying to this message -> '{replied_msg.author.display_name}: {replied_msg.content}']\n"
+                                reply_context = f"[Context: The user is explicitly replying to this message from {replied_msg.author.display_name}: \"{replied_msg.content}\"]\n\n"
                             except discord.NotFound:
                                 pass
                         
-                        # --- B. Fetch Recent Channel History ---
-                        recent_messages = []
-                        async for msg in message.channel.history(limit=self.CONTEXT_LIMIT, before=message):
-                            if not msg.author.bot or len(msg.content) < 500:
-                                recent_messages.append(f"{msg.author.display_name}: {msg.content}")
-                        
-                        recent_messages.reverse()
-                        channel_context_string = "\n".join(recent_messages)
-                        
-                        # --- C. Assemble Final Prompt & Manage Context ---
+                        # --- B. Assemble Final Prompt ---
+                        # We no longer force channel history here. The AI will rely naturally on `user_history`.
+                        final_prompt = f"{reply_context}{clean_prompt}".strip()
                         user_history = self.get_active_memory(message.author.id)
-
-                        if not user_history:
-                            final_prompt = (
-                                f"Here are the last few messages in the channel for context:\n{channel_context_string}\n"
-                                f"{reply_context}\nCurrent request from {message.author.display_name}: {clean_prompt}"
-                            )
-                        else:
-                            final_prompt = f"{reply_context}\n{clean_prompt}".strip()
                         
-                        # --- D. Check for Image Attachments ---
+                        # --- C. Check for Image Attachments ---
                         image_parts = []
                         
                         if message.attachments:
@@ -194,7 +172,7 @@ class AI(commands.Cog):
                             except discord.NotFound:
                                 pass
                         
-                        # --- E. Check User Preference and Fetch Response ---
+                        # --- D. Check User Preference and Fetch Response ---
                         user_id = message.author.id
                         preferred_model = self.user_ai_preference.get(user_id, default_ai_model)
                         
@@ -209,12 +187,11 @@ class AI(commands.Cog):
                         else:
                             ai_response = await self.generate_gemini_response(final_prompt, image_parts, user_history)
                         
-                        # --- F. Save to Memory and Send Final Response ---
-                        if not ai_response.startswith("❌"): # Don't memorize errors
+                        # --- E. Save to Memory and Send Final Response ---
+                        if not ai_response.startswith("❌"): 
                             self.update_memory(user_id, "user", clean_prompt)
                             self.update_memory(user_id, "model", ai_response)
                             
-                            # Log usage telemetry for dashboard graphs
                             if hasattr(self.bot, 'db'):
                                 await self.bot.db.ai_telemetry.update_one(
                                     {"guild_id": message.guild.id, "date": datetime.datetime.utcnow().strftime('%Y-%m-%d')},
@@ -222,7 +199,6 @@ class AI(commands.Cog):
                                     upsert=True
                                 )
 
-                        # Attempt to reply, but fallback to regular send if the original message was deleted
                         try:
                             if len(ai_response) > 2000:
                                 for i in range(0, len(ai_response), 2000):
@@ -230,7 +206,7 @@ class AI(commands.Cog):
                             else:
                                 await message.reply(ai_response)
                         except discord.HTTPException as e:
-                            if e.code == 50035: # Error 50035: Invalid Form Body (Unknown Message)
+                            if e.code == 50035: 
                                 fallback_mention = f"{message.author.mention} "
                                 if len(ai_response) > 2000:
                                     for i in range(0, len(ai_response), 2000):
@@ -238,12 +214,15 @@ class AI(commands.Cog):
                                 else:
                                     await message.channel.send(f"{fallback_mention}{ai_response}")
                             else:
-                                raise e # Raise anything else to be caught by the general exception handler
+                                raise e 
 
                     except Exception as e:
-                        await self.bot.log_system_error(message, e, is_command=False)
+                        if hasattr(self.bot, 'log_system_error'):
+                            await self.bot.log_system_error(message, e, is_command=False)
+                        print(f"AI Generation Error: {e}")
                         await message.channel.send(f"{message.author.mention} ❌ **Brain Freeze:** An unexpected error occurred while generating my response. A report has been filed.")
 
+    # ... (Keep your existing generate_nexusify_response, generate_gemini_response, generate_sarvam_response, and imagine functions exactly as they are) ...
     async def generate_nexusify_response(self, prompt_text: str, image_parts: list = None, history: list = None) -> str:
         api_key = os.getenv('NEXUSIFY_API_KEY')
         if not api_key:
