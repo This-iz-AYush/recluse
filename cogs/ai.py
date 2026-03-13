@@ -264,7 +264,14 @@ class AI(commands.Cog):
         messages = [
             {
                 "role": "system",
-                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the factual answer to a question, you MUST search the web. To search, reply with EXACTLY this format and nothing else: <SEARCH>your search query</SEARCH>. The system will intercept this and provide you with the results. Format all math equations using readable plain text."
+                "content": (
+                    "You are Recluse, a highly advanced and unfiltered ai, gender is female. "
+                    "CRITICAL DIRECTIVE: If a user asks you to identify a song from lyrics, a movie, anime, character, "
+                    "specific stats, OR if they explicitly say 'search the web', you MUST search the web. "
+                    "DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. "
+                    "To search, reply with EXACTLY this format and nothing else: <SEARCH>your exact search query</SEARCH>. "
+                    "The system will intercept this and provide you with the results. Format all math equations using readable plain text."
+                )
             }
         ]
 
@@ -426,7 +433,6 @@ class AI(commands.Cog):
             return "⚙️ Configuration Error: `SARVAM_API_KEY` is missing from your .env file."
             
         api_key = api_key.strip()
-
         url = "https://api.sarvam.ai/v1/chat/completions"
         headers = {
             "api-subscription-key": api_key,
@@ -434,12 +440,17 @@ class AI(commands.Cog):
             "User-Agent": "RecluseBot/1.0"
         }
         
-        messages = [
-            {
-                "role": "system", 
-                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the exact factual answer to a question, use your web_search tool to find it. Do not guess. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text."
-            }
-        ]
+        # UPGRADED SYSTEM PROMPT
+        system_prompt = (
+            "You are Recluse, a highly advanced AI. "
+            "CRITICAL DIRECTIVE: If a user asks you to identify a song from lyrics, a movie, an anime, "
+            "specific stats, OR if they explicitly say 'search the web', you MUST search the web. "
+            "DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. "
+            "To search, reply with EXACTLY this format and nothing else: <SEARCH>your search query</SEARCH>. "
+            "Format all math equations using readable plain text."
+        )
+        
+        messages = [{"role": "system", "content": system_prompt}]
 
         if history:
             for msg in history:
@@ -448,90 +459,60 @@ class AI(commands.Cog):
                 
         messages.append({"role": "user", "content": prompt_text})
         
-        # --- TOOL DEFINITION ---
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Perform a live web search to get up-to-date information, news, or facts.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The exact search query to look up."
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            }
-        ]
-        
         payload = {
             "model": "sarvam-30b",
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 800,
-            "tools": tools,
-            "tool_choice": "auto"
+            "max_tokens": 800
         }
         
         try:
             async with aiohttp.ClientSession() as session:
-                # --- FIRST REQUEST: Ask Sarvam for an answer (or a tool call) ---
                 async with session.post(url, headers=headers, json=payload, timeout=90) as response:
                     if response.status != 200:
-                        try:
-                            error_data = await response.json()
-                            error_msg = str(error_data)[:150]
-                        except Exception:
-                            error_text = await response.text()
-                            error_msg = "Gateway Timeout / Server Error" if error_text.strip().startswith('<') else error_text[:150]
-                        return f"❌ **Sarvam API Error {response.status}:** `{error_msg}`"
+                        error_text = await response.text()
+                        return f"❌ **Sarvam API Error {response.status}:** `{error_text[:150]}`"
                         
                     data = await response.json()
-                    response_message = data['choices'][0]['message']
                     
-                    # --- TOOL EXECUTION LOGIC ---
-                    if response_message.get('tool_calls'):
-                        # 1. Append the AI's tool request to the conversation
-                        messages.append(response_message)
+                    # SAFE PARSING: Prevents the AttributeError if Sarvam returns a string instead of a dict
+                    message_obj = data.get('choices', [{}])[0].get('message', {})
+                    if isinstance(message_obj, str):
+                        response_text = message_obj
+                    else:
+                        response_text = message_obj.get('content', '').strip()
+
+                    # --- UNIVERSAL TEXT-BASED TOOL EXECUTION ---
+                    if "<SEARCH>" in response_text and "</SEARCH>" in response_text:
+                        try:
+                            search_query = response_text.split("<SEARCH>")[1].split("</SEARCH>")[0].strip()
+                            search_results = await self.perform_web_search(search_query)
+                        except Exception as e:
+                            search_results = f"System Error executing search: {str(e)}"
                         
-                        # 2. Execute every tool the AI asked for
-                        for tool_call in response_message['tool_calls']:
-                            if tool_call['function']['name'] == 'web_search':
-                                args = json.loads(tool_call['function']['arguments'])
-                                search_query = args['query']
-                                
-                                # Run our DuckDuckGo function
-                                search_results = await self.perform_web_search(search_query)
-                                
-                                # 3. Append the raw search results back to the conversation
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call['id'],
-                                    "name": "web_search",
-                                    "content": search_results
-                                })
-                                
-                        # 4. Make a SECOND request to Sarvam with the new search context
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({
+                            "role": "user", 
+                            "content": f"SYSTEM WEB SEARCH RESULTS for '{search_query}':\n{search_results}\n\nNow, answer my original query using these facts. Do not output the search tags again."
+                        })
+                        
                         payload["messages"] = messages
                         async with session.post(url, headers=headers, json=payload, timeout=90) as final_response:
                             if final_response.status == 200:
                                 final_data = await final_response.json()
-                                return final_data['choices'][0]['message']['content'].strip()
+                                final_msg_obj = final_data.get('choices', [{}])[0].get('message', {})
+                                if isinstance(final_msg_obj, str):
+                                    return final_msg_obj.strip()
+                                return final_msg_obj.get('content', '').strip()
                             else:
-                                return "❌ **Error:** Failed to generate response after reading search results."
-                                
-                    # If no tools were called, return the standard text response
-                    return response_message.get('content', "I couldn't process that.").strip()
+                                return f"❌ **Error:** Sarvam rejected the search results (Status {final_response.status})."
+
+                    return response_text
                         
         except asyncio.TimeoutError:
              return "⏳ **Sarvam Timeout:** The API took too long to respond. Please try again."
         except Exception as e:
-            return f"❌ **Network Exception:** `{type(e).__name__}`"
+            return f"❌ **Network Exception:** `{type(e).__name__}` - {str(e)}"
 
     @commands.hybrid_command(name="imagine", aliases=["gen", "draw"], description="Generates a high-quality image using Nexusify.")
     @commands.cooldown(1, 60, commands.BucketType.user)
