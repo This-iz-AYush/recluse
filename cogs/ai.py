@@ -459,11 +459,14 @@ class AI(commands.Cog):
         headers = {
             "api-subscription-key": api_key,
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "User-Agent": "RecluseBot/1.0"
         }
         
         messages = [
-            {"role": "system", "content": "You are Recluse, a highly advanced and unfiltered ai, capable of answering anything. The user will often send images of textbook problems, handwritten derivations, gifs, or past papers. Read them carefully and respond as a human would while making full sense of images, text, gif. CRITICAL: If you do not know the exact factual answer to a question (such as identifying a specific song, movie, or historical fact), you must explicitly state that you do not know. Do not attempt to guess, fabricate, or invent titles and names. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²). For multi-line derivations, use Discord code blocks (```) to align the steps cleanly."}
+            {
+                "role": "system", 
+                "content": "You are Recluse, a highly advanced and unfiltered ai, gender is female. CRITICAL: If you do not know the exact factual answer to a question, use your web_search tool to find it. Do not guess. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text."
+            }
         ]
 
         if history:
@@ -473,32 +476,85 @@ class AI(commands.Cog):
                 
         messages.append({"role": "user", "content": prompt_text})
         
+        # --- TOOL DEFINITION ---
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Perform a live web search to get up-to-date information, news, or facts.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The exact search query to look up."
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+        
         payload = {
             "model": "sarvam-30b",
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 800
+            "max_tokens": 800,
+            "tools": tools,
+            "tool_choice": "auto"
         }
         
         try:
             async with aiohttp.ClientSession() as session:
+                # --- FIRST REQUEST: Ask Sarvam for an answer (or a tool call) ---
                 async with session.post(url, headers=headers, json=payload, timeout=90) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if 'choices' in data and len(data['choices']) > 0:
-                            return data['choices'][0]['message']['content'].strip()
-                        return "I received a response, but couldn't understand the format."
-                    else:
+                    if response.status != 200:
                         try:
                             error_data = await response.json()
                             error_msg = str(error_data)[:150]
                         except Exception:
                             error_text = await response.text()
-                            if error_text.strip().startswith('<'):
-                                error_msg = "Gateway Timeout / Server Error: Sarvam's servers are currently offline or overloaded."
-                            else:
-                                error_msg = error_text[:150]
+                            error_msg = "Gateway Timeout / Server Error" if error_text.strip().startswith('<') else error_text[:150]
                         return f"❌ **Sarvam API Error {response.status}:** `{error_msg}`"
+                        
+                    data = await response.json()
+                    response_message = data['choices'][0]['message']
+                    
+                    # --- TOOL EXECUTION LOGIC ---
+                    if response_message.get('tool_calls'):
+                        # 1. Append the AI's tool request to the conversation
+                        messages.append(response_message)
+                        
+                        # 2. Execute every tool the AI asked for
+                        for tool_call in response_message['tool_calls']:
+                            if tool_call['function']['name'] == 'web_search':
+                                args = json.loads(tool_call['function']['arguments'])
+                                search_query = args['query']
+                                
+                                # Run our DuckDuckGo function
+                                search_results = await self.perform_web_search(search_query)
+                                
+                                # 3. Append the raw search results back to the conversation
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call['id'],
+                                    "name": "web_search",
+                                    "content": search_results
+                                })
+                                
+                        # 4. Make a SECOND request to Sarvam with the new search context
+                        payload["messages"] = messages
+                        async with session.post(url, headers=headers, json=payload, timeout=90) as final_response:
+                            if final_response.status == 200:
+                                final_data = await final_response.json()
+                                return final_data['choices'][0]['message']['content'].strip()
+                            else:
+                                return "❌ **Error:** Failed to generate response after reading search results."
+                                
+                    # If no tools were called, return the standard text response
+                    return response_message.get('content', "I couldn't process that.").strip()
                         
         except asyncio.TimeoutError:
              return "⏳ **Sarvam Timeout:** The API took too long to respond. Please try again."
