@@ -71,7 +71,15 @@ class Misc(commands.Cog):
         guild = ctx.guild
         
         embed = discord.Embed(title=f"Server Dossier: {guild.name}", color=0x2b2d31)
-        if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+        
+        # Now prominently displays a link to the server avatar
+        if guild.icon: 
+            embed.set_thumbnail(url=guild.icon.url)
+            embed.description = f"[**View Full Server Avatar**]({guild.icon.url})"
+            
+        # Adds the server banner if they have one!
+        if guild.banner:
+            embed.set_image(url=guild.banner.url)
         
         embed.add_field(name="🛡️ Authority", value=f"**Owner:** {guild.owner.mention}\n**ID:** `{guild.owner.id}`", inline=True)
         embed.add_field(name="🆔 Network ID", value=f"`{guild.id}`", inline=True)
