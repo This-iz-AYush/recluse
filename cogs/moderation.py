@@ -147,6 +147,7 @@ class Moderation(commands.Cog):
         except Exception as e: await ctx.send(f"❌ **Error:** `{e}`")
 
     @commands.hybrid_command(name="vckick", description="Forcefully terminates a user's voice connection.")
+    @commands.has_permissions(moderate_members=True)
     async def vckick(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         if not (ctx.author == ctx.guild.owner or ctx.author.guild_permissions.administrator or ctx.author.guild_permissions.move_members): return await ctx.send("❌ **Denied:** Missing `Move Members` permission.")
         if member.voice and member.voice.channel:
