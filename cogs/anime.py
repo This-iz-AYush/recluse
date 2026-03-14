@@ -15,7 +15,15 @@ class Anime(commands.Cog):
                 upsert=True
             )
 
+    # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: pass
+                return False
+                
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": ctx.guild.id})
