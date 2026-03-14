@@ -52,9 +52,13 @@ class AI(commands.Cog):
             "timestamp": datetime.datetime.utcnow()
         })
 
-    @commands.hybrid_command(name="choose_ai", description="Switch your AI between Nexusify, Gemini, and Sarvam.")
+    @commands.hybrid_command(
+        name="choose_ai", 
+        description="Switch your AI between Nexusify, Gemini, and Sarvam.",
+        usage="/choose_ai <model>",
+        help="/choose_ai gemini"
+    )
     async def choose_ai(self, ctx, model: str):
-        """Usage: /choose_ai nexusify OR /choose_ai gemini OR /choose_ai sarvam"""
         model_lower = model.lower()
         if model_lower not in ["gemini", "sarvam", "nexusify"]:
             return await ctx.send("❌ Invalid choice. Please use `/choose_ai nexusify`, `/choose_ai gemini`, or `/choose_ai sarvam`.")
@@ -62,7 +66,12 @@ class AI(commands.Cog):
         self.user_ai_preference[ctx.author.id] = model_lower
         await ctx.send(f"✅ Successfully switched your active AI to **{model_lower.title()}**!")
 
-    @commands.hybrid_command(name="clear_memory", description="Wipes your conversation history with the bot to start fresh.")
+    @commands.hybrid_command(
+        name="clear_memory", 
+        description="Wipes your conversation history with the bot to start fresh.",
+        usage="/clear_memory",
+        help="/clear_memory"
+    )
     async def clear_memory(self, ctx):
         user_id = ctx.author.id
         if user_id in self.chat_memory:
@@ -451,7 +460,7 @@ class AI(commands.Cog):
             return "⚙️ Configuration Error: `SARVAM_API_KEY` is missing from your .env file."
             
         api_key = api_key.strip()
-        url = "https://api.sarvam.ai/v1/chat/completions"
+        url = "[https://api.sarvam.ai/v1/chat/completions](https://api.sarvam.ai/v1/chat/completions)"
         headers = {
             "api-subscription-key": api_key,
             "Content-Type": "application/json",
@@ -532,7 +541,13 @@ class AI(commands.Cog):
         except Exception as e:
             return f"❌ **Network Exception:** `{type(e).__name__}` - {str(e)}"
 
-    @commands.hybrid_command(name="imagine", aliases=["gen", "draw"], description="Generates a high-quality image using Nexusify.")
+    @commands.hybrid_command(
+        name="imagine", 
+        aliases=["gen", "draw"], 
+        description="Generates a high-quality image using Nexusify.",
+        usage="/imagine <prompt> [model]",
+        help="/imagine A futuristic cyberpunk city at night flux"
+    )
     @commands.cooldown(1, 60, commands.BucketType.user)
     @app_commands.describe(
         prompt="A detailed text description of the desired image.",
@@ -574,7 +589,7 @@ class AI(commands.Cog):
         )
         wait_msg = await ctx.send(embed=embed_wait)
 
-        url = "https://api.nexusify.co/v1/generate-image"
+        url = "[https://api.nexusify.co/v1/generate-image](https://api.nexusify.co/v1/generate-image)"
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -614,7 +629,7 @@ class AI(commands.Cog):
                                 
                         else:
                             if image_url.startswith("/"):
-                                image_url = "https://api.nexusify.co" + image_url
+                                image_url = "[https://api.nexusify.co](https://api.nexusify.co)" + image_url
                                 
                             try:
                                 async with session.get(image_url) as img_response:
@@ -666,4 +681,3 @@ class AI(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
-    
