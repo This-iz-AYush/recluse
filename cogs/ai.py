@@ -316,7 +316,7 @@ class AI(commands.Cog):
         # Notice: The 'tools' and 'tool_choice' arrays have been completely removed 
         # to prevent the Nexusify 500 Server Crash.
         payload = {
-            "model": "gpt-5.4", 
+            "model": "llama-3.1-405b-instruct", 
             "messages": messages
         }
         
