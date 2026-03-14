@@ -460,7 +460,7 @@ class AI(commands.Cog):
             return "⚙️ Configuration Error: `SARVAM_API_KEY` is missing from your .env file."
             
         api_key = api_key.strip()
-        url = "[https://api.sarvam.ai/v1/chat/completions](https://api.sarvam.ai/v1/chat/completions)"
+        url = "https://api.sarvam.ai/v1/chat/completions"
         headers = {
             "api-subscription-key": api_key,
             "Content-Type": "application/json",
@@ -589,7 +589,7 @@ class AI(commands.Cog):
         )
         wait_msg = await ctx.send(embed=embed_wait)
 
-        url = "[https://api.nexusify.co/v1/generate-image](https://api.nexusify.co/v1/generate-image)"
+        url = "https://api.nexusify.co/v1/generate-image"
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -629,7 +629,7 @@ class AI(commands.Cog):
                                 
                         else:
                             if image_url.startswith("/"):
-                                image_url = "[https://api.nexusify.co](https://api.nexusify.co)" + image_url
+                                image_url = "https://api.nexusify.co" + image_url
                                 
                             try:
                                 async with session.get(image_url) as img_response:
