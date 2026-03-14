@@ -265,5 +265,110 @@ class Moderation(commands.Cog):
         except Exception: 
             await ctx.send("❌ **Error:** Failed to clean.", ephemeral=True)
 
+    @commands.hybrid_command(name="softban", description="Bans and immediately unbans to clear recent messages.")
+    @commands.has_permissions(ban_members=True)
+    async def softban(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
+        await ctx.defer()
+        if not await self.hierarchy_check(ctx, member): return
+        
+        try: await member.send(f"🔨 You have been softbanned from **{ctx.guild.name}** to clear your messages.\n**Reason:** {reason}")
+        except discord.Forbidden: pass
+            
+        try:
+            # Ban with message deletion (7 days is the max standard)
+            await member.ban(reason=f"Softban by {ctx.author} | {reason}", delete_message_days=7)
+            # Immediately unban
+            await ctx.guild.unban(member, reason="Softban release")
+            
+            await self.log_mod_action(ctx, "Softban", member, reason)
+            await ctx.send(f"✅ Successfully softbanned {member.mention}.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** Failed to softban member. `{e}`")
+
+    @commands.hybrid_command(name="slowmode", description="Sets the slowmode delay for the current channel.")
+    @commands.has_permissions(manage_channels=True)
+    async def slowmode(self, ctx, seconds: int, channel: discord.TextChannel = None):
+        channel = channel or ctx.channel
+        if seconds < 0 or seconds > 21600: 
+            return await ctx.send("❌ **Error:** Slowmode delay must be between 0 and 21600 seconds (6 hours).", ephemeral=True)
+        
+        try:
+            await channel.edit(slowmode_delay=seconds, reason=f"Action by {ctx.author}")
+            if seconds == 0:
+                await ctx.send(f"✅ Disabled slowmode in {channel.mention}.")
+            else:
+                await ctx.send(f"✅ Set slowmode in {channel.mention} to **{seconds} seconds**.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** Failed to set slowmode. `{e}`")
+
+    @commands.hybrid_command(name="role", description="Toggles a role for a member (adds if they don't have it, removes if they do).")
+    @commands.has_permissions(manage_roles=True)
+    async def role(self, ctx, member: discord.Member, role: discord.Role):
+        # Specific hierarchy checks for role assignment
+        if ctx.author != ctx.guild.owner and role.position >= ctx.author.top_role.position:
+            return await ctx.send("❌ **Hierarchy Error:** You cannot manage a role higher than or equal to your own top role.", ephemeral=True)
+        if role.position >= ctx.guild.me.top_role.position:
+            return await ctx.send("❌ **Execution Blocked:** That role is higher than or equal to my highest role.", ephemeral=True)
+
+        try:
+            if role in member.roles:
+                await member.remove_roles(role, reason=f"Action by {ctx.author}")
+                await ctx.send(f"✅ Removed `{role.name}` from {member.mention}.")
+            else:
+                await member.add_roles(role, reason=f"Action by {ctx.author}")
+                await ctx.send(f"✅ Added `{role.name}` to {member.mention}.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** `{e}`")
+
+    @commands.hybrid_command(name="clearwarns", description="Clears all database warnings for a user.")
+    @commands.has_permissions(moderate_members=True)
+    async def clearwarns(self, ctx, member: discord.Member):
+        if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
+        
+        try:
+            result = await self.bot.db.warnings.delete_many({"guild_id": ctx.guild.id, "user_id": member.id})
+            await self.log_mod_action(ctx, "Clear Warnings", member, f"Cleared {result.deleted_count} warnings")
+            await ctx.send(f"✅ Successfully cleared **{result.deleted_count}** warnings for {member.mention}.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** Failed to clear warnings. `{e}`")
+
+    @commands.hybrid_command(name="nick", description="Changes or resets a member's nickname.")
+    @commands.has_permissions(manage_nicknames=True)
+    async def nick(self, ctx, member: discord.Member, *, nickname: str = None):
+        if not await self.hierarchy_check(ctx, member): return
+        
+        try:
+            await member.edit(nick=nickname, reason=f"Action by {ctx.author}")
+            if nickname:
+                await ctx.send(f"✅ Changed {member.mention}'s nickname to **{nickname}**.")
+            else:
+                await ctx.send(f"✅ Reset {member.mention}'s nickname.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** `{e}`")
+
+    @commands.hybrid_command(name="vmute", description="Server-mutes a member in voice channels.")
+    @commands.has_permissions(mute_members=True)
+    async def vmute(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
+        if not await self.hierarchy_check(ctx, member): return
+        
+        try:
+            await member.edit(mute=True, reason=f"Action by {ctx.author} | {reason}")
+            await self.log_mod_action(ctx, "Voice Mute", member, reason)
+            await ctx.send(f"✅ Voice muted {member.mention}.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** `{e}`")
+
+    @commands.hybrid_command(name="vunmute", description="Removes a server voice mute from a member.")
+    @commands.has_permissions(mute_members=True)
+    async def vunmute(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
+        if not await self.hierarchy_check(ctx, member): return
+        
+        try:
+            await member.edit(mute=False, reason=f"Action by {ctx.author} | {reason}")
+            await self.log_mod_action(ctx, "Voice Unmute", member, reason)
+            await ctx.send(f"✅ Voice unmuted {member.mention}.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** `{e}`")
+        
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
