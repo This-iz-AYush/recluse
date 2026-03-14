@@ -150,19 +150,43 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "channelinfo")
 
-    @commands.hybrid_command(name="poll", description="Initiate a network-wide binary poll.")
+    @commands.hybrid_command(name="poll", description="Create a multiple-choice poll with up to 10 options.")
     @commands.has_permissions(manage_messages=True)
-    async def poll(self, ctx, *, question: str):
-        embed = discord.Embed(title="📊 Active Poll", description=f"**{question}**", color=0x2b2d31)
-        embed.set_footer(text=f"Initiated by {ctx.author.display_name}")
-        message = await ctx.send(embed=embed)
+    async def poll(
+        self, 
+        ctx, 
+        message: str, 
+        choice1: str, 
+        choice2: str, 
+        choice3: str = None, 
+        choice4: str = None, 
+        choice5: str = None, 
+        choice6: str = None, 
+        choice7: str = None, 
+        choice8: str = None, 
+        choice9: str = None, 
+        choice10: str = None
+    ):
+        await ctx.defer()
+        raw_choices = [choice1, choice2, choice3, choice4, choice5, choice6, choice7, choice8, choice9, choice10]
+        choices = [c for c in raw_choices if c is not None and c.strip() != ""]
+        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
         
-        try:
-            await message.add_reaction("👍")
-            await message.add_reaction("👎")
-        except discord.Forbidden:
-            pass
+        description = f"**{message}**\n\n"
+        for i, choice in enumerate(choices):
+            description += f"{emojis[i]} {choice}\n\n"
             
+        embed = discord.Embed(description=description.strip(), color=0x2b2d31, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=f"Poll by {ctx.author.display_name}")
+        
+        poll_msg = await ctx.send(embed=embed)
+        
+        for i in range(len(choices)):
+            try:
+                await poll_msg.add_reaction(emojis[i])
+            except discord.Forbidden:
+                pass
+                
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "poll")
 
     @commands.hybrid_command(name="color", description="Analyze a HEX color code and return its data.")
