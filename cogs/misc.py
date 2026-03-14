@@ -50,6 +50,7 @@ class Misc(commands.Cog):
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "afk")
 
     @commands.hybrid_command(name="serverinfo", description="Get comprehensive security and telemetry data about the server.")
+    @commands.has_permissions(moderate_members=True)
     async def serverinfo(self, ctx):
         if not ctx.guild: return await ctx.send("❌ Server only command.")
         guild = ctx.guild
@@ -73,6 +74,7 @@ class Misc(commands.Cog):
         await self.log_telemetry(ctx.guild.id, "serverinfo")
 
     @commands.hybrid_command(name="whois", description="Pull a security profile on a specific user.")
+    @commands.has_permissions(moderate_members=True)
     async def whois(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         
@@ -97,6 +99,7 @@ class Misc(commands.Cog):
         await self.log_telemetry(ctx.guild.id, "whois")
 
     @commands.hybrid_command(name="avatar", description="Retrieve the high-resolution avatar of a user.")
+    @commands.has_permissions(moderate_members=True)
     async def avatar(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         await ctx.defer() 
@@ -116,6 +119,7 @@ class Misc(commands.Cog):
 
     # --- ADDITIONAL MISC COMMANDS ---
     @commands.hybrid_command(name="roleinfo", description="Pull technical and security data on a specific role.")
+    @commands.has_permissions(moderate_members=True)
     async def roleinfo(self, ctx, role: discord.Role):
         embed = discord.Embed(title=f"Role Dossier: {role.name}", color=role.color if role.color.value else 0x2b2d31)
         embed.add_field(name="🆔 Role ID", value=f"`{role.id}`", inline=True)
