@@ -15,7 +15,15 @@ class Misc(commands.Cog):
                 upsert=True
             )
 
+    # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: pass
+                return False
+                
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": ctx.guild.id})
@@ -49,12 +57,10 @@ class Misc(commands.Cog):
         embed = discord.Embed(title=f"Server Dossier: {guild.name}", color=0x2b2d31)
         if guild.icon: embed.set_thumbnail(url=guild.icon.url)
         
-        # Wick style detailed layout
         embed.add_field(name="🛡️ Authority", value=f"**Owner:** {guild.owner.mention}\n**ID:** `{guild.owner.id}`", inline=True)
         embed.add_field(name="🆔 Network ID", value=f"`{guild.id}`", inline=True)
         embed.add_field(name="📅 Inception Date", value=f"<t:{int(guild.created_at.timestamp())}:f>\n(<t:{int(guild.created_at.timestamp())}:R>)", inline=False)
         
-        # Counts
         bots = sum(1 for m in guild.members if m.bot)
         humans = guild.member_count - bots
         embed.add_field(name="👥 Population", value=f"**Total:** {guild.member_count}\n**Humans:** {humans}\n**Automata:** {bots}", inline=True)
@@ -70,7 +76,6 @@ class Misc(commands.Cog):
     async def whois(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         
-        # Fetch moderation records if available
         strikes = 0
         if hasattr(self.bot, 'db'):
             strike_record = await self.bot.db.user_strikes.find_one({"guild_id": ctx.guild.id, "user_id": member.id})
@@ -81,10 +86,8 @@ class Misc(commands.Cog):
         
         embed.add_field(name="Identity", value=f"**Mention:** {member.mention}\n**ID:** `{member.id}`\n**Bot:** {'Yes' if member.bot else 'No'}", inline=True)
         embed.add_field(name="Security Status", value=f"**Active Strikes:** `{strikes}`", inline=True)
-        
         embed.add_field(name="Timeline", value=f"**Account Created:** <t:{int(member.created_at.timestamp())}:D> (<t:{int(member.created_at.timestamp())}:R>)\n**Joined Network:** <t:{int(member.joined_at.timestamp())}:D> (<t:{int(member.joined_at.timestamp())}:R>)", inline=False)
         
-        # Role handling (safeguard against huge role lists)
         roles = [role.mention for role in reversed(member.roles[1:])] 
         roles_str = " ".join(roles) if roles else "None"
         if len(roles_str) > 1024: roles_str = roles_str[:1020] + "..."
@@ -114,6 +117,10 @@ class Misc(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not hasattr(self.bot, 'db') or not message.guild: return
+        
+        # --- 🛡️ GATEKEEPER CHECK FOR AFK SYSTEM ---
+        is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": message.author.id, "type": "user"})
+        if is_blacklisted: return
 
         settings = await self.bot.db.guild_settings.find_one({"guild_id": message.guild.id})
         if settings and settings.get("misc_enabled", True) is False: return
