@@ -58,12 +58,23 @@ class Sports(commands.Cog):
     async def before_update_sports_cache(self):
         await self.bot.wait_until_ready()
 
-    @commands.hybrid_group(name="score", fallback="menu", description="Base command for sports module.")
+    @commands.hybrid_group(
+        name="score", 
+        fallback="menu", 
+        description="Base command for sports module.",
+        usage="/score",
+        help="/score"
+    )
     async def score(self, ctx):
         await ctx.send("🏏 **Sports Module**\nUse `/score search <match>` for a one-time search, or `/score live <match>` to auto-refresh the score every 30 seconds!")
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_menu")
 
-    @score.command(name="all", description="Fetches all live cricket match scores instantly.")
+    @score.command(
+        name="all", 
+        description="Fetches all live cricket match scores instantly.",
+        usage="/score all",
+        help="/score all"
+    )
     async def score_all(self, ctx):
         items = self.sports_cache.get("items", [])
         if not items: return await ctx.send("❌ The sports cache is currently empty or no matches are being broadcasted.")
@@ -79,7 +90,12 @@ class Sports(commands.Cog):
         await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_all")
 
-    @score.command(name="search", description="Fetches live cricket match scores with detailed extraction.")
+    @score.command(
+        name="search", 
+        description="Fetches live cricket match scores with detailed extraction.",
+        usage="/score search [query]",
+        help="/score search India vs Pakistan"
+    )
     async def score_search(self, ctx, *, query: str = None):
         items = self.sports_cache.get("items", [])
         if not items: return await ctx.send("❌ The sports cache is empty.")
@@ -111,7 +127,12 @@ class Sports(commands.Cog):
         await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_search")
 
-    @score.command(name="live", description="Starts an auto-refreshing live score tracker.")
+    @score.command(
+        name="live", 
+        description="Starts an auto-refreshing live score tracker.",
+        usage="/score live <query>",
+        help="/score live Australia"
+    )
     async def score_live(self, ctx, *, query: str):
         tracker_msg = await ctx.send(embed=discord.Embed(title="🏏 Initializing Live Tracker...", description=f"Searching for `{query}`...", color=discord.Color.red()))
         real_msg = await ctx.channel.fetch_message(tracker_msg.id)
@@ -121,7 +142,12 @@ class Sports(commands.Cog):
         await ctx.send(f"✅ Live tracking started for `{query}`.", ephemeral=True)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "score_live")
 
-    @score.command(name="stop", description="Stops all active live score trackers in the current channel.")
+    @score.command(
+        name="stop", 
+        description="Stops all active live score trackers in the current channel.",
+        usage="/score stop",
+        help="/score stop"
+    )
     @commands.has_permissions(manage_messages=True)
     async def score_stop(self, ctx):
         stopped = 0
