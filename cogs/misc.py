@@ -133,6 +133,7 @@ class Misc(commands.Cog):
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "roleinfo")
 
     @commands.hybrid_command(name="channelinfo", description="Retrieve infrastructure details for a specific channel.")
+    @commands.has_permissions(manage_channels=True)
     async def channelinfo(self, ctx, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
         embed = discord.Embed(title=f"Channel Dossier: {channel.name}", color=0x2b2d31)
