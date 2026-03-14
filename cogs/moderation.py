@@ -8,7 +8,15 @@ class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: pass
+                return False
+                
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": ctx.guild.id})
@@ -19,7 +27,6 @@ class Moderation(commands.Cog):
 
     # --- WICK-STYLE SECURITY HELPERS ---
     async def hierarchy_check(self, ctx, member: discord.Member) -> bool:
-        """Ensures moderators cannot target users higher or equal to them in the role hierarchy."""
         if ctx.guild.owner == member:
             await ctx.send("❌ **Security Override:** You cannot target the server owner.", ephemeral=True)
             return False
@@ -32,7 +39,6 @@ class Moderation(commands.Cog):
         return True
 
     async def log_mod_action(self, ctx, action: str, target: discord.User, reason: str):
-        """Pushes moderation telemetry to the database for the Web Dashboard Audit Logs."""
         if hasattr(self.bot, 'db'):
             log_data = {
                 "guild_id": ctx.guild.id,
@@ -53,10 +59,8 @@ class Moderation(commands.Cog):
         await ctx.defer()
         if not await self.hierarchy_check(ctx, member): return
         
-        try:
-            await member.send(f"🔨 You have been banned from **{ctx.guild.name}**.\n**Reason:** {reason}")
-        except discord.Forbidden:
-            pass 
+        try: await member.send(f"🔨 You have been banned from **{ctx.guild.name}**.\n**Reason:** {reason}")
+        except discord.Forbidden: pass 
             
         try:
             await member.ban(reason=f"Action by {ctx.author} | {reason}")
@@ -92,10 +96,8 @@ class Moderation(commands.Cog):
         await ctx.defer()
         if not await self.hierarchy_check(ctx, member): return
         
-        try:
-            await member.send(f"👢 You have been kicked from **{ctx.guild.name}**.\n**Reason:** {reason}")
-        except discord.Forbidden:
-            pass
+        try: await member.send(f"👢 You have been kicked from **{ctx.guild.name}**.\n**Reason:** {reason}")
+        except discord.Forbidden: pass
             
         try:
             await member.kick(reason=f"Action by {ctx.author} | {reason}")
@@ -104,15 +106,12 @@ class Moderation(commands.Cog):
             embed = discord.Embed(title="👢 Target Expelled", description=f"Successfully kicked {member.mention}.", color=discord.Color.orange())
             embed.add_field(name="Reason", value=reason)
             await ctx.send(embed=embed)
-        except Exception as e:
-            await ctx.send(f"❌ **Error:** `{e}`")
+        except Exception as e: await ctx.send(f"❌ **Error:** `{e}`")
 
     @commands.hybrid_command(name="purge", description="Executes a bulk-delete payload.")
     @commands.has_permissions(manage_messages=True)
     async def purge(self, ctx, limit: int):
-        if limit < 1 or limit > 1000:
-            return await ctx.send("❌ Please specify an amount between 1 and 1000.", ephemeral=True)
-            
+        if limit < 1 or limit > 1000: return await ctx.send("❌ Please specify an amount between 1 and 1000.", ephemeral=True)
         await ctx.defer(ephemeral=True) 
         try:
             deleted = await ctx.channel.purge(limit=limit if ctx.interaction else limit + 1)
@@ -196,8 +195,7 @@ class Moderation(commands.Cog):
         await ctx.defer()
         if not await self.hierarchy_check(ctx, member): return
         
-        if not hasattr(self.bot, 'db'):
-            return await ctx.send("❌ **Database Error:** Cannot process warnings right now.")
+        if not hasattr(self.bot, 'db'): return await ctx.send("❌ **Database Error:** Cannot process warnings right now.")
             
         warning_id = str(ctx.message.id) if ctx.message else str(datetime.datetime.utcnow().timestamp())
         warning_data = {
@@ -213,10 +211,8 @@ class Moderation(commands.Cog):
         
         total_warns = await self.bot.db.warnings.count_documents({"guild_id": ctx.guild.id, "user_id": member.id})
         
-        try:
-            await member.send(f"⚠️ You have been formally warned in **{ctx.guild.name}**.\n**Reason:** {reason}\n*You now have {total_warns} total warnings.*")
-        except discord.Forbidden:
-            pass
+        try: await member.send(f"⚠️ You have been formally warned in **{ctx.guild.name}**.\n**Reason:** {reason}\n*You now have {total_warns} total warnings.*")
+        except discord.Forbidden: pass
 
         embed = discord.Embed(title="⚠️ Warning Issued", description=f"{member.mention} has been warned.", color=discord.Color.yellow())
         embed.add_field(name="Reason", value=reason)
@@ -253,14 +249,12 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="clean", description="Cleans up the bot's own responses.")
     @commands.has_permissions(manage_messages=True)
     async def clean(self, ctx, limit: int = 50):
-        if limit <= 0 or limit > 100: 
-            return await ctx.send("❌ Limit 1-100.")   
+        if limit <= 0 or limit > 100: return await ctx.send("❌ Limit 1-100.")   
         await ctx.defer(ephemeral=True)
         count = 0
         def is_me(m):
             nonlocal count           
-            if count >= limit:
-                return False               
+            if count >= limit: return False               
             if m.author == self.bot.user:
                 count += 1
                 return True
