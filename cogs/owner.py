@@ -194,5 +194,19 @@ class Owner(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Failed to send message.\n{self.cb}py\n{e}\n{self.cb}", ephemeral=True)
 
+    @commands.hybrid_command(name="unblacklist", description="[Dev] Developer Override: Removes an ID from the global blacklist.")
+    @commands.is_owner()
+    async def unblacklist(self, ctx, target_id: int):
+        if not hasattr(self.bot, 'db'):
+            return await ctx.send("❌ **Database Error:** Disconnected.")
+            
+        # Attempt to delete the ID from the global_blacklist collection
+        result = await self.bot.db.global_blacklist.delete_one({"target_id": target_id})
+        
+        if result.deleted_count > 0:
+            await ctx.send(f"✅ **Override Successful:** ID `{target_id}` has been wiped from the global blacklist.")
+        else:
+            await ctx.send(f"❌ **Not Found:** ID `{target_id}` is not currently blacklisted.")
+
 async def setup(bot):
     await bot.add_cog(Owner(bot))
