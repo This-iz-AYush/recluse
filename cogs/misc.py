@@ -32,7 +32,12 @@ class Misc(commands.Cog):
                 return False
         return True
 
-    @commands.hybrid_command(name="ping", description="Ping the bot and get the response time in milliseconds.")
+    @commands.hybrid_command(
+        name="ping", 
+        description="Ping the bot and get the response time in milliseconds.",
+        usage="/ping",
+        help="/ping"
+    )
     async def ping(self, ctx):
         start_time = datetime.datetime.utcnow()
         message = await ctx.send("🏓 Pinging network...")
@@ -41,7 +46,12 @@ class Misc(commands.Cog):
         await message.edit(content=f"📡 **Network Diagnostics**\nAPI Latency: `{api_latency}ms`\nGateway Websocket: `{ws_latency}ms`")
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "ping")
 
-    @commands.hybrid_command(name="afk", description="Set an AFK status to display when you are mentioned.")
+    @commands.hybrid_command(
+        name="afk", 
+        description="Set an AFK status to display when you are mentioned.",
+        usage="/afk [reason]",
+        help="/afk Out for lunch"
+    )
     async def afk(self, ctx, *, reason: str = "AFK"):
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
         timestamp = datetime.datetime.utcnow().timestamp()
@@ -49,7 +59,12 @@ class Misc(commands.Cog):
         await ctx.send(f"✅ {ctx.author.mention}, your status has been updated to: **{reason}**")
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "afk")
 
-    @commands.hybrid_command(name="serverinfo", description="Get comprehensive security and telemetry data about the server.")
+    @commands.hybrid_command(
+        name="serverinfo", 
+        description="Get comprehensive security and telemetry data about the server.",
+        usage="/serverinfo",
+        help="/serverinfo"
+    )
     @commands.has_permissions(moderate_members=True)
     async def serverinfo(self, ctx):
         if not ctx.guild: return await ctx.send("❌ Server only command.")
@@ -73,7 +88,12 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
         await self.log_telemetry(ctx.guild.id, "serverinfo")
 
-    @commands.hybrid_command(name="whois", description="Pull a security profile on a specific user.")
+    @commands.hybrid_command(
+        name="whois", 
+        description="Pull a security profile on a specific user.",
+        usage="/whois [user]",
+        help="/whois @JohnDoe"
+    )
     @commands.has_permissions(moderate_members=True)
     async def whois(self, ctx, member: discord.Member = None):
         member = member or ctx.author
@@ -98,7 +118,12 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
         await self.log_telemetry(ctx.guild.id, "whois")
 
-    @commands.hybrid_command(name="avatar", description="Retrieve the high-resolution avatar of a user.")
+    @commands.hybrid_command(
+        name="avatar", 
+        description="Retrieve the high-resolution avatar of a user.",
+        usage="/avatar [user]",
+        help="/avatar @JaneDoe"
+    )
     @commands.has_permissions(moderate_members=True)
     async def avatar(self, ctx, member: discord.Member = None):
         member = member or ctx.author
@@ -118,7 +143,12 @@ class Misc(commands.Cog):
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "avatar")
 
     # --- ADDITIONAL MISC COMMANDS ---
-    @commands.hybrid_command(name="roleinfo", description="Pull technical and security data on a specific role.")
+    @commands.hybrid_command(
+        name="roleinfo", 
+        description="Pull technical and security data on a specific role.",
+        usage="/roleinfo <role>",
+        help="/roleinfo @Moderator"
+    )
     @commands.has_permissions(moderate_members=True)
     async def roleinfo(self, ctx, role: discord.Role):
         embed = discord.Embed(title=f"Role Dossier: {role.name}", color=role.color if role.color.value else 0x2b2d31)
@@ -136,7 +166,12 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "roleinfo")
 
-    @commands.hybrid_command(name="channelinfo", description="Retrieve infrastructure details for a specific channel.")
+    @commands.hybrid_command(
+        name="channelinfo", 
+        description="Retrieve infrastructure details for a specific channel.",
+        usage="/channelinfo [channel]",
+        help="/channelinfo #general-chat"
+    )
     @commands.has_permissions(manage_channels=True)
     async def channelinfo(self, ctx, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
@@ -150,7 +185,12 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "channelinfo")
 
-    @commands.hybrid_command(name="poll", description="Create a multiple-choice poll with up to 10 options.")
+    @commands.hybrid_command(
+        name="poll", 
+        description="Create a multiple-choice poll with up to 10 options.",
+        usage="/poll <message> <choice1> <choice2> [choice3-10]",
+        help="/poll \"What game should we play today?\" Minecraft Valorant CSGO"
+    )
     @commands.has_permissions(manage_messages=True)
     async def poll(
         self, 
@@ -189,7 +229,12 @@ class Misc(commands.Cog):
                 
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "poll")
 
-    @commands.hybrid_command(name="color", description="Analyze a HEX color code and return its data.")
+    @commands.hybrid_command(
+        name="color", 
+        description="Analyze a HEX color code and return its data.",
+        usage="/color <hex_code>",
+        help="/color #FF5733"
+    )
     async def color(self, ctx, hex_code: str):
         hex_code = hex_code.lstrip('#')
         if len(hex_code) != 6 or not all(c in '0123456789abcdefABCDEF' for c in hex_code):
