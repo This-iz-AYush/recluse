@@ -104,23 +104,6 @@ class Core(commands.Cog):
                 return False
         return True
 
-    @commands.hybrid_command(name="unblacklist", description="Developer Override: Removes an ID from the global blacklist.")
-    @commands.is_owner()
-    async def unblacklist(self, ctx, target_id: str):
-        if not hasattr(self.bot, 'db'):
-            return await ctx.send("❌ **Database Error:** Disconnected.", ephemeral=True)
-            
-        try:
-            target_id_int = int(target_id.strip())
-        except ValueError:
-            return await ctx.send("❌ **Error:** Please provide a valid numeric ID.", ephemeral=True)
-            
-        result = await self.bot.db.global_blacklist.delete_one({"target_id": target_id_int})
-        if result.deleted_count > 0:
-            await ctx.send(f"✅ **Override Successful:** ID `{target_id_int}` has been wiped from the global blacklist.", ephemeral=True)
-        else:
-            await ctx.send(f"❌ **Not Found:** ID `{target_id_int}` is not currently blacklisted.", ephemeral=True)
-
     @commands.hybrid_command(name="help", description="Generates and deploys the interactive dynamic help menu.")
     async def custom_help(self, ctx):
         embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
