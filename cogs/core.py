@@ -86,10 +86,13 @@ class Core(commands.Cog):
         self.start_time = time.time()
         self.STATUS_MESSAGES = ['active in {servers} servers with {members} members', '/help']
         self.status_cycle = cycle(self.STATUS_MESSAGES)
+        
         self.cycle_bot_status.start()
+        self.uptime_heartbeat.start() # <-- Boots up the DB heartbeat
 
     def cog_unload(self):
         self.cycle_bot_status.cancel()
+        self.uptime_heartbeat.cancel() # <-- Shuts down the heartbeat
 
     # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
@@ -100,6 +103,23 @@ class Core(commands.Cog):
                 except Exception: pass
                 return False
         return True
+
+    @commands.hybrid_command(name="unblacklist", description="Developer Override: Removes an ID from the global blacklist.")
+    @commands.is_owner()
+    async def unblacklist(self, ctx, target_id: str):
+        if not hasattr(self.bot, 'db'):
+            return await ctx.send("❌ **Database Error:** Disconnected.", ephemeral=True)
+            
+        try:
+            target_id_int = int(target_id.strip())
+        except ValueError:
+            return await ctx.send("❌ **Error:** Please provide a valid numeric ID.", ephemeral=True)
+            
+        result = await self.bot.db.global_blacklist.delete_one({"target_id": target_id_int})
+        if result.deleted_count > 0:
+            await ctx.send(f"✅ **Override Successful:** ID `{target_id_int}` has been wiped from the global blacklist.", ephemeral=True)
+        else:
+            await ctx.send(f"❌ **Not Found:** ID `{target_id_int}` is not currently blacklisted.", ephemeral=True)
 
     @commands.hybrid_command(name="help", description="Generates and deploys the interactive dynamic help menu.")
     async def custom_help(self, ctx):
@@ -119,7 +139,15 @@ class Core(commands.Cog):
         embed.add_field(name="Websocket Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
         embed.add_field(name="Your Active AI", value=f"🧠 **{active_ai}**", inline=True)
         
-        uptime_seconds = max(0, int(time.time() - self.start_time))
+        # --- 📈 PERSISTENT UPTIME TRACKER ---
+        uptime_seconds = max(0, int(time.time() - self.start_time)) # Local fallback
+        
+        if hasattr(self.bot, 'db'):
+            uptime_data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
+            if uptime_data:
+                # Calculate duration from the DB start time instead of Render's reset time
+                uptime_seconds = max(0, int(time.time()) - uptime_data.get("start_time", int(time.time())))
+        
         days, remainder = divmod(uptime_seconds, 86400)
         hours, remainder = divmod(remainder, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -131,6 +159,42 @@ class Core(commands.Cog):
         embed.add_field(name="Continuous Uptime", value=uptime_display, inline=True)
         
         await ctx.send(embed=embed)
+
+    # --- ❤️ DATABASE HEARTBEAT LOGIC ---
+    @tasks.loop(minutes=1)
+    async def uptime_heartbeat(self):
+        """Records a heartbeat to MongoDB to calculate true uptime bypassing Render restarts."""
+        if hasattr(self.bot, 'db'):
+            current_time = int(time.time())
+            data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
+            
+            if not data:
+                # First time booting up the tracker ever
+                await self.bot.db.bot_telemetry.insert_one({
+                    "id": "uptime", 
+                    "start_time": current_time, 
+                    "last_heartbeat": current_time
+                })
+            else:
+                last_hb = data.get("last_heartbeat", current_time)
+                
+                # If it's been more than 5 minutes (300 seconds) since the last pulse, 
+                # the cron job failed or the bot genuinely crashed. Reset the clock!
+                if current_time - last_hb > 300:
+                    await self.bot.db.bot_telemetry.update_one(
+                        {"id": "uptime"}, 
+                        {"$set": {"start_time": current_time, "last_heartbeat": current_time}}
+                    )
+                else:
+                    # Otherwise, just update the pulse timestamp to prove it's still alive!
+                    await self.bot.db.bot_telemetry.update_one(
+                        {"id": "uptime"}, 
+                        {"$set": {"last_heartbeat": current_time}}
+                    )
+
+    @uptime_heartbeat.before_loop
+    async def before_uptime_heartbeat(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(seconds=15)
     async def cycle_bot_status(self):
