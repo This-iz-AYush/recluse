@@ -114,6 +114,73 @@ class Misc(commands.Cog):
             await ctx.send(embed=embed)
         if ctx.guild: await self.log_telemetry(ctx.guild.id, "avatar")
 
+    # --- ADDITIONAL MISC COMMANDS ---
+    @commands.hybrid_command(name="roleinfo", description="Pull technical and security data on a specific role.")
+    async def roleinfo(self, ctx, role: discord.Role):
+        embed = discord.Embed(title=f"Role Dossier: {role.name}", color=role.color if role.color.value else 0x2b2d31)
+        embed.add_field(name="🆔 Role ID", value=f"`{role.id}`", inline=True)
+        embed.add_field(name="🎨 Color", value=f"`{str(role.color)}`", inline=True)
+        embed.add_field(name="👥 Personnel Assigned", value=f"`{len(role.members)}` members", inline=True)
+        embed.add_field(name="📅 Creation Date", value=f"<t:{int(role.created_at.timestamp())}:D> (<t:{int(role.created_at.timestamp())}:R>)", inline=False)
+        embed.add_field(name="⚙️ Attributes", value=f"**Hoisted:** {'Yes' if role.hoist else 'No'}\n**Mentionable:** {'Yes' if role.mentionable else 'No'}\n**Managed:** {'Yes' if role.managed else 'No'}", inline=True)
+        
+        perms = [perm[0].replace('_', ' ').title() for perm in role.permissions if perm[1]]
+        perms_str = ", ".join(perms) if perms else "None"
+        if len(perms_str) > 1024: perms_str = perms_str[:1020] + "..."
+        embed.add_field(name="🛡️ Key Clearances", value=f"```{perms_str}```", inline=False)
+        
+        await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "roleinfo")
+
+    @commands.hybrid_command(name="channelinfo", description="Retrieve infrastructure details for a specific channel.")
+    async def channelinfo(self, ctx, channel: discord.TextChannel = None):
+        channel = channel or ctx.channel
+        embed = discord.Embed(title=f"Channel Dossier: {channel.name}", color=0x2b2d31)
+        embed.add_field(name="🆔 Channel ID", value=f"`{channel.id}`", inline=True)
+        embed.add_field(name="📁 Category", value=f"{channel.category.name if channel.category else 'None'}", inline=True)
+        embed.add_field(name="📺 Type", value=f"`{str(channel.type).title()}`", inline=True)
+        embed.add_field(name="📅 Creation Date", value=f"<t:{int(channel.created_at.timestamp())}:D> (<t:{int(channel.created_at.timestamp())}:R>)", inline=False)
+        embed.add_field(name="💬 Chat Settings", value=f"**NSFW:** {'Yes' if channel.is_nsfw() else 'No'}\n**Slowmode:** `{channel.slowmode_delay}s`", inline=True)
+
+        await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "channelinfo")
+
+    @commands.hybrid_command(name="poll", description="Initiate a network-wide binary poll.")
+    @commands.has_permissions(manage_messages=True)
+    async def poll(self, ctx, *, question: str):
+        embed = discord.Embed(title="📊 Active Poll", description=f"**{question}**", color=0x2b2d31)
+        embed.set_footer(text=f"Initiated by {ctx.author.display_name}")
+        message = await ctx.send(embed=embed)
+        
+        try:
+            await message.add_reaction("👍")
+            await message.add_reaction("👎")
+        except discord.Forbidden:
+            pass
+            
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "poll")
+
+    @commands.hybrid_command(name="color", description="Analyze a HEX color code and return its data.")
+    async def color(self, ctx, hex_code: str):
+        hex_code = hex_code.lstrip('#')
+        if len(hex_code) != 6 or not all(c in '0123456789abcdefABCDEF' for c in hex_code):
+            return await ctx.send("❌ **Syntax Error:** Please provide a valid 6-character HEX code (e.g., `#FF5733`).")
+            
+        color_int = int(hex_code, 16)
+        embed = discord.Embed(title=f"Color Analysis: #{hex_code.upper()}", color=color_int)
+        embed.add_field(name="HEX", value=f"`#{hex_code.upper()}`", inline=True)
+        
+        r = (color_int >> 16) & 255
+        g = (color_int >> 8) & 255
+        b = color_int & 255
+        embed.add_field(name="RGB", value=f"`rgb({r}, {g}, {b})`", inline=True)
+        
+        # Uses a reliable, fast dummy image generator for the color block
+        embed.set_thumbnail(url=f"https://dummyimage.com/100x100/{hex_code}/{hex_code}.png")
+        
+        await ctx.send(embed=embed)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "color")
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not hasattr(self.bot, 'db') or not message.guild: return
