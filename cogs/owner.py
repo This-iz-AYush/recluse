@@ -194,19 +194,23 @@ class Owner(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Failed to send message.\n{self.cb}py\n{e}\n{self.cb}", ephemeral=True)
 
-    @commands.hybrid_command(name="unblacklist", description="[Dev] Developer Override: Removes an ID from the global blacklist.")
+    @commands.hybrid_command(name="unblacklist", description="Developer Override: Removes an ID from the global blacklist.")
     @commands.is_owner()
-    async def unblacklist(self, ctx, target_id: int):
+    async def unblacklist(self, ctx, target_id: str): 
         if not hasattr(self.bot, 'db'):
-            return await ctx.send("❌ **Database Error:** Disconnected.")
+            return await ctx.send("❌ **Database Error:** Disconnected.", ephemeral=True)
             
-        # Attempt to delete the ID from the global_blacklist collection
-        result = await self.bot.db.global_blacklist.delete_one({"target_id": target_id})
-        
+        # Safely convert the string back into a Python integer
+        try:
+            target_id_int = int(target_id.strip())
+        except ValueError:
+            return await ctx.send("❌ **Error:** Please provide a valid numeric ID.", ephemeral=True)
+            
+        result = await self.bot.db.global_blacklist.delete_one({"target_id": target_id_int})
         if result.deleted_count > 0:
-            await ctx.send(f"✅ **Override Successful:** ID `{target_id}` has been wiped from the global blacklist.")
+            await ctx.send(f"✅ **Override Successful:** ID `{target_id_int}` has been wiped from the global blacklist.", ephemeral=True)
         else:
-            await ctx.send(f"❌ **Not Found:** ID `{target_id}` is not currently blacklisted.")
+            await ctx.send(f"❌ **Not Found:** ID `{target_id_int}` is not currently blacklisted.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Owner(bot))
