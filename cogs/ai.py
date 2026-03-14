@@ -18,6 +18,18 @@ class AI(commands.Cog):
         self.MEMORY_LIFESPAN = datetime.timedelta(minutes=5)
         self.RESTRICTED_LEXICON = ['unauthorized_term_1', 'prohibited_phrase', 'blacklisted_word']
 
+    # --- 🛡️ GATEKEEPER CHECK FOR AI SLASH COMMANDS ---
+    async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: 
+                    await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: 
+                    pass
+                return False
+        return True
+
     def get_active_memory(self, user_id):
         if user_id not in self.chat_memory:
             return []
@@ -63,6 +75,11 @@ class AI(commands.Cog):
     async def on_message(self, message):
         if message.author.bot:
             return
+        # --- 🛡️ GATEKEEPER CHECK FOR AI CHAT ---
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": message.author.id, "type": "user"})
+            if is_blacklisted: 
+                return   
         
         content_lower = message.content.lower()
         
