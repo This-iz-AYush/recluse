@@ -36,6 +36,7 @@ class Database(commands.Cog):
     async def setup_indexes(self):
         """Creates database indexes to ensure the web dashboard loads instantly even with millions of logs."""
         try:
+            # --- EXISTING INDEXES ---
             # Guild Settings - Fast lookups by guild_id
             await self.bot.db.guild_settings.create_index("guild_id", unique=True)
             
@@ -52,6 +53,15 @@ class Database(commands.Cog):
             # Dashboard Sessions - Fast lookups and automatic TTL (Time-To-Live) expiration after 24 hours
             await self.bot.db.sessions.create_index("session_id", unique=True)
             await self.bot.db.sessions.create_index("created_at", expireAfterSeconds=86400)
+
+            # Global Blacklist - Speeds up the gatekeeper check on every command and prevents duplicate entries
+            await self.bot.db.global_blacklist.create_index([("target_id", 1), ("type", 1)], unique=True)
+
+            # Warnings - Fast lookups for querying user history
+            await self.bot.db.warnings.create_index([("guild_id", 1), ("user_id", 1), ("timestamp", 1)])
+            
+            # Warnings - Exact targeting for the delwarn command
+            await self.bot.db.warnings.create_index("warning_id", unique=True)
             
             print("✅ Database indexes verified and optimized for Enterprise scaling.")
         except Exception as e:
