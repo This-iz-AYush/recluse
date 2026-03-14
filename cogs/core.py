@@ -5,6 +5,8 @@ import time
 import datetime
 from itertools import cycle
 from typing import Optional
+import discord
+from discord import app_commands
 
 class HelpSelect(discord.ui.Select):
     def __init__(self):
@@ -90,12 +92,45 @@ class Core(commands.Cog):
                 return False
         return True
 
-    @commands.hybrid_command(name="help", description="Generates and deploys the interactive dynamic help menu.")
-    async def custom_help(self, ctx):
-        embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
-        embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
-        embed.add_field(name="📈 Uptime Status", value="[Check Status](https://sszvcg5v.status.cron-job.org)", inline=True)
-        await ctx.send(embed=embed, view=HelpView())
+    # --- AUTOCOMPLETE LOGIC FOR HELP COMMAND ---
+    async def command_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        # Grabs all registered commands and filters them as the user types
+        commands = [c.name for c in self.bot.commands if not c.hidden]
+        matches = [cmd for cmd in commands if current.lower() in cmd.lower()]
+        
+        # Discord API limits autocomplete choices to 25 max
+        return [app_commands.Choice(name=match, value=match) for match in matches[:25]]
+
+    @commands.hybrid_command(name="help", description="Shows help info and commands.")
+    @app_commands.autocomplete(command=command_autocomplete)
+    async def custom_help(self, ctx, command: str = None):
+        # If they just typed /help, show the category dropdown
+        if not command:
+            embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
+            embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
+            embed.add_field(name="📈 Uptime Status", value="[Check Status](https://sszvcg5v.status.cron-job.org)", inline=True)
+            await ctx.send(embed=embed, view=HelpView())
+            
+        # If they typed /help <command>, show specific command info
+        else:
+            cmd = self.bot.get_command(command)
+            if not cmd:
+                return await ctx.send(f"❌ Could not find the command `{command}` in my registry.", ephemeral=True)
+
+            embed = discord.Embed(
+                title=f"Command: /{cmd.name}", 
+                description=cmd.description or "No description provided.", 
+                color=discord.Color.blurple()
+            )
+
+            # Automatically formats how to use the command based on its parameters
+            usage = f"/{cmd.name} {cmd.signature}".strip()
+            embed.add_field(name="Usage", value=f"`{usage}`", inline=False)
+
+            if cmd.aliases:
+                embed.add_field(name="Aliases", value=", ".join(f"`{a}`" for a in cmd.aliases), inline=False)
+
+            await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
