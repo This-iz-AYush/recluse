@@ -88,11 +88,11 @@ class Core(commands.Cog):
         self.status_cycle = cycle(self.STATUS_MESSAGES)
         
         self.cycle_bot_status.start()
-        self.uptime_heartbeat.start() # <-- Boots up the DB heartbeat
+        self.uptime_heartbeat.start()
 
     def cog_unload(self):
         self.cycle_bot_status.cancel()
-        self.uptime_heartbeat.cancel() # <-- Shuts down the heartbeat
+        self.uptime_heartbeat.cancel()
 
     # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
@@ -128,8 +128,9 @@ class Core(commands.Cog):
         if hasattr(self.bot, 'db'):
             uptime_data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
             if uptime_data:
-                # Calculate duration from the DB start time instead of Render's reset time
-                uptime_seconds = max(0, int(time.time()) - uptime_data.get("start_time", int(time.time())))
+                # Retrieve the original start time from the database
+                db_start = uptime_data.get("start_time", int(time.time()))
+                uptime_seconds = max(0, int(time.time()) - db_start)
         
         days, remainder = divmod(uptime_seconds, 86400)
         hours, remainder = divmod(remainder, 3600)
@@ -152,7 +153,7 @@ class Core(commands.Cog):
             data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
             
             if not data:
-                # First time booting up the tracker ever
+                # First time booting up the tracker
                 await self.bot.db.bot_telemetry.insert_one({
                     "id": "uptime", 
                     "start_time": current_time, 
@@ -161,15 +162,16 @@ class Core(commands.Cog):
             else:
                 last_hb = data.get("last_heartbeat", current_time)
                 
-                # If it's been more than 5 minutes (300 seconds) since the last pulse, 
-                # the cron job failed or the bot genuinely crashed. Reset the clock!
-                if current_time - last_hb > 300:
+                # CRITICAL FIX: Increased tolerance to 20 minutes (1200 seconds)
+                # Render free tier cold-boots can take a while. If the gap is larger than 20 mins, 
+                # we assume the cron job failed and reset the clock.
+                if current_time - last_hb > 1200:
                     await self.bot.db.bot_telemetry.update_one(
                         {"id": "uptime"}, 
                         {"$set": {"start_time": current_time, "last_heartbeat": current_time}}
                     )
                 else:
-                    # Otherwise, just update the pulse timestamp to prove it's still alive!
+                    # Update the pulse timestamp to prove it's still alive!
                     await self.bot.db.bot_telemetry.update_one(
                         {"id": "uptime"}, 
                         {"$set": {"last_heartbeat": current_time}}
