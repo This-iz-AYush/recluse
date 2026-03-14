@@ -91,19 +91,26 @@ class Core(commands.Cog):
     def cog_unload(self):
         self.cycle_bot_status.cancel()
 
+    # --- 🛡️ GATEKEEPER CHECK ---
+    async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: pass
+                return False
+        return True
+
     @commands.hybrid_command(name="help", description="Generates and deploys the interactive dynamic help menu.")
     async def custom_help(self, ctx):
         embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
-        
         embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
         embed.add_field(name="📈 Uptime Status", value="[Check Status](https://sszvcg5v.status.cron-job.org)", inline=True)
-        
         await ctx.send(embed=embed, view=HelpView())
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
         await ctx.defer() 
-        
         active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
         app_info = await self.bot.application_info()
         
