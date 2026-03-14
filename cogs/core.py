@@ -24,52 +24,38 @@ class HelpSelect(discord.ui.Select):
         
         if selected == "Telemetry":
             embed = discord.Embed(title="📊 Telemetry Commands", color=discord.Color.blue())
-            embed.add_field(name="`/botinfo`", value="Retrieves the application's telemetry and metadata.", inline=False)
+            embed.add_field(name="System Operations", value="> `/botinfo` - Retrieves application telemetry and metadata.\n> `/ping` - Network and websocket latency.", inline=False)
+            
         elif selected == "Anime & Manga":
             embed = discord.Embed(title="🎌 Anime & Manga Commands", color=discord.Color.red())
-            embed.add_field(name="`/anime <query>`", value="Queries the MyAnimeList database for anime.", inline=False)
-            embed.add_field(name="`/manga <query>`", value="Queries the MyAnimeList database for manga.", inline=False)
+            embed.add_field(name="Database Search", value="> `/anime <query>` - Queries MyAnimeList for anime.\n> `/manga <query>` - Queries MyAnimeList for manga.", inline=False)
+            
         elif selected == "Sports":
             embed = discord.Embed(title="🏏 Sports Commands", color=discord.Color.orange())
-            embed.add_field(name="`/score all`", value="Fetches an overview of all live cricket matches.", inline=False)
-            embed.add_field(name="`/score search <query>`", value="Searches a live match.", inline=False)
-            embed.add_field(name="`/score live <query>`", value="Starts a tracker that auto-updates every 30 seconds.", inline=False)
-            embed.add_field(name="`/score stop`", value="Stops all active live trackers in the channel.", inline=False)
+            embed.add_field(name="Live Cricket Coverage", value="> `/score all` - Overview of all live matches.\n> `/score search <query>` - Find a specific match.\n> `/score live <query>` - Auto-updating match tracker.\n> `/score stop` - Halts active trackers in the channel.", inline=False)
+            
         elif selected == "Moderation":
             embed = discord.Embed(title="🛡️ Moderation Commands", color=discord.Color.green())
-            embed.add_field(name="`/ban <member> [reason]`", value="Permanently removes a member utilizing API-level bans.", inline=False)
-            embed.add_field(name="`/tempban <member> <duration> [reason]`", value="Temporarily bans a member.", inline=False)
-            embed.add_field(name="`/unban <user_id> [reason]`", value="Revokes a ban utilizing API-level unbans.", inline=False)
-            embed.add_field(name="`/kick <member> [reason]`", value="Kicks a member from the server.", inline=False)
-            embed.add_field(name="`/purge <limit>`", value="Executes a bulk-delete payload.", inline=False)
-            embed.add_field(name="`/tempmute <member> <duration> [reason]`", value="Applies a native timeout.", inline=False)
-            embed.add_field(name="`/unmute <member> [reason]`", value="Removes a timeout from a member.", inline=False)
-            embed.add_field(name="`/vckick <member> [reason]`", value="Forcefully terminates a voice connection.", inline=False)
-            embed.add_field(name="`/lock [channel]`", value="Locks the current or specified channel.", inline=False)
-            embed.add_field(name="`/unlock [channel]`", value="Unlocks a previously locked channel.", inline=False)
-            embed.add_field(name="`/slowmode <seconds>`", value="Sets chat delay for the current channel.", inline=False)
-            embed.add_field(name="`/warn <member> [reason]`", value="Warns a member. Auto-mutes after 3 warnings.", inline=False)
-            embed.add_field(name="`/warnings <member>`", value="View all warnings for a member.", inline=False)
-            embed.add_field(name="`/delwarn <member> <warning_id>`", value="Removes a specific warning from a user.", inline=False)
-            embed.add_field(name="`/moderations`", value="Lists active timed moderations (mutes) in the server.", inline=False)
-            embed.add_field(name="`/members <role>`", value="Lists members in a specific role.", inline=False)
-            embed.add_field(name="`/clean [limit]`", value="Cleans up the bot's own responses in the channel.", inline=False)
+            embed.add_field(name="🛑 Access Control", value="> `/ban` - Permanent removal.\n> `/tempban` - Temporary removal.\n> `/softban` - Ban & unban to clear recent messages.\n> `/kick` - Expel a member.\n> `/unban` - Revoke a ban via User ID.", inline=False)
+            embed.add_field(name="🔇 Voice & Chat Restrictions", value="> `/tempmute` - Apply a native timeout.\n> `/unmute` - Remove a timeout.\n> `/vmute` / `/vunmute` - Server voice mute control.\n> `/vckick` - Disconnect a user from voice.", inline=False)
+            embed.add_field(name="⚠️ Warning System", value="> `/warn` - Issue a formal warning.\n> `/warnings` - View a member's warning history.\n> `/delwarn` - Delete a specific warning ID.\n> `/clearwarns` - Wipe a user's entire record.\n> `/moderations` - List active timed mutes.", inline=False)
+            embed.add_field(name="🛠️ Channel Management", value="> `/purge` / `/clean` - Bulk message deletion tools.\n> `/lock` / `/unlock` - Channel access control.\n> `/slowmode` - Set chat delay rate limits.", inline=False)
+            embed.add_field(name="👥 Member Management", value="> `/role` - Toggle a role for a user.\n> `/nick` - Change or reset a user's nickname.\n> `/members` - List all members within a specific role.", inline=False)
+            
         elif selected == "Miscellaneous":
             embed = discord.Embed(title="🗂️ Miscellaneous Commands", color=discord.Color.teal())
-            embed.add_field(name="`/ping`", value="Ping the bot and get the response time.", inline=False)
-            embed.add_field(name="`/afk [reason]`", value="Set an AFK status to display when you are mentioned.", inline=False)
-            embed.add_field(name="`/avatar [user]`", value="Get the avatar of yourself or another user.", inline=False)
-            embed.add_field(name="`/membercount`", value="Get the membercount of the current server.", inline=False)
-            embed.add_field(name="`/serverinfo`", value="Get information about the current server.", inline=False)
-            embed.add_field(name="`/whois [user]`", value="Get information about a user.", inline=False)
+            embed.add_field(name="👤 User Utilities", value="> `/whois` - Pull a security profile on a user.\n> `/avatar` - Retrieve a high-res profile picture.\n> `/afk` - Set an away status for mentions.", inline=False)
+            embed.add_field(name="🏢 Server Infrastructure", value="> `/serverinfo` - Network & security data for the server.\n> `/roleinfo` - Role permissions & member stats.\n> `/channelinfo` - Infrastructure details for a channel.\n> `/membercount` - Get the current server population.", inline=False)
+            embed.add_field(name="🧰 General Tools", value="> `/poll` - Initiate a network-wide binary poll.\n> `/color` - Analyze a HEX color code and return its data.", inline=False)
+            
         elif selected == "Generative AI":
             embed = discord.Embed(title="🎨 Generative AI Commands", color=discord.Color.blurple())
-            embed.add_field(name="`/imagine <prompt>`", value="Generates a high-quality image based on your text prompt.", inline=False)
+            embed.add_field(name="Image Creation", value="> `/imagine <prompt>` - Generates a high-quality image based on your text prompt.", inline=False)
+            
         elif selected == "Conversational AI":
             embed = discord.Embed(title="🤖 Conversational AI Commands", color=discord.Color.purple())
-            embed.add_field(name="`@Recluse <message>`", value="Ping the bot directly in any channel to chat!", inline=False)
-            embed.add_field(name="`/choose_ai <model>`", value="Switch your AI brain between nexusify, gemini, and sarvam.", inline=False)
-            embed.add_field(name="`/clear_memory`", value="Wipes your conversation history with the bot to start fresh.", inline=False)
+            embed.add_field(name="Interaction", value="> `@Recluse <message>` - Ping the bot directly in any channel to chat!\n> `/choose_ai <model>` - Switch your AI brain (nexusify, gemini, sarvam).\n> `/clear_memory` - Wipes your conversation history to start fresh.", inline=False)
+            
         else:
             embed = discord.Embed(title="Error", description="Category not found.", color=discord.Color.red())
 
