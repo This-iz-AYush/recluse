@@ -104,33 +104,32 @@ class Core(commands.Cog):
     @commands.hybrid_command(name="help", description="Shows help info and commands.")
     @app_commands.autocomplete(command=command_autocomplete)
     async def custom_help(self, ctx, command: str = None):
-        # If they just typed /help, show the category dropdown
+        # 1. If they just typed /help, show the category dropdown
         if not command:
             embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
             embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
             embed.add_field(name="📈 Uptime Status", value="[Check Status](https://sszvcg5v.status.cron-job.org)", inline=True)
-            await ctx.send(embed=embed, view=HelpView())
+            return await ctx.send(embed=embed, view=HelpView())
             
-        # If they typed /help <command>, show specific command info
-        else:
-            cmd = self.bot.get_command(command)
-            if not cmd:
-                return await ctx.send(f"❌ Could not find the command `{command}` in my registry.", ephemeral=True)
+        # 2. If they typed /help <command>, show the Dyno-style specific info
+        cmd = self.bot.get_command(command)
+        if not cmd:
+            return await ctx.send(f"❌ Could not find the command `{command}` in my registry.", ephemeral=True)
 
-            embed = discord.Embed(
-                title=f"Command: /{cmd.name}", 
-                description=cmd.description or "No description provided.", 
-                color=discord.Color.blurple()
-            )
+        desc = f"**Command: /{cmd.name}**\n\n"
+        desc += f"**Description:** {cmd.description or 'No description provided.'}\n"
+        
+        if getattr(cmd, '_buckets', None) and cmd._buckets._cooldown:
+            desc += f"**Cooldown:** {int(cmd._buckets._cooldown.per)} seconds\n"
+            
+        usage_text = cmd.usage or f"/{cmd.name} {cmd.signature}".strip()
+        desc += f"**Usage:**\n{usage_text}\n"
+        
+        example_text = cmd.help or f"/{cmd.name}"
+        desc += f"**Example:**\n{example_text}"
 
-            # Automatically formats how to use the command based on its parameters
-            usage = f"/{cmd.name} {cmd.signature}".strip()
-            embed.add_field(name="Usage", value=f"`{usage}`", inline=False)
-
-            if cmd.aliases:
-                embed.add_field(name="Aliases", value=", ".join(f"`{a}`" for a in cmd.aliases), inline=False)
-
-            await ctx.send(embed=embed)
+        embed = discord.Embed(description=desc, color=0x2b2d31)
+        await ctx.send(embed=embed, ephemeral=False) # Ephemeral makes it so "Only you can see this"
 
     @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
     async def botinfo(self, ctx):
