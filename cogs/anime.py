@@ -32,7 +32,12 @@ class Anime(commands.Cog):
                 return False
         return True
 
-    @commands.hybrid_command(name="anime", description="Queries the MyAnimeList database for anime.")
+    @commands.hybrid_command(
+        name="anime", 
+        description="Queries the MyAnimeList database for anime.",
+        usage="/anime <query>",
+        help="/anime attack on titan"
+    )
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def anime(self, ctx, *, query: str):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
@@ -64,7 +69,12 @@ class Anime(commands.Cog):
                     await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Anime_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
                 await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
 
-    @commands.hybrid_command(name="manga", description="Queries the MyAnimeList database for textual publication data.")
+    @commands.hybrid_command(
+        name="manga", 
+        description="Queries the MyAnimeList database for textual publication data.",
+        usage="/manga <query>",
+        help="/manga berserk"
+    )
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def manga(self, ctx, *, query: str):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
