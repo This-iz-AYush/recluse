@@ -5,7 +5,6 @@ import time
 import datetime
 from itertools import cycle
 from typing import Optional
-import discord
 from discord import app_commands
 
 class HelpSelect(discord.ui.Select):
@@ -101,7 +100,12 @@ class Core(commands.Cog):
         # Discord API limits autocomplete choices to 25 max
         return [app_commands.Choice(name=match, value=match) for match in matches[:25]]
 
-    @commands.hybrid_command(name="help", description="Shows help info and commands.")
+    @commands.hybrid_command(
+        name="help", 
+        description="Shows help info and commands.",
+        usage="/help [command]",
+        help="/help roleinfo"
+    )
     @app_commands.autocomplete(command=command_autocomplete)
     async def custom_help(self, ctx, command: str = None):
         # 1. If they just typed /help, show the category dropdown
@@ -131,7 +135,12 @@ class Core(commands.Cog):
         embed = discord.Embed(description=desc, color=0x2b2d31)
         await ctx.send(embed=embed, ephemeral=False) # Ephemeral makes it so "Only you can see this"
 
-    @commands.hybrid_command(name="botinfo", description="Retrieves the application's telemetry and metadata.")
+    @commands.hybrid_command(
+        name="botinfo", 
+        description="Retrieves the application's telemetry and metadata.",
+        usage="/botinfo",
+        help="/botinfo"
+    )
     async def botinfo(self, ctx):
         await ctx.defer() 
         active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
