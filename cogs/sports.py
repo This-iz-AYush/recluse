@@ -13,7 +13,6 @@ class Sports(commands.Cog):
         self.update_sports_cache.start()
 
     async def log_telemetry(self, guild_id: int, command_name: str):
-        """Wick-style telemetry logging for dashboard usage graphs."""
         if hasattr(self.bot, 'db'):
             await self.bot.db.command_telemetry.update_one(
                 {"guild_id": guild_id, "command": command_name, "date": datetime.datetime.utcnow().strftime('%Y-%m-%d')},
@@ -21,7 +20,15 @@ class Sports(commands.Cog):
                 upsert=True
             )
 
+    # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
+        if hasattr(self.bot, 'db'):
+            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
+            if is_blacklisted:
+                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
+                except Exception: pass
+                return False
+                
         if not ctx.guild: return True
         if hasattr(self.bot, 'db'):
             settings = await self.bot.db.guild_settings.find_one({"guild_id": ctx.guild.id})
@@ -45,8 +52,7 @@ class Sports(commands.Cog):
                         root = ET.fromstring(data)
                         self.sports_cache["items"] = root.findall('./channel/item')
                         self.sports_cache["last_updated"] = datetime.datetime.utcnow()
-        except Exception as e:
-            print(f"Sports Cache Update Error: {e}")
+        except Exception as e: print(f"Sports Cache Update Error: {e}")
 
     @update_sports_cache.before_loop
     async def before_update_sports_cache(self):
@@ -60,8 +66,7 @@ class Sports(commands.Cog):
     @score.command(name="all", description="Fetches all live cricket match scores instantly.")
     async def score_all(self, ctx):
         items = self.sports_cache.get("items", [])
-        if not items:
-            return await ctx.send("❌ The sports cache is currently empty or no matches are being broadcasted.")
+        if not items: return await ctx.send("❌ The sports cache is currently empty or no matches are being broadcasted.")
         
         embed = discord.Embed(title="🏏 All Live Cricket Scores", color=discord.Color.orange())
         for item in items[:10]:
@@ -158,7 +163,6 @@ class Sports(commands.Cog):
                     title = item.find('title').text if item.find('title') is not None else 'Unknown Match'
                     description = item.find('description').text if item.find('description') is not None else 'No score data'
                     
-                    # --- ADDED EXTRACTION LOGIC HERE ---
                     overs, batsman, bowler = "N/A", "N/A", "N/A"
                     details_match = re.search(r'\((.*?)\)', description)
                     if details_match:
