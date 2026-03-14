@@ -53,7 +53,12 @@ class Moderation(commands.Cog):
             await self.bot.db.mod_logs.insert_one(log_data)
 
     # --- MODERATION COMMANDS ---
-    @commands.hybrid_command(name="ban", description="Permanently removes a member utilizing API-level bans.")
+    @commands.hybrid_command(
+        name="ban", 
+        description="Permanently removes a member utilizing API-level bans.",
+        usage="/ban <member> [reason]",
+        help="/ban @Spammer Sending malicious links"
+    )
     @commands.has_permissions(ban_members=True)
     async def ban(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
         await ctx.defer()
@@ -72,7 +77,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** Failed to ban member. `{e}`")
 
-    @commands.hybrid_command(name="tempban", description="Temporarily removes a member from the server.")
+    @commands.hybrid_command(
+        name="tempban", 
+        description="Temporarily removes a member from the server.",
+        usage="/tempban <member> <duration> [reason]",
+        help="/tempban @User 3d Repeated rule violations"
+    )
     @commands.has_permissions(ban_members=True)
     async def tempban(self, ctx, member: discord.Member, duration: str, *, reason: str = "No reason provided"):
         if not await self.hierarchy_check(ctx, member): return
@@ -90,7 +100,12 @@ class Moderation(commands.Cog):
         try: await ctx.guild.unban(discord.Object(id=member.id), reason="Tempban expired.")
         except Exception: pass
 
-    @commands.hybrid_command(name="kick", description="Kicks a member from the server.")
+    @commands.hybrid_command(
+        name="kick", 
+        description="Kicks a member from the server.",
+        usage="/kick <member> [reason]",
+        help="/kick @User Ignoring staff warnings"
+    )
     @commands.has_permissions(kick_members=True)
     async def kick(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
         await ctx.defer()
@@ -108,7 +123,12 @@ class Moderation(commands.Cog):
             await ctx.send(embed=embed)
         except Exception as e: await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="purge", description="Executes a bulk-delete payload.")
+    @commands.hybrid_command(
+        name="purge", 
+        description="Executes a bulk-delete payload.",
+        usage="/purge <limit>",
+        help="/purge 50"
+    )
     @commands.has_permissions(manage_messages=True)
     async def purge(self, ctx, limit: int):
         if limit < 1 or limit > 1000: return await ctx.send("❌ Please specify an amount between 1 and 1000.", ephemeral=True)
@@ -120,7 +140,12 @@ class Moderation(commands.Cog):
         except Exception: 
             await ctx.send("❌ **API Error:** Failed to purge (messages might be older than 14 days).", ephemeral=True)
 
-    @commands.hybrid_command(name="tempmute", description="Applies a native API-level timeout.")
+    @commands.hybrid_command(
+        name="tempmute", 
+        description="Applies a native API-level timeout.",
+        usage="/tempmute <member> <duration> [reason]",
+        help="/tempmute @User 12h Spamming chat"
+    )
     @commands.has_permissions(moderate_members=True)
     async def tempmute(self, ctx, member: discord.Member, duration: str, *, reason: str = "No reason provided"):
         if not await self.hierarchy_check(ctx, member): return
@@ -136,7 +161,12 @@ class Moderation(commands.Cog):
             await ctx.send(f"✅ {member.mention} silenced for {duration}.")
         except Exception as e: await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="unmute", description="Removes a timeout from a member.")
+    @commands.hybrid_command(
+        name="unmute", 
+        description="Removes a timeout from a member.",
+        usage="/unmute <member> [reason]",
+        help="/unmute @User Appealed in DMs"
+    )
     @commands.has_permissions(moderate_members=True)
     async def unmute(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         if not member.is_timed_out(): return await ctx.send(f"❌ {member.mention} is not muted.")
@@ -146,7 +176,12 @@ class Moderation(commands.Cog):
             await ctx.send(f"✅ Unmuted {member.mention}.")
         except Exception as e: await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="vckick", description="Forcefully terminates a user's voice connection.")
+    @commands.hybrid_command(
+        name="vckick", 
+        description="Forcefully terminates a user's voice connection.",
+        usage="/vckick <member> [reason]",
+        help="/vckick @User Hot mic"
+    )
     @commands.has_permissions(moderate_members=True)
     async def vckick(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         if not (ctx.author == ctx.guild.owner or ctx.author.guild_permissions.administrator or ctx.author.guild_permissions.move_members): return await ctx.send("❌ **Denied:** Missing `Move Members` permission.")
@@ -158,7 +193,12 @@ class Moderation(commands.Cog):
             except Exception: await ctx.send("❌ **Error:** Failed to disconnect.")
         else: await ctx.send("❌ **Error:** Target not in a voice channel.")
 
-    @commands.hybrid_command(name="unban", description="Unbans a user via their User ID.")
+    @commands.hybrid_command(
+        name="unban", 
+        description="Unbans a user via their User ID.",
+        usage="/unban <user_id> [reason]",
+        help="/unban 123456789012345678 Apologized"
+    )
     @commands.has_permissions(ban_members=True)
     async def unban(self, ctx, user_id: str, *, reason: str = "No reason provided"):
         try:
@@ -168,7 +208,12 @@ class Moderation(commands.Cog):
             await ctx.send(f"✅ Unbanned **{user.name}**.")
         except Exception: await ctx.send("❌ **Failure:** User not found or not banned.")
 
-    @commands.hybrid_command(name="lock", description="Locks the current channel.")
+    @commands.hybrid_command(
+        name="lock", 
+        description="Locks the current channel.",
+        usage="/lock [channel]",
+        help="/lock #general-chat"
+    )
     @commands.has_permissions(manage_channels=True)
     async def lock(self, ctx, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
@@ -179,7 +224,12 @@ class Moderation(commands.Cog):
             await ctx.send(f"🔒 {channel.mention} locked.")
         except Exception: await ctx.send("❌ **Failure:** Permission denied.")
 
-    @commands.hybrid_command(name="unlock", description="Unlocks a previously locked channel.")
+    @commands.hybrid_command(
+        name="unlock", 
+        description="Unlocks a previously locked channel.",
+        usage="/unlock [channel]",
+        help="/unlock #general-chat"
+    )
     @commands.has_permissions(manage_channels=True)
     async def unlock(self, ctx, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
@@ -190,7 +240,12 @@ class Moderation(commands.Cog):
             await ctx.send(f"🔓 {channel.mention} unlocked.")
         except Exception: await ctx.send("❌ **Failure:** Permission denied.")
 
-    @commands.hybrid_command(name="warn", description="Issues a formal warning. Auto-punishes on thresholds.")
+    @commands.hybrid_command(
+        name="warn", 
+        description="Issues a formal warning. Auto-punishes on thresholds.",
+        usage="/warn <member> <reason>",
+        help="/warn @User Disrespecting staff"
+    )
     @commands.has_permissions(moderate_members=True)
     async def warn(self, ctx, member: discord.Member, *, reason: str):
         await ctx.defer()
@@ -228,7 +283,12 @@ class Moderation(commands.Cog):
         embed.set_footer(text=footer_text)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="warnings", description="View all warnings for a member.")
+    @commands.hybrid_command(
+        name="warnings", 
+        description="View all warnings for a member.",
+        usage="/warnings <member>",
+        help="/warnings @User"
+    )
     @commands.has_permissions(moderate_members=True)
     async def warnings(self, ctx, member: discord.Member):
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
@@ -240,14 +300,24 @@ class Moderation(commands.Cog):
             embed.add_field(name=f"ID: {w.get('warning_id', 'Unknown')}", value=f"**Reason:** {w['reason']}\n<t:{int(w['timestamp'])}:R> | Mod: <@{w.get('moderator_id', 'Unknown')}>", inline=False)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="delwarn", description="Removes a specific warning.")
+    @commands.hybrid_command(
+        name="delwarn", 
+        description="Removes a specific warning.",
+        usage="/delwarn <member> <warning_id>",
+        help="/delwarn @User 1258900481812"
+    )
     @commands.has_permissions(moderate_members=True)
     async def delwarn(self, ctx, member: discord.Member, warning_id: str):
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
         result = await self.bot.db.warnings.delete_one({"guild_id": ctx.guild.id, "user_id": member.id, "warning_id": warning_id})
         await ctx.send(f"✅ Deleted warning `{warning_id}`." if result.deleted_count > 0 else f"❌ Could not find warning `{warning_id}`.")
 
-    @commands.hybrid_command(name="clean", description="Cleans up the bot's own responses.")
+    @commands.hybrid_command(
+        name="clean", 
+        description="Cleans up the bot's own responses.",
+        usage="/clean [limit]",
+        help="/clean 50"
+    )
     @commands.has_permissions(manage_messages=True)
     async def clean(self, ctx, limit: int = 50):
         if limit <= 0 or limit > 100: return await ctx.send("❌ Limit 1-100.")   
@@ -266,7 +336,12 @@ class Moderation(commands.Cog):
         except Exception: 
             await ctx.send("❌ **Error:** Failed to clean.", ephemeral=True)
 
-    @commands.hybrid_command(name="softban", description="Bans and immediately unbans to clear recent messages.")
+    @commands.hybrid_command(
+        name="softban", 
+        description="Bans and immediately unbans to clear recent messages.",
+        usage="/softban <member> [reason]",
+        help="/softban @Spammer Raid account"
+    )
     @commands.has_permissions(ban_members=True)
     async def softban(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
         await ctx.defer()
@@ -286,7 +361,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** Failed to softban member. `{e}`")
 
-    @commands.hybrid_command(name="slowmode", description="Sets the slowmode delay for the current channel.")
+    @commands.hybrid_command(
+        name="slowmode", 
+        description="Sets the slowmode delay for the current channel.",
+        usage="/slowmode <seconds> [channel]",
+        help="/slowmode 15 #general"
+    )
     @commands.has_permissions(manage_channels=True)
     async def slowmode(self, ctx, seconds: int, channel: discord.TextChannel = None):
         channel = channel or ctx.channel
@@ -302,7 +382,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** Failed to set slowmode. `{e}`")
 
-    @commands.hybrid_command(name="role", description="Toggles a role for a member (adds if they don't have it, removes if they do).")
+    @commands.hybrid_command(
+        name="role", 
+        description="Toggles a role for a member (adds if they don't have it, removes if they do).",
+        usage="/role <member> <role>",
+        help="/role @User @VIP"
+    )
     @commands.has_permissions(manage_roles=True)
     async def role(self, ctx, member: discord.Member, role: discord.Role):
         # Specific hierarchy checks for role assignment
@@ -321,7 +406,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="clearwarns", description="Clears all database warnings for a user.")
+    @commands.hybrid_command(
+        name="clearwarns", 
+        description="Clears all database warnings for a user.",
+        usage="/clearwarns <member>",
+        help="/clearwarns @User"
+    )
     @commands.has_permissions(moderate_members=True)
     async def clearwarns(self, ctx, member: discord.Member):
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ Database disconnected.")
@@ -333,7 +423,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** Failed to clear warnings. `{e}`")
 
-    @commands.hybrid_command(name="nick", description="Changes or resets a member's nickname.")
+    @commands.hybrid_command(
+        name="nick", 
+        description="Changes or resets a member's nickname.",
+        usage="/nick <member> [nickname]",
+        help="/nick @User CoolGuy99"
+    )
     @commands.has_permissions(manage_nicknames=True)
     async def nick(self, ctx, member: discord.Member, *, nickname: str = None):
         if not await self.hierarchy_check(ctx, member): return
@@ -347,7 +442,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="vmute", description="Server-mutes a member in voice channels.")
+    @commands.hybrid_command(
+        name="vmute", 
+        description="Server-mutes a member in voice channels.",
+        usage="/vmute <member> [reason]",
+        help="/vmute @User Playing loud music"
+    )
     @commands.has_permissions(mute_members=True)
     async def vmute(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
         if not await self.hierarchy_check(ctx, member): return
@@ -359,7 +459,12 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ **Error:** `{e}`")
 
-    @commands.hybrid_command(name="vunmute", description="Removes a server voice mute from a member.")
+    @commands.hybrid_command(
+        name="vunmute", 
+        description="Removes a server voice mute from a member.",
+        usage="/vunmute <member> [reason]",
+        help="/vunmute @User"
+    )
     @commands.has_permissions(mute_members=True)
     async def vunmute(self, ctx, member: discord.Member, *, reason: str = "No reason provided."):
         if not await self.hierarchy_check(ctx, member): return
