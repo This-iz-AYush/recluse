@@ -249,7 +249,6 @@ class Moderation(commands.Cog):
     @commands.has_permissions(moderate_members=True)
     async def warn(self, ctx, member: discord.Member, *, reason: str):
         await ctx.defer()
-        if not await self.hierarchy_check(ctx, member): return
         
         if not hasattr(self.bot, 'db'): return await ctx.send("❌ **Database Error:** Cannot process warnings right now.")
             
@@ -274,7 +273,8 @@ class Moderation(commands.Cog):
         embed.add_field(name="Reason", value=reason)
         
         footer_text = f"User now has {total_warns} warnings."
-        if total_warns > 0 and total_warns % 3 == 0:
+        is_staff = member.guild_permissions.administrator or member.guild_permissions.manage_guild or member.guild_permissions.moderate_members
+        if total_warns > 0 and total_warns % 3 == 0 and not is_staff:
             try:
                 await member.timeout(datetime.timedelta(hours=1), reason=f"Auto-Mod: {total_warns} warnings.")
                 footer_text += " | 🔇 Auto-Muted for 1 hour."
@@ -282,7 +282,7 @@ class Moderation(commands.Cog):
             
         embed.set_footer(text=footer_text)
         await ctx.send(embed=embed)
-
+        
     @commands.hybrid_command(
         name="warnings", 
         description="View all warnings for a member.",
@@ -431,7 +431,6 @@ class Moderation(commands.Cog):
     )
     @commands.has_permissions(manage_nicknames=True)
     async def nick(self, ctx, member: discord.Member, *, nickname: str = None):
-        if not await self.hierarchy_check(ctx, member): return
         
         try:
             await member.edit(nick=nickname, reason=f"Action by {ctx.author}")
