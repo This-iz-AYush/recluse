@@ -2,6 +2,53 @@ import discord
 from discord.ext import commands
 import datetime
 import io
+from duckduckgo_search import DDGS 
+import aiohttp
+import re
+
+class SearchPaginator(discord.ui.View):
+    def __init__(self, ctx, embeds):
+        super().__init__(timeout=120)
+        self.ctx = ctx
+        self.embeds = embeds
+        self.current_page = 0
+        self.update_buttons()
+
+    def update_buttons(self):
+        # Disable "previous" if on the first page
+        self.prev_button.disabled = self.current_page == 0
+        # Disable "next" if on the last page
+        self.next_button.disabled = self.current_page == len(self.embeds) - 1
+        
+        # Update page counters on the buttons
+        self.prev_button.label = f"◀ {self.current_page + 1}"
+        self.next_button.label = f"▶ {len(self.embeds)}"
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, custom_id="prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author:
+            return await interaction.response.send_message("❌ This is not your search session.", ephemeral=True)
+        
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, custom_id="next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author:
+            return await interaction.response.send_message("❌ This is not your search session.", ephemeral=True)
+            
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except Exception:
+            pass
 
 class Misc(commands.Cog):
     def __init__(self, bot):
@@ -31,6 +78,80 @@ class Misc(commands.Cog):
                 await ctx.send("❌ The **Miscellaneous** module has been disabled by server administrators.", ephemeral=True)
                 return False
         return True
+
+    @commands.hybrid_command(
+        name="search", 
+        description="Search for the definition of a word or phrase.",
+        usage="/search <term>",
+        help="/search demicolon"
+    )
+    async def search(self, ctx, *, term: str):
+        await ctx.defer()
+        
+        # Fetching data from Urban Dictionary API
+        url = f"https://api.urbandictionary.com/v0/define?term={term}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return await ctx.send("❌ Error contacting the dictionary network.")
+                data = await response.json()
+
+        definitions = data.get("list", [])
+        if not definitions:
+            return await ctx.send(f"🔍 No definitions found for `{term}`.")
+
+        embeds = []
+        total_pages = len(definitions)
+        
+        # Check if the channel allows NSFW content
+        is_nsfw = getattr(ctx.channel, "is_nsfw", lambda: False)()
+        
+        # A simple list of words to censor if the channel is SFW
+        bad_words = ["fuck", "shit", "bitch", "ass", "dick", "cock", "pussy", "cunt", "whore"]
+
+        for i, entry in enumerate(definitions):
+            definition = entry.get("definition", "No definition provided.")
+            example = entry.get("example", "")
+            
+            warning_text = ""
+            
+            # Apply basic censorship if not in an NSFW channel
+            if not is_nsfw:
+                warning_text = "⚠️ **A few words may have been censored! To view an uncensored version, use this command in a NSFW channel.** ⚠️\n\n"
+                for word in bad_words:
+                    # Replaces the bad word with brackets, e.g., [f***]
+                    replacement = f"[{word[0]}{'*' * (len(word)-1)}]" 
+                    definition = re.sub(rf"\b{word}\b", replacement, definition, flags=re.IGNORECASE)
+                    example = re.sub(rf"\b{word}\b", replacement, example, flags=re.IGNORECASE)
+
+            # Format the embed description
+            description = f"{warning_text}{definition}\n\n"
+            if example:
+                # Format example slightly differently to stand out
+                description += f"*{example}*\n\n"
+                
+            description += f"**Definition {i + 1}/{total_pages}**"
+            
+            # Discord limits embed descriptions to 4096 characters
+            if len(description) > 4096:
+                description = description[:4090] + "..."
+
+            embed = discord.Embed(title=f"Definition of '{term}'", description=description, color=0x2b2d31)
+            
+            # You can add a specific thumbnail here if you have a dictionary icon
+            # embed.set_thumbnail(url="URL_TO_YOUR_ICON")
+            
+            embeds.append(embed)
+
+        # If there's only one page, we don't need the paginator buttons
+        if len(embeds) == 1:
+            await ctx.send(embed=embeds[0])
+        else:
+            view = SearchPaginator(ctx, embeds)
+            view.message = await ctx.send(embed=embeds[0], view=view)
+
+        if ctx.guild:
+            await self.log_telemetry(ctx.guild.id, "search")
 
     @commands.hybrid_command(
         name="ping", 
