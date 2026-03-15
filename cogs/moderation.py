@@ -430,7 +430,7 @@ class Moderation(commands.Cog):
         help="/nick @User CoolGuy99"
     )
     @commands.has_permissions(manage_nicknames=True)
-    async def nick(self, ctx, member: discord.Member, *, nickname: str = None):
+    async def nick(self, ctx, member: discord.Member, *, nickname: str):
         
         try:
             await member.edit(nick=nickname, reason=f"Action by {ctx.author}")
