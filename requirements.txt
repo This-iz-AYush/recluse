@@ -5,3 +5,4 @@ python-dotenv
 motor
 quart
 duckduckgo-search
+googletrans==4.0.0-rc1
