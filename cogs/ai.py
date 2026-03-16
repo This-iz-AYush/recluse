@@ -335,7 +335,7 @@ The system will intercept the tags and provide you with the results in the next 
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            "model": "llama-3.1-405b-instruct", 
+            "model": "glm5", 
             "messages": messages
         }
         
