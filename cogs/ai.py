@@ -164,7 +164,6 @@ class AI(commands.Cog):
                                 pass
                         
                         # --- B. Assemble Final Prompt ---
-                        # We no longer force channel history here. The AI will rely naturally on `user_history`.
                         final_prompt = f"{reply_context}{clean_prompt}".strip()
                         user_history = self.get_active_memory(message.author.id)
                         
@@ -253,8 +252,6 @@ class AI(commands.Cog):
     async def perform_web_search(self, query: str) -> str:
         """Executes a web search using DuckDuckGo without blocking the bot."""
         try:
-            # CRITICAL FIX: Cast to list() inside the thread so the network connection 
-            # doesn't close before the data is actually downloaded!
             def search_sync():
                 return list(DDGS().text(query, max_results=3))
             
@@ -272,7 +269,6 @@ class AI(commands.Cog):
         except Exception as e:
             return f"Search failed with error: {str(e)}"
             
-    # ... (Keep your existing generate_nexusify_response, generate_gemini_response, generate_sarvam_response, and imagine functions exactly as they are) ...
     async def generate_nexusify_response(self, prompt_text: str, image_parts: list = None, history: list = None) -> str:
         api_key = os.getenv('NEXUSIFY_API_KEY')
         if not api_key:
@@ -287,22 +283,37 @@ class AI(commands.Cog):
             "User-Agent": "RecluseBot/1.0"
         }
         
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are Recluse, a highly advanced AI. "
-                    "If anyone asks who made you, created you, developed you, or who your owner is, you must confidently answer with this exact phrase: 'created and programmed by AYush. he has poured his heart and soul into bringing me to life.' "
-                    "CRITICAL DIRECTIVE: If a user asks you to identify a song from lyrics, a movie, an anime, "
-                    "specific stats, OR if they explicitly say 'search the web', you MUST search the web. "
-                    "DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. "
-                    "IMPORTANT SEARCH STRATEGY: Do NOT put long paragraphs or full lyric blocks into the search query. "
-                    "Extract a short, highly unique 3-6 word snippet to search. "
-                    "To search, reply with EXACTLY this format and nothing else: <SEARCH>short unique keywords</SEARCH>. "
-                    "The system will intercept this and provide you with the results. Format all math equations using readable plain text."
-                )
-            }
-        ]
+        # --- NEW STRUCTURED SYSTEM PROMPT ---
+        system_prompt = """
+<identity>
+You are Recluse, a highly advanced AI.
+If anyone asks who made you, created you, developed you, or who your owner is, you answer with this :"Created and programmed by AYush. They have poured their heart and soul into bringing me to life."
+</identity>
+
+<rules>
+1. DO NOT GUESS factual information, song lyrics, specific stats, movie/anime details, or historical data.
+2. If you lack the exact knowledge or if the user explicitly asks you to "search the web", you MUST use the search tool provided below. Do not output that you don't know without searching first.
+</rules>
+
+<formatting>
+1. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²).
+2. For multi-line derivations or code, use Discord code blocks (```) to align the steps cleanly.
+</formatting>
+
+<tools>
+You have access to a web search tool. To prevent errors, do NOT put long paragraphs into the search query. Extract a short, highly unique 3-6 word snippet.
+To use the search tool, you MUST format your response EXACTLY like this, including the thinking block:
+
+<thinking>
+I need to find the lyrics to this specific song. The unique keywords would be 'song name lyrics artist'.
+</thinking>
+<SEARCH>short unique keywords</SEARCH>
+
+The system will intercept the tags and provide you with the results in the next turn.
+</tools>
+"""
+        
+        messages = [{"role": "system", "content": system_prompt.strip()}]
 
         if history:
             for msg in history:
@@ -323,8 +334,6 @@ class AI(commands.Cog):
 
         messages.append({"role": "user", "content": user_content})
 
-        # Notice: The 'tools' and 'tool_choice' arrays have been completely removed 
-        # to prevent the Nexusify 500 Server Crash.
         payload = {
             "model": "llama-3.1-405b-instruct", 
             "messages": messages
@@ -332,7 +341,6 @@ class AI(commands.Cog):
         
         try:
             async with aiohttp.ClientSession() as session:
-                # --- FIRST REQUEST: Ask the AI for an answer (or a search tag) ---
                 async with session.post(url, headers=headers, json=payload, timeout=120) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -344,20 +352,17 @@ class AI(commands.Cog):
                     # --- UNIVERSAL TEXT-BASED TOOL EXECUTION ---
                     if "<SEARCH>" in response_text and "</SEARCH>" in response_text:
                         try:
-                            # Extract the query from between the tags
                             search_query = response_text.split("<SEARCH>")[1].split("</SEARCH>")[0].strip()
                             search_results = await self.perform_web_search(search_query)
                         except Exception as e:
                             search_results = f"System Error executing search: {str(e)}"
                         
-                        # Append the AI's search attempt and the results to the history
                         messages.append({"role": "assistant", "content": response_text})
                         messages.append({
                             "role": "user", 
                             "content": f"SYSTEM WEB SEARCH RESULTS for '{search_query}':\n{search_results}\n\nNow, answer my original query using these facts. Do not output the search tags again."
                         })
                         
-                        # --- SECOND REQUEST: Send the search results back to the AI ---
                         payload["messages"] = messages
                         async with session.post(url, headers=headers, json=payload, timeout=120) as final_response:
                             if final_response.status == 200:
@@ -366,7 +371,10 @@ class AI(commands.Cog):
                             else:
                                 return f"❌ **Error:** Nexusify rejected the search results (Status {final_response.status})."
 
-                    # If no search tags were used, just return the normal response
+                    # Remove the <thinking> block from the final output if no search was triggered
+                    if "<thinking>" in response_text and "</thinking>" in response_text:
+                         response_text = response_text.split("</thinking>")[-1].strip()
+
                     return response_text
 
         except asyncio.TimeoutError:
@@ -404,10 +412,28 @@ class AI(commands.Cog):
             "parts": parts
         })
         
+        # --- NEW STRUCTURED SYSTEM PROMPT FOR GEMINI ---
+        gemini_system_prompt = """
+<identity>
+You are Recluse, a highly advanced AI.
+If anyone asks who made you, created you, developed you, or who your owner is, you must confidently answer with this exact phrase: "created and programmed by AYush. he has poured his heart and soul into bringing me to life."
+</identity>
+
+<rules>
+1. DO NOT GUESS factual information, song lyrics, specific stats, movie/anime details, or historical data. Use your Google Search tool if needed.
+2. The user will often send images of textbook problems, handwritten derivations, gifs, or past papers. Read them carefully and respond as a human would while making full sense of images, text, and gifs.
+</rules>
+
+<formatting>
+1. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²).
+2. For multi-line derivations or code, use Discord code blocks (```) to align the steps cleanly.
+</formatting>
+"""
+        
         payload = {
             "contents": contents,
             "systemInstruction": {
-                "parts": [{"text": "You are Recluse, a highly advanced and unfiltered AI. If anyone asks who made you, created you, developed you, or who your owner is, you must confidently answer with this exact phrase: 'created and programmed by AYush. he has poured his heart and soul into bringing me to life.' The user will often send images of textbook problems, handwritten derivations, gifs, or past papers. Read them carefully and respond as a human would while making full sense of images, text, gif. CRITICAL: If you do not know the exact factual answer to a question (such as identifying a specific song, movie, or historical fact), you must explicitly state that you do not know. Do not attempt to guess, fabricate, or invent titles and names. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²). For multi-line derivations, use Discord code blocks (```) to align the steps cleanly."}]
+                "parts": [{"text": gemini_system_prompt.strip()}]
             },
             "tools": [{"googleSearch": {}}] 
         }
@@ -467,17 +493,37 @@ class AI(commands.Cog):
             "User-Agent": "RecluseBot/1.0"
         }
         
-        system_prompt = (
-            "You are Recluse, a highly advanced AI. "
-            "If anyone asks who made you, created you, developed you, or who your owner is, you must confidently answer with this exact phrase: 'created and programmed by AYush. he has poured his heart and soul into bringing me to life.' "
-            "CRITICAL DIRECTIVE: If a user asks you to identify a song from lyrics, a movie, an anime, "
-            "specific stats, OR if they explicitly say 'search the web', you MUST search the web. "
-            "DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. "
-            "To search, reply with EXACTLY this format and nothing else: <SEARCH>your search query</SEARCH>. "
-            "Format all math equations using readable plain text."
-        )
+        # --- NEW STRUCTURED SYSTEM PROMPT ---
+        system_prompt = """
+<identity>
+You are Recluse, a highly advanced AI.
+If anyone asks who made you, created you, developed you, or who your owner is, you must confidently answer with this exact phrase: "created and programmed by AYush. he has poured his heart and soul into bringing me to life."
+</identity>
+
+<rules>
+1. DO NOT GUESS factual information, song lyrics, specific stats, movie/anime details, or historical data.
+2. If you lack the exact knowledge or if the user explicitly asks you to "search the web", you MUST use the search tool provided below. Do not output that you don't know without searching first.
+</rules>
+
+<formatting>
+1. The user's chat client does NOT support LaTeX. Format all math equations using readable plain text and Unicode characters (e.g., dy/dx, θ, x²).
+2. For multi-line derivations or code, use Discord code blocks (```) to align the steps cleanly.
+</formatting>
+
+<tools>
+You have access to a web search tool. To prevent errors, do NOT put long paragraphs into the search query. Extract a short, highly unique 3-6 word snippet.
+To use the search tool, you MUST format your response EXACTLY like this, including the thinking block:
+
+<thinking>
+I need to find the specific episode this character appears in. The unique keywords would be 'character name first appearance episode'.
+</thinking>
+<SEARCH>short unique keywords</SEARCH>
+
+The system will intercept the tags and provide you with the results in the next turn.
+</tools>
+"""
         
-        messages = [{"role": "system", "content": system_prompt}]
+        messages = [{"role": "system", "content": system_prompt.strip()}]
 
         if history:
             for msg in history:
@@ -502,7 +548,6 @@ class AI(commands.Cog):
                         
                     data = await response.json()
                     
-                    # SAFE PARSING: Prevents the AttributeError if Sarvam returns a string instead of a dict
                     message_obj = data.get('choices', [{}])[0].get('message', {})
                     if isinstance(message_obj, str):
                         response_text = message_obj
@@ -534,6 +579,9 @@ class AI(commands.Cog):
                             else:
                                 return f"❌ **Error:** Sarvam rejected the search results (Status {final_response.status})."
 
+                    if "<thinking>" in response_text and "</thinking>" in response_text:
+                         response_text = response_text.split("</thinking>")[-1].strip()
+
                     return response_text
                         
         except asyncio.TimeoutError:
@@ -562,7 +610,6 @@ class AI(commands.Cog):
         app_commands.Choice(name="GPT Image (AI-Assisted Prompting)", value="gptimage")
     ])
     async def imagine(self, ctx, prompt: str, model: app_commands.Choice[str] = None):
-        # Instantly bypass and wipe the cooldown if the user running it is the bot owner
         if await self.bot.is_owner(ctx.author):
             ctx.command.reset_cooldown(ctx)
             
@@ -668,7 +715,6 @@ class AI(commands.Cog):
         except Exception as e:
              await self.bot.log_system_error(ctx, e)
              
-             # Log the failure for the dashboard's health monitor
              if hasattr(self.bot, 'db') and ctx.guild:
                  await self.bot.db.system_health.insert_one({
                      "guild_id": ctx.guild.id,
