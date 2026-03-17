@@ -3,6 +3,8 @@ owner.py  —  Recluse Bot  v2.0  ⟨Enterprise Edition⟩
 ═══════════════════════════════════════════════════════════════════════
 Developer-only control panel — every command is locked to bot owner(s).
 
+Inspired by Miza's operator architecture. Features:
+
   NETWORK CONTROL
   ├─ /network blacklist_user / unblacklist_user
   ├─ /network blacklist_guild / unblacklist_guild
@@ -18,7 +20,7 @@ Developer-only control panel — every command is locked to bot owner(s).
   ├─ /update                                  ← git pull + reload all cogs
   └─ /setavatar <url>                         ← change bot avatar/banner
 
-  LIVE EVAL ENGINE  (multi-mode REPL)
+  LIVE EVAL ENGINE  (Miza-style multi-mode REPL)
   ├─ /eval  <code>                            ← execute Python in-process
   ├─ /shell <command>                         ← run shell commands
   └─ ,eval  (prefix, channel terminal mode)   ← persistent REPL per channel
@@ -72,7 +74,7 @@ C_DEV     = discord.Color(0x2b2d31)
 
 # ─── Channel IDs (update these in .env or hardcode) ──────────────────────────
 ERROR_LOG_CHANNEL_ID   = 1096869180621463662
-CONSOLE_CHANNEL_ID     = 1483449378202193992
+CONSOLE_CHANNEL_ID     = 1188082818656510032
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1071,7 +1073,7 @@ class Owner(commands.Cog):
 
     @app_commands.command(name="botstats", description="[Dev] Deep runtime diagnostics.")
     @commands.is_owner()
-    async def bot_stats(self, interaction: discord.Interaction):
+    async def runtime_stats(self, interaction: discord.Interaction):
         if not await self._owner_check(interaction):
             return
         await interaction.response.defer(ephemeral=True)
