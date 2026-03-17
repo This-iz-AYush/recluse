@@ -3,7 +3,7 @@ antinuke.py  —  Recluse Bot  v2.0
 ═══════════════════════════════════════════════════════════════════════
 Enterprise-grade Anti-Nuke protection system.
 
-WORKING...
+HOW IT WORKS
   Discord fires audit-log events milliseconds AFTER an action lands.
   We can't intercept before Discord processes it, but we CAN:
     1. Detect the action the instant it fires (< 200 ms)
@@ -63,7 +63,7 @@ ACTION_WEIGHTS: dict[discord.AuditLogAction, int] = {
     discord.AuditLogAction.channel_create:          1,  # mass-create can also be spam
     discord.AuditLogAction.role_delete:             3,
     discord.AuditLogAction.role_update:             2,  # permission escalation
-    discord.AuditLogAction.member_ban:              3,
+    discord.AuditLogAction.ban:              3,
     discord.AuditLogAction.kick:                    2,
     discord.AuditLogAction.member_prune:            4,  # pruning = mass kick
     discord.AuditLogAction.webhook_create:          2,
@@ -559,7 +559,7 @@ class AntiNuke(commands.Cog):
             return
         await self._check_and_trigger(
             guild, actor.id,
-            discord.AuditLogAction.member_ban,
+            discord.AuditLogAction.ban,
             extra_reason=f"Banned {user}",
         )
 
