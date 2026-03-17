@@ -40,13 +40,16 @@ class Info(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    # ALL commands under one /lookup group → 1 slot instead of 9
+    lookup = app_commands.Group(name="lookup", description="Information lookup commands: wiki, weather, crypto, GitHub & more.")
+
     async def cog_check(self, ctx) -> bool:
-        if hasattr(self.bot, "db") and ctx.guild:
+        if hasattr(self.bot, "db") and interaction.guild:
             bl = await self.bot.db.global_blacklist.find_one(
-                {"target_id": ctx.author.id, "type": "user"}
+                {"target_id": interaction.user.id, "type": "user"}
             )
             if bl:
-                await ctx.send("❌ Access denied.", ephemeral=True)
+                await interaction.followup.send("❌ Access denied.", ephemeral=True)
                 return False
         return True
 
@@ -54,15 +57,9 @@ class Info(commands.Cog):
     # /wiki
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="wiki",
-        description="Fetch a Wikipedia article summary.",
-        usage="/wiki <query>",
-        help="/wiki Albert Einstein",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def wiki(self, ctx, *, query: str):
-        await ctx.defer()
+    @lookup.command(name="wiki", description="Fetch a Wikipedia article summary.")
+    async def wiki(self, interaction: discord.Interaction, *, query: str):
+        await interaction.response.defer()
         url = (
             "https://en.wikipedia.org/api/rest_v1/page/summary/"
             + urllib.parse.quote(query.replace(" ", "_"))
@@ -71,12 +68,12 @@ class Info(commands.Cog):
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 404:
-                        return await ctx.send(f"❌ No Wikipedia article found for **{query}**.")
+                        return await interaction.followup.send(f"❌ No Wikipedia article found for **{query}**.")
                     if r.status != 200:
-                        return await ctx.send("❌ Wikipedia is unreachable right now.")
+                        return await interaction.followup.send("❌ Wikipedia is unreachable right now.")
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ Failed to contact Wikipedia.")
+            return await interaction.followup.send("❌ Failed to contact Wikipedia.")
 
         title   = data.get("title", query)
         extract = data.get("extract", "No summary available.")
@@ -90,21 +87,15 @@ class Info(commands.Cog):
         if thumb:
             embed.set_thumbnail(url=thumb)
         embed.set_footer(text="📖 Source: Wikipedia")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /github
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="github",
-        description="Look up a GitHub user or repository.",
-        usage="/github <user> [repo]",
-        help="/github torvalds linux",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def github(self, ctx, user: str, repo: str = ""):
-        await ctx.defer()
+    @lookup.command(name="github", description="Look up a GitHub user or repository.")
+    async def github(self, interaction: discord.Interaction, user: str, repo: str = ""):
+        await interaction.response.defer()
         try:
             async with aiohttp.ClientSession() as s:
                 if repo:
@@ -112,7 +103,7 @@ class Info(commands.Cog):
                     async with s.get(url, timeout=aiohttp.ClientTimeout(total=10),
                                      headers={"Accept": "application/vnd.github+json"}) as r:
                         if r.status == 404:
-                            return await ctx.send(f"❌ Repo `{user}/{repo}` not found.")
+                            return await interaction.followup.send(f"❌ Repo `{user}/{repo}` not found.")
                         data = await r.json()
 
                     embed = discord.Embed(
@@ -136,7 +127,7 @@ class Info(commands.Cog):
                     async with s.get(url, timeout=aiohttp.ClientTimeout(total=10),
                                      headers={"Accept": "application/vnd.github+json"}) as r:
                         if r.status == 404:
-                            return await ctx.send(f"❌ User `{user}` not found.")
+                            return await interaction.followup.send(f"❌ User `{user}` not found.")
                         data = await r.json()
 
                     embed = discord.Embed(
@@ -156,38 +147,32 @@ class Info(commands.Cog):
                         embed.add_field(name="🏢 Company", value=data["company"], inline=True)
                     joined = data.get("created_at", "")[:10]
                     embed.set_footer(text=f"Joined GitHub: {joined}")
-            await ctx.send(embed=embed)
+            await interaction.followup.send(embed=embed)
         except Exception as e:
-            await ctx.send(f"❌ GitHub API error: `{type(e).__name__}`")
+            await interaction.followup.send(f"❌ GitHub API error: `{type(e).__name__}`")
 
     # ─────────────────────────────────────────────────────────────────────────
     # /define  — Free Dictionary API
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="define",
-        description="Get the dictionary definition of a word.",
-        usage="/define <word>",
-        help="/define ephemeral",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def define(self, ctx, *, word: str):
-        await ctx.defer()
+    @lookup.command(name="define", description="Get the dictionary definition of a word.")
+    async def define(self, interaction: discord.Interaction, *, word: str):
+        await interaction.response.defer()
         word = word.strip().lower()
         url  = f"https://api.dictionaryapi.dev/api/v2/entries/en/{urllib.parse.quote(word)}"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 404:
-                        return await ctx.send(f"❌ No definition found for **{word}**.")
+                        return await interaction.followup.send(f"❌ No definition found for **{word}**.")
                     if r.status != 200:
-                        return await ctx.send("❌ Dictionary API unavailable.")
+                        return await interaction.followup.send("❌ Dictionary API unavailable.")
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ Failed to reach the dictionary API.")
+            return await interaction.followup.send("❌ Failed to reach the dictionary API.")
 
         if not data or not isinstance(data, list):
-            return await ctx.send(f"❌ No results for **{word}**.")
+            return await interaction.followup.send(f"❌ No results for **{word}**.")
 
         entry     = data[0]
         phonetic  = entry.get("phonetic", "")
@@ -215,30 +200,24 @@ class Info(commands.Cog):
             embed.add_field(name=f"*{pos}*", value=value, inline=False)
 
         embed.set_footer(text="Source: Free Dictionary API")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /npm  — NPM package info
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="npm",
-        description="Look up an NPM package.",
-        usage="/npm <package>",
-        help="/npm express",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def npm(self, ctx, *, package: str):
-        await ctx.defer()
+    @lookup.command(name="npm", description="Look up an NPM package.")
+    async def npm(self, interaction: discord.Interaction, *, package: str):
+        await interaction.response.defer()
         url = f"https://registry.npmjs.org/{urllib.parse.quote(package)}"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 404:
-                        return await ctx.send(f"❌ Package `{package}` not found on NPM.")
+                        return await interaction.followup.send(f"❌ Package `{package}` not found on NPM.")
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ NPM registry unreachable.")
+            return await interaction.followup.send("❌ NPM registry unreachable.")
 
         latest  = data.get("dist-tags", {}).get("latest", "?")
         ver     = data.get("versions", {}).get(latest, {})
@@ -252,30 +231,24 @@ class Info(commands.Cog):
         embed.add_field(name="📜 License", value=ver.get("license", "?"),                  inline=True)
         embed.add_field(name="🔗 Homepage",value=ver.get("homepage") or "N/A",             inline=True)
         embed.set_footer(text="📦 Source: NPM Registry")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /pypi  — PyPI package info
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="pypi",
-        description="Look up a PyPI package.",
-        usage="/pypi <package>",
-        help="/pypi discord.py",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def pypi(self, ctx, *, package: str):
-        await ctx.defer()
+    @lookup.command(name="pypi", description="Look up a PyPI package.")
+    async def pypi(self, interaction: discord.Interaction, *, package: str):
+        await interaction.response.defer()
         url = f"https://pypi.org/pypi/{urllib.parse.quote(package)}/json"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 404:
-                        return await ctx.send(f"❌ Package `{package}` not found on PyPI.")
+                        return await interaction.followup.send(f"❌ Package `{package}` not found on PyPI.")
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ PyPI registry unreachable.")
+            return await interaction.followup.send("❌ PyPI registry unreachable.")
 
         info    = data.get("info", {})
         embed   = discord.Embed(
@@ -290,31 +263,25 @@ class Info(commands.Cog):
         author  = info.get("author") or info.get("author_email") or "Unknown"
         embed.add_field(name="👤 Author",   value=author[:100],                     inline=True)
         embed.set_footer(text="🐍 Source: PyPI")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /weather  — wttr.in (completely free, no key)
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="weather",
-        description="Get current weather for any city.",
-        usage="/weather <city>",
-        help="/weather Tokyo",
-    )
-    @commands.cooldown(1, 10, commands.BucketType.user)
-    async def weather(self, ctx, *, city: str):
-        await ctx.defer()
+    @lookup.command(name="weather", description="Get current weather for any city.")
+    async def weather(self, interaction: discord.Interaction, *, city: str):
+        await interaction.response.defer()
         encoded = urllib.parse.quote(city)
         url     = f"https://wttr.in/{encoded}?format=j1"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
                     if r.status != 200:
-                        return await ctx.send(f"❌ Couldn't get weather for **{city}**.")
+                        return await interaction.followup.send(f"❌ Couldn't get weather for **{city}**.")
                     data = await r.json(content_type=None)
         except Exception:
-            return await ctx.send("❌ Weather service unavailable.")
+            return await interaction.followup.send("❌ Weather service unavailable.")
 
         try:
             current = data["current_condition"][0]
@@ -331,7 +298,7 @@ class Info(commands.Cog):
             visibility= current["visibility"]
             uv_index  = current["uvIndex"]
         except (KeyError, IndexError):
-            return await ctx.send("❌ Couldn't parse weather data.")
+            return await interaction.followup.send("❌ Couldn't parse weather data.")
 
         WEATHER_EMOJIS = {
             "sunny": "☀️", "clear": "☀️", "cloudy": "☁️", "overcast": "☁️",
@@ -357,34 +324,28 @@ class Info(commands.Cog):
         embed.add_field(name="👁️ Visibility",  value=f"`{visibility} km`",          inline=True)
         embed.add_field(name="☀️ UV Index",    value=f"`{uv_index}`",               inline=True)
         embed.set_footer(text="Source: wttr.in  •  No API key required")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /ipinfo  — ip-api.com (free, no key)
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="ipinfo",
-        description="Look up geolocation info for an IP address.",
-        usage="/ipinfo <ip>",
-        help="/ipinfo 8.8.8.8",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def ipinfo(self, ctx, ip: str):
-        await ctx.defer()
+    @lookup.command(name="ipinfo", description="Look up geolocation info for an IP address.")
+    async def ipinfo(self, interaction: discord.Interaction, ip: str):
+        await interaction.response.defer()
         # Basic validation — reject obviously private/internal IPs
         if re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|0\.)", ip):
-            return await ctx.send("❌ That's a private IP address — no geolocation available.")
+            return await interaction.followup.send("❌ That's a private IP address — no geolocation available.")
         url = f"http://ip-api.com/json/{urllib.parse.quote(ip)}?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,org,as,query"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ IP lookup service unavailable.")
+            return await interaction.followup.send("❌ IP lookup service unavailable.")
 
         if data.get("status") != "success":
-            return await ctx.send(f"❌ IP lookup failed: `{data.get('message', 'Unknown error')}`")
+            return await interaction.followup.send(f"❌ IP lookup failed: `{data.get('message', 'Unknown error')}`")
 
         embed = discord.Embed(title=f"🌐 IP: {data['query']}", color=C_INFO)
         embed.add_field(name="🏳️ Country",   value=data.get("country", "?"),    inline=True)
@@ -395,21 +356,15 @@ class Info(commands.Cog):
         embed.add_field(name="🏢 ISP",        value=data.get("isp", "?"),        inline=True)
         embed.add_field(name="🔗 Org",        value=(data.get("org") or "?")[:60], inline=True)
         embed.set_footer(text="Source: ip-api.com  •  Free tier")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /crypto  — CoinGecko (free, no key needed)
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="crypto",
-        description="Get the current price of a cryptocurrency.",
-        usage="/crypto <coin>",
-        help="/crypto bitcoin",
-    )
-    @commands.cooldown(1, 10, commands.BucketType.user)
-    async def crypto(self, ctx, *, coin: str):
-        await ctx.defer()
+    @lookup.command(name="crypto", description="Get the current price of a cryptocurrency.")
+    async def crypto(self, interaction: discord.Interaction, *, coin: str):
+        await interaction.response.defer()
         coin_id = coin.strip().lower().replace(" ", "-")
         url     = (
             f"https://api.coingecko.com/api/v3/coins/{urllib.parse.quote(coin_id)}"
@@ -420,10 +375,10 @@ class Info(commands.Cog):
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=15),
                                  headers={"Accept": "application/json"}) as r:
                     if r.status == 404:
-                        return await ctx.send(f"❌ Coin `{coin}` not found. Try the CoinGecko ID e.g. `bitcoin`, `ethereum`.")
+                        return await interaction.followup.send(f"❌ Coin `{coin}` not found. Try the CoinGecko ID e.g. `bitcoin`, `ethereum`.")
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ CoinGecko is unreachable.")
+            return await interaction.followup.send("❌ CoinGecko is unreachable.")
 
         md      = data.get("market_data", {})
         price   = md.get("current_price", {}).get("usd", 0)
@@ -453,34 +408,28 @@ class Info(commands.Cog):
         embed.add_field(name="📦 24h Volume", value=f"`${vol:,.0f}`",                 inline=True)
         embed.add_field(name="📉 24h Low/High", value=f"`${low:,.4f}` / `${high:,.4f}`", inline=True)
         embed.set_footer(text="Source: CoinGecko — prices may be delayed")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # /time  — world clock (worldtimeapi.org, free)
     # ─────────────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(
-        name="time",
-        description="Get the current time in any timezone or city.",
-        usage="/time <timezone>",
-        help="/time America/New_York",
-    )
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def time_cmd(self, ctx, *, timezone: str):
-        await ctx.defer()
+    @lookup.command(name="time", description="Get the current time in any timezone or city.")
+    async def time_cmd(self, interaction: discord.Interaction, *, timezone: str):
+        await interaction.response.defer()
         tz_encoded = urllib.parse.quote(timezone.replace(" ", "_"))
         url        = f"https://worldtimeapi.org/api/timezone/{tz_encoded}"
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     if r.status == 404:
-                        return await ctx.send(
+                        return await interaction.followup.send(
                             f"❌ Timezone `{timezone}` not found.\n"
                             "Examples: `America/New_York`, `Europe/London`, `Asia/Tokyo`"
                         )
                     data = await r.json()
         except Exception:
-            return await ctx.send("❌ World time service unavailable.")
+            return await interaction.followup.send("❌ World time service unavailable.")
 
         dt_str    = data.get("datetime", "")[:19].replace("T", " ")
         utc_off   = data.get("utc_offset", "?")
@@ -497,7 +446,7 @@ class Info(commands.Cog):
         embed.add_field(name="⏰ UTC Offset", value=f"`{utc_off}`",  inline=True)
         embed.add_field(name="🏷️ Abbreviation", value=f"`{tz_abbr}`", inline=True)
         embed.set_footer(text="Source: worldtimeapi.org")
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
