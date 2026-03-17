@@ -194,7 +194,7 @@ def _embed_giveaways() -> discord.Embed:
 def _embed_admin() -> discord.Embed:
     e = discord.Embed(title="⚙️ Admin Configuration", color=C_INFO)
     e.add_field(
-        name="Server Setup",
+        name="🛠️ Server Setup",
         value=(
             "> `/setup` — Interactive setup wizard.\n"
             "> `/config` — View all current settings.\n"
@@ -203,19 +203,40 @@ def _embed_admin() -> discord.Embed:
         inline=False,
     )
     e.add_field(
-        name="Systems",
+        name="📋 Logging & Welcome",
         value=(
-            "> `/setlog` — Set mod log channel.\n"
-            "> `/setwelcome` — Configure welcome/leave messages.\n"
-            "> `/autorole` — Auto-assign roles on join.\n"
-            "> `/reactionrole` — Bind reactions to roles.\n"
-            "> `/antispam` — Configure auto-mod.\n"
+            "> `/setlog <channel> [event]` — Set mod log channel.\n"
+            "> `/setwelcome <channel> [msg]` — Configure welcome/leave messages.\n"
+            "> `/autorole <role>` — Auto-assign role on join."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🛡️ Security",
+        value=(
+            "> `/antispam` — Configure anti-spam auto-mod.\n"
             "> `/banned_words` — Manage word blacklist.\n"
-            "> `/starboard` — Set up the starboard.\n"
-            "> `/customcommand` — Create server-specific commands.\n"
+            "> `/reactionrole` — Bind reactions to roles."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🤖 AI & Features",
+        value=(
             "> `/aiconfig` — Configure AI for this server.\n"
             "> `/levelconfig` — Configure XP leveling.\n"
-            "> `/ticketsetup` — Configure ticket system."
+            "> `/ticketsetup` — Configure ticket system.\n"
+            "> `/suggestsetup <channel>` — Set suggestion channel.\n"
+            "> `/birthdaysetup <channel> [role]` — Set birthday announcements."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🗂️ Content",
+        value=(
+            "> `/starboard <channel> [threshold]` — Set up the starboard.\n"
+            "> `/customcommand` — Create server-specific text commands.\n"
+            "> `/resetuser <member> <scope>` — Wipe XP / strikes / warnings."
         ),
         inline=False,
     )
@@ -233,6 +254,226 @@ def _embed_antinuke() -> discord.Embed:
             "> `/antinuke status` — View current config & trigger count.\n"
             "> `/antinuke logs` — Last 10 detections.\n"
             "> `/antinuke test` — Send a test alert to verify setup."
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_fun() -> discord.Embed:
+    e = discord.Embed(title="🎮 Fun Commands", color=discord.Color(0xE91E63))
+    e.add_field(
+        name="🎲 Random & Games",
+        value=(
+            "> `/8ball <question>` — Ask the Magic 8-Ball.\n"
+            "> `/coinflip` — Heads or tails.\n"
+            "> `/dice [NdN]` — Roll dice e.g. `2d6`, `1d20`.\n"
+            "> `/rps` — Rock Paper Scissors vs the bot.\n"
+            "> `/slots` — Spin the slot machine.\n"
+            "> `/choose <opt1> | <opt2> | …` — Pick a random option."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="😂 Text & Humour",
+        value=(
+            "> `/mock <text>` — SpOnGeBoB mOcKiNg text.\n"
+            "> `/clap <text>` — Add 👏 between 👏 words.\n"
+            "> `/reverse <text>` — Reverse a string.\n"
+            "> `/uwu <text>` — UwU-ify any text.\n"
+            "> `/emojify <text>` — Turn text into regional indicator emojis.\n"
+            "> `/say <message>` — Make the bot say something. *(Manage Messages)*"
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="📊 Rate & Ship",
+        value=(
+            "> `/rate <thing>` — Rate anything out of 100.\n"
+            "> `/ship <person1> <person2>` — Compatibility checker.\n"
+            "> `/pp [user]` — PP size (joke).\n"
+            "> `/howgay [user]` — How gay are you? (joke)."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🎉 Social",
+        value=(
+            "> `/truth` — Get a random truth question.\n"
+            "> `/dare` — Get a random dare.\n"
+            "> `/would_you_rather` — WYR question.\n"
+            "> `/thisorthat` — This or that vote.\n"
+            "> `/roast [user]` — Light-hearted roast.\n"
+            "> `/compliment [user]` — Give someone a genuine compliment."
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_info() -> discord.Embed:
+    e = discord.Embed(title="🌐 Info & Lookup Commands", color=discord.Color(0x2ECC71))
+    e.add_field(
+        name="📖 Knowledge",
+        value=(
+            "> `/wiki <query>` — Wikipedia article summary.\n"
+            "> `/define <word>` — Dictionary definition (Free Dictionary API).\n"
+            "> `/search <term>` — Urban Dictionary definitions.\n"
+            "ㅤ *(censored in SFW channels, full in NSFW)*"
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="💻 Developer Tools",
+        value=(
+            "> `/github <user> [repo]` — GitHub user or repository info.\n"
+            "> `/npm <package>` — NPM package details.\n"
+            "> `/pypi <package>` — PyPI package details."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🌍 Real-World Data",
+        value=(
+            "> `/weather <city>` — Current weather via wttr.in *(free, no key)*.\n"
+            "> `/crypto <coin>` — Live crypto price from CoinGecko *(free)*.\n"
+            "> `/time <timezone>` — Current time in any timezone.\n"
+            "> `/ipinfo <ip>` — IP address geolocation via ip-api.com *(free)*."
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_autoresponse() -> discord.Embed:
+    e = discord.Embed(title="⚡ Auto-Response System", color=discord.Color(0xFF9800))
+    e.add_field(
+        name="📋 Management *(Manage Server)*",
+        value=(
+            "> `/autoresponse add <keyword> <response>` — Create a trigger.\n"
+            "> `/autoresponse remove <keyword>` — Delete a trigger.\n"
+            "> `/autoresponse list` — View all triggers (up to 50).\n"
+            "> `/autoresponse test <keyword>` — Preview a trigger's output.\n"
+            "> `/autoresponse toggle <keyword> <true|false>` — Enable / disable.\n"
+            "> `/autoresponse clear` — Remove ALL triggers for this server."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="⚙️ Options",
+        value=(
+            "**Match modes:** `contains` · `exact` · `startswith` · `endswith` · `regex`\n"
+            "**Response types:** `text` · `embed` · `react` *(emoji)* · `dm`\n"
+            "**Tokens in responses:** `{user}` `{name}` `{server}` `{channel}` `{count}`\n"
+            "**Cooldown:** configurable per trigger to prevent spam\n"
+            "**Limit:** 50 triggers per server"
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_suggestions() -> discord.Embed:
+    e = discord.Embed(title="💡 Suggestion System", color=discord.Color(0x9C27B0))
+    e.add_field(
+        name="👤 For Members",
+        value=(
+            "> `/suggest <content> [image]` — Submit a suggestion with optional image.\n"
+            "ㅤ *(Sends to the configured suggestion channel with 👍 / 👎 voting)*"
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="🛡️ For Staff *(Manage Messages)*",
+        value=(
+            "> `/suggestion approve <#> [note]` — Approve a suggestion.\n"
+            "> `/suggestion deny <#> [note]` — Deny with optional reason.\n"
+            "> `/suggestion consider <#> [note]` — Mark as under consideration.\n"
+            "> `/suggestion implement <#> [note]` — Mark as implemented.\n"
+            "> `/suggestion info <#>` — View a specific suggestion.\n"
+            "> `/suggestion list [status]` — List recent suggestions by status."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="⚙️ Setup *(Manage Server)*",
+        value="> `/suggestsetup <channel>` — Set the suggestions channel.",
+        inline=False,
+    )
+    e.add_field(
+        name="✨ Features",
+        value=(
+            "• Auto-incrementing suggestion numbers\n"
+            "• DM notification to submitter on status change\n"
+            "• Live vote count updates on the embed\n"
+            "• Voting locked on resolved suggestions"
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_reminders() -> discord.Embed:
+    e = discord.Embed(title="⏰ Reminder System", color=discord.Color(0xF1C40F))
+    e.add_field(
+        name="Commands",
+        value=(
+            "> `/remind set <duration> <message> [dm] [repeat]` — Set a reminder.\n"
+            "> `/remind list` — View all your pending reminders.\n"
+            "> `/remind delete <number>` — Cancel a specific reminder.\n"
+            "> `/remind clear` — Cancel ALL your pending reminders."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="⚙️ Duration Format",
+        value=(
+            "Combine any of: `d` *(days)* · `h` *(hours)* · `m` *(minutes)* · `s` *(seconds)*\n"
+            "Examples: `1h30m` · `2d` · `45m` · `1d12h30m`\n"
+            "**Minimum:** 30 seconds  •  **Maximum:** 1 year  •  **Limit:** 25 per user"
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="✨ Features",
+        value=(
+            "• DM or channel delivery (your choice)\n"
+            "• Optional recurring reminders (`repeat` parameter)\n"
+            "• Persists across bot restarts\n"
+            "• Jump link back to original message"
+        ),
+        inline=False,
+    )
+    return e
+
+
+def _embed_birthdays() -> discord.Embed:
+    e = discord.Embed(title="🎂 Birthday System", color=discord.Color.pink())
+    e.add_field(
+        name="👤 For Members",
+        value=(
+            "> `/birthday set <day> <month> [year]` — Register your birthday.\n"
+            "> `/birthday get [member]` — View someone's birthday & days until.\n"
+            "> `/birthday list` — Upcoming birthdays sorted by proximity.\n"
+            "> `/birthday remove` — Remove your registered birthday."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="⚙️ Setup *(Manage Server)*",
+        value=(
+            "> `/birthdaysetup <channel> [role]` — Set the announcement channel\n"
+            "ㅤ and optional birthday role *(auto-removed after 24 hours)*."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="✨ Features",
+        value=(
+            "• Auto-celebration post at midnight UTC on birthday\n"
+            "• Optional birthday role assignment (auto-removed after 24h)\n"
+            "• Age calculation if birth year provided\n"
+            "• Days-until countdown for every registered member"
         ),
         inline=False,
     )
@@ -345,6 +586,12 @@ _PUBLIC_BUILDERS: dict[str, callable] = {
     "Giveaways":         _embed_giveaways,
     "Admin Config":      _embed_admin,
     "Anti-Nuke":         _embed_antinuke,
+    "Fun":               _embed_fun,
+    "Info & Lookup":     _embed_info,
+    "Auto-Response":     _embed_autoresponse,
+    #"Suggestions":       _embed_suggestions,
+    "Reminders":         _embed_reminders,
+    "Birthdays":         _embed_birthdays,
 }
 
 _DEV_LABEL = "🔐 Developer"
@@ -384,6 +631,12 @@ class HelpSelect(discord.ui.Select):
             discord.SelectOption(label="Giveaways",         description="Host and manage giveaways",          emoji="🎉"),
             discord.SelectOption(label="Admin Config",      description="Server setup and configuration",     emoji="⚙️"),
             discord.SelectOption(label="Anti-Nuke",         description="Nuke detection & server protection", emoji="🔒"),
+            discord.SelectOption(label="Fun",               description="8ball, dice, roast, memes & more",   emoji="🎮"),
+            discord.SelectOption(label="Info & Lookup",     description="Wiki, weather, GitHub, crypto & more",emoji="🌐"),
+            discord.SelectOption(label="Auto-Response",     description="Keyword trigger system",             emoji="⚡"),
+            #discord.SelectOption(label="Suggestions",       description="Submit & vote on suggestions",       emoji="💡"),
+            discord.SelectOption(label="Reminders",         description="Personal reminder system",           emoji="⏰"),
+            discord.SelectOption(label="Birthdays",         description="Birthday tracking & celebrations",   emoji="🎂"),
         ]
 
         if include_dev:
@@ -529,7 +782,7 @@ class Core(commands.Cog):
         )
         embed.add_field(
             name="📊 Categories",
-            value=f"`{'13' if dev else '12'}` categories",
+            value=f"`{'19' if dev else '18'}` categories",
             inline=True,
         )
 
@@ -585,7 +838,7 @@ class Core(commands.Cog):
         embed.add_field(name="🟢 Status",      value="**Operational**",                                         inline=True)
         embed.add_field(name="⏱️ Uptime",      value=f"`{days}d {hours}h {mins}m {secs}s`",                     inline=True)
         embed.add_field(name="🏘️ Servers",    value=f"`{guild_count:,}` servers, `{member_count:,}` members",  inline=True)
-        embed.add_field(name="🔧 Modules",     value="`11` loaded",                                             inline=True)
+        embed.add_field(name="🔧 Modules",     value="`17` loaded",                                             inline=True)
         embed.add_field(name="🐍 Library",     value=f"`discord.py {discord.__version__}`",                     inline=True)
         await ctx.send(embed=embed)
 
