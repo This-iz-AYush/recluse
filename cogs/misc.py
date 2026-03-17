@@ -154,20 +154,6 @@ class Misc(commands.Cog):
             await self.log_telemetry(ctx.guild.id, "search")
 
     @commands.hybrid_command(
-        name="ping", 
-        description="Ping the bot and get the response time in milliseconds.",
-        usage="/ping",
-        help="/ping"
-    )
-    async def ping(self, ctx):
-        start_time = datetime.datetime.utcnow()
-        message = await ctx.send("🏓 Pinging network...")
-        api_latency = round((datetime.datetime.utcnow() - start_time).total_seconds() * 1000)
-        ws_latency = round(self.bot.latency * 1000)
-        await message.edit(content=f"📡 **Network Diagnostics**\nAPI Latency: `{api_latency}ms`\nGateway Websocket: `{ws_latency}ms`")
-        if ctx.guild: await self.log_telemetry(ctx.guild.id, "ping")
-
-    @commands.hybrid_command(
         name="afk", 
         description="Set an AFK status to display when you are mentioned.",
         usage="/afk [reason]",
