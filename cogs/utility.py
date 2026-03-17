@@ -173,8 +173,6 @@ class Utility(commands.Cog):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    @app_commands.describe(message="What to say.", channel="Channel to send to (default: current).")
-    @app_commands.default_permissions(manage_messages=True)
     # ─────────────────────────────────────────────────────────────────────────
     # /charinfo  — Unicode character info (Miza-style)
     # ─────────────────────────────────────────────────────────────────────────
