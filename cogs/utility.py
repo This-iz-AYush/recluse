@@ -70,18 +70,7 @@ class Utility(commands.Cog):
             )
         await interaction.response.send_message(embed=embed)
         if interaction.guild: await self._log(interaction.guild.id, "calc")
-
-    # ─────────────────────────────────────────────────────────────────────────
-
-    @app_commands.describe(
-        duration="How long e.g. 10m, 2h, 1d30m",
-        message="What to remind you of.",
-    )
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ─────────────────────────────────────────────────────────────────────────
-
-    @app_commands.describe(city="City name e.g. 'Mumbai', 'New York'.")
+    
     # ─────────────────────────────────────────────────────────────────────────
     # /translate  — uses MyMemory free API (no key needed)
     # ─────────────────────────────────────────────────────────────────────────
