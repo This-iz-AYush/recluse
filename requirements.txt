@@ -1,34 +1,31 @@
 # Recluse Bot v2.0  —  Requirements
 # Install with:  pip install -r requirements.txt
-
+ 
 # Core Discord
 discord.py>=2.4.0
-
+ 
 # Database
 motor>=3.3.2
 pymongo>=4.6.0
-
+ 
 # Web (Dashboard)
 quart>=0.19.4
 quart-cors>=0.7.0
-
+ 
 # AI APIs
 aiohttp>=3.9.0
-
+ 
 # Search
 duckduckgo-search>=6.0.0
-
+ 
 # Translation (optional — for Translate cog if added later)
 googletrans==4.0.0-rc1
-
+ 
 # Anime
-jikanpy-v4>=1.0.7
-
+jikanpy-v4==1.0.2
+ 
 # Language detection (optional — improves AI routing)
 # fast-langdetect>=0.2.0
-
+ 
 # Environment
 python-dotenv>=1.0.0
-
-# Utilities
-asyncio
