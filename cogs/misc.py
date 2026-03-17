@@ -265,27 +265,6 @@ class Misc(commands.Cog):
             await self.log_telemetry(ctx.guild.id, "search")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # /ping
-    # ─────────────────────────────────────────────────────────────────────────
-
-    @commands.hybrid_command(
-        name="ping", description="Network latency diagnostics.",
-        usage="/ping", help="/ping",
-    )
-    async def ping(self, ctx):
-        import time as _t
-        t0  = _t.perf_counter()
-        msg = await ctx.send("🏓 Pinging…")
-        api = round((_t.perf_counter() - t0) * 1000)
-        ws  = round(self.bot.latency * 1000)
-        await msg.edit(content=(
-            f"📡 **Network Diagnostics**\n"
-            f"API Latency: `{api}ms`\nGateway WebSocket: `{ws}ms`"
-        ))
-        if ctx.guild:
-            await self.log_telemetry(ctx.guild.id, "ping")
-
-    # ─────────────────────────────────────────────────────────────────────────
     # /afk
     # ─────────────────────────────────────────────────────────────────────────
 
