@@ -1,79 +1,228 @@
+"""
+core.py  —  Recluse Bot  v2.0
+Core telemetry, help, and status management.
+"""
+
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import os
 import time
 import datetime
 from itertools import cycle
 from typing import Optional
-from discord import app_commands
+
+# ─── colour palette ───────────────────────────────────────────────────────────
+C_INFO    = discord.Color(0x5865F2)
+C_OK      = discord.Color.brand_green()
+C_NEUTRAL = discord.Color(0x2b2d31)
+
 
 class HelpSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Telemetry", description="Bot info and uptime stats", emoji="📊"),
-            discord.SelectOption(label="Anime & Manga", description="Search MyAnimeList database", emoji="🎌"),
-            discord.SelectOption(label="Moderation", description="Ban, mute, purge and more", emoji="🛡️"),
-            discord.SelectOption(label="Sports", description="Live Cricket Score", emoji="🏏"),
-            discord.SelectOption(label="Miscellaneous", description="Server info, avatars, ping, afk", emoji="🗂️"),
-            discord.SelectOption(label="Generative AI", description="Create images from text", emoji="🎨"),
-            discord.SelectOption(label="Conversational AI", description="Chat with Recluse", emoji="🤖"),
+            discord.SelectOption(label="Telemetry",        description="Bot info and uptime stats",        emoji="📊"),
+            discord.SelectOption(label="Anime & Manga",    description="Search MyAnimeList database",       emoji="🎌"),
+            discord.SelectOption(label="Moderation",       description="Ban, mute, purge and more",         emoji="🛡️"),
+            discord.SelectOption(label="Sports",           description="Live Cricket Score",                emoji="🏏"),
+            discord.SelectOption(label="Miscellaneous",    description="Server info, avatars, ping, afk",   emoji="🗂️"),
+            discord.SelectOption(label="Generative AI",    description="Create images from text",           emoji="🎨"),
+            discord.SelectOption(label="Conversational AI",description="Chat with Recluse",                 emoji="🤖"),
+            discord.SelectOption(label="Leveling",         description="XP, ranks and leaderboards",        emoji="📈"),
+            discord.SelectOption(label="Tickets",          description="Support ticket system",             emoji="🎫"),
+            discord.SelectOption(label="Giveaways",        description="Host and manage giveaways",         emoji="🎉"),
+            discord.SelectOption(label="Admin Config",     description="Server setup and configuration",    emoji="⚙️"),
         ]
-        super().__init__(placeholder="Choose a command category...", min_values=1, max_values=1, options=options)
+        super().__init__(
+            placeholder="Choose a command category…",
+            min_values=1, max_values=1,
+            options=options,
+        )
 
     async def callback(self, interaction: discord.Interaction):
-        selected = self.values[0]
-        
-        if selected == "Telemetry":
-            embed = discord.Embed(title="📊 Telemetry Commands", color=discord.Color.blue())
-            embed.add_field(name="System Operations", value="> `/botinfo` - Retrieves application telemetry and metadata.\n> `/ping` - Network and websocket latency.", inline=False)
-            
-        elif selected == "Anime & Manga":
+        sel = self.values[0]
+        embed: discord.Embed
+
+        if sel == "Telemetry":
+            embed = discord.Embed(title="📊 Telemetry Commands", color=C_INFO)
+            embed.add_field(
+                name="System Operations",
+                value=(
+                    "> `/botinfo` — Application telemetry and metadata.\n"
+                    "> `/ping` — Network and websocket latency."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Anime & Manga":
             embed = discord.Embed(title="🎌 Anime & Manga Commands", color=discord.Color.red())
-            embed.add_field(name="Database Search", value="> `/anime <query>` - Queries MyAnimeList for anime.\n> `/manga <query>` - Queries MyAnimeList for manga.", inline=False)
-            
-        elif selected == "Sports":
+            embed.add_field(
+                name="Database Search",
+                value=(
+                    "> `/anime <query>` — Queries MyAnimeList for anime.\n"
+                    "> `/manga <query>` — Queries MyAnimeList for manga."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Sports":
             embed = discord.Embed(title="🏏 Sports Commands", color=discord.Color.orange())
-            embed.add_field(name="Live Cricket Coverage", value="> `/score all` - Overview of all live matches.\n> `/score search <query>` - Find a specific match.\n> `/score live <query>` - Auto-updating match tracker.\n> `/score stop` - Halts active trackers in the channel.", inline=False)
-            
-        elif selected == "Moderation":
+            embed.add_field(
+                name="Live Cricket Coverage",
+                value=(
+                    "> `/score all` — All live matches overview.\n"
+                    "> `/score search <query>` — Find a specific match.\n"
+                    "> `/score live <query>` — Auto-updating match tracker.\n"
+                    "> `/score stop` — Halt active trackers."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Moderation":
             embed = discord.Embed(title="🛡️ Moderation Commands", color=discord.Color.green())
-            embed.add_field(name="🛑 Access Control", value="> `/ban` - Permanent removal.\n> `/tempban` - Temporary removal.\n> `/softban` - Ban & unban to clear recent messages.\n> `/kick` - Expel a member.\n> `/unban` - Revoke a ban via User ID.", inline=False)
-            embed.add_field(name="🔇 Voice & Chat Restrictions", value="> `/tempmute` - Apply a native timeout.\n> `/unmute` - Remove a timeout.\n> `/vmute` / `/vunmute` - Server voice mute control.\n> `/vckick` - Disconnect a user from voice.", inline=False)
-            embed.add_field(name="⚠️ Warning System", value="> `/warn` - Issue a formal warning.\n> `/warnings` - View a member's warning history.\n> `/delwarn` - Delete a specific warning ID.\n> `/clearwarns` - Wipe a user's entire record.\n> `/moderations` - List active timed mutes.", inline=False)
-            embed.add_field(name="🛠️ Channel Management", value="> `/purge` / `/clean` - Bulk message deletion tools.\n> `/lock` / `/unlock` - Channel access control.\n> `/slowmode` - Set chat delay rate limits.", inline=False)
-            embed.add_field(name="👥 Member Management", value="> `/role` - Toggle a role for a user.\n> `/nick` - Change or reset a user's nickname.\n> `/members` - List all members within a specific role.", inline=False)
-            
-        elif selected == "Miscellaneous":
+            embed.add_field(name="🛑 Access Control",    value="> `/ban` `/tempban` `/softban` `/kick` `/unban`",                                      inline=False)
+            embed.add_field(name="🔇 Restrictions",      value="> `/tempmute` `/unmute` `/vmute` `/vunmute` `/vckick`",                                 inline=False)
+            embed.add_field(name="⚠️ Warning System",   value="> `/warn` `/warnings` `/delwarn` `/clearwarns` `/moderations`",                         inline=False)
+            embed.add_field(name="🛠️ Channel Mgmt",     value="> `/purge` `/clean` `/lock` `/unlock` `/slowmode`",                                     inline=False)
+            embed.add_field(name="👥 Member Mgmt",       value="> `/role` `/nick` `/members`",                                                          inline=False)
+
+        elif sel == "Miscellaneous":
             embed = discord.Embed(title="🗂️ Miscellaneous Commands", color=discord.Color.teal())
-            embed.add_field(name="👤 User Utilities", value="> `/whois` - Pull a security profile on a user.\n> `/avatar` - Retrieve a high-res profile picture.\n> `/afk` - Set an away status for mentions.", inline=False)
-            embed.add_field(name="🏢 Server Infrastructure", value="> `/serverinfo` - Network & security data for the server.\n> `/roleinfo` - Role permissions & member stats.\n> `/channelinfo` - Infrastructure details for a channel.\n> `/membercount` - Get the current server population.", inline=False)
-            embed.add_field(name="🧰 General Tools", value="> `/poll` - Initiate a network-wide binary poll.\n> `/color` - Analyze a HEX color code and return its data.", inline=False)
-            
-        elif selected == "Generative AI":
-            embed = discord.Embed(title="🎨 Generative AI Commands", color=discord.Color.blurple())
-            embed.add_field(name="Image Creation", value="> `/imagine <prompt>` - Generates a high-quality image based on your text prompt.", inline=False)
-            
-        elif selected == "Conversational AI":
-            embed = discord.Embed(title="🤖 Conversational AI Commands", color=discord.Color.purple())
-            embed.add_field(name="Interaction", value="> `@Recluse <message>` - Ping the bot directly in any channel to chat!\n> `/choose_ai <model>` - Switch your AI brain (nexusify, gemini, sarvam).\n> `/clear_memory` - Wipes your conversation history to start fresh.", inline=False)
-            
+            embed.add_field(name="👤 User Utilities",   value="> `/whois` `/avatar` `/afk`",                                                            inline=False)
+            embed.add_field(name="🏢 Server Info",      value="> `/serverinfo` `/roleinfo` `/channelinfo` `/membercount`",                              inline=False)
+            embed.add_field(name="🧰 General Tools",    value="> `/poll` `/color` `/search`",                                                           inline=False)
+
+        elif sel == "Generative AI":
+            embed = discord.Embed(title="🎨 Generative AI", color=C_INFO)
+            embed.add_field(
+                name="Image Creation",
+                value=(
+                    "> `/imagine <prompt> [model]` — Generate an image.\n"
+                    "> `/describe <image> [question]` — Analyze an attached image."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Conversational AI":
+            embed = discord.Embed(title="🤖 Conversational AI", color=discord.Color.purple())
+            embed.add_field(
+                name="Interaction",
+                value=(
+                    "> `@Recluse <message>` — Chat directly in any channel.\n"
+                    "> `/choose_ai <model>` — Switch your AI engine.\n"
+                    "> `/clear_memory` — Wipe conversation history."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Leveling":
+            embed = discord.Embed(title="📈 Leveling Commands", color=discord.Color(0xf1c40f))
+            embed.add_field(
+                name="For Members",
+                value=(
+                    "> `/rank [member]` — View your or someone's rank card.\n"
+                    "> `/leaderboard [page]` — Server XP leaderboard."
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="For Admins",
+                value=(
+                    "> `/givexp <member> <amount>` — Give XP.\n"
+                    "> `/setlevel <member> <level>` — Force-set a level.\n"
+                    "> `/resetxp <member>` — Wipe XP.\n"
+                    "> `/levelconfig` — Configure XP rates & level-up messages.\n"
+                    "> `/levelrole <level> <role>` — Grant role on level-up."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Tickets":
+            embed = discord.Embed(title="🎫 Ticket System", color=C_INFO)
+            embed.add_field(
+                name="Setup (Admins)",
+                value=(
+                    "> `/ticketsetup` — Configure the ticket system and post the panel.\n"
+                    "> `/tickets` — List all open tickets.\n"
+                    "> `/addtoticket <member>` — Add someone to a ticket.\n"
+                    "> `/removeticket <member>` — Remove someone from a ticket."
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="In Ticket",
+                value=(
+                    "> **Claim** — Staff claims the ticket.\n"
+                    "> **Close** — Saves transcript and deletes channel."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Giveaways":
+            embed = discord.Embed(title="🎉 Giveaway Commands", color=discord.Color.gold())
+            embed.add_field(
+                name="Commands",
+                value=(
+                    "> `/giveaway start` — Start a giveaway.\n"
+                    "> `/giveaway end <msg_id>` — Force-end early.\n"
+                    "> `/giveaway reroll <msg_id>` — Reroll winners.\n"
+                    "> `/giveaway list` — Show active giveaways."
+                ),
+                inline=False,
+            )
+
+        elif sel == "Admin Config":
+            embed = discord.Embed(title="⚙️ Admin Configuration", color=C_INFO)
+            embed.add_field(
+                name="Server Setup",
+                value=(
+                    "> `/setup` — Interactive setup wizard.\n"
+                    "> `/config` — View all current settings.\n"
+                    "> `/modules` — Enable/disable bot modules."
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="Systems",
+                value=(
+                    "> `/setlog` — Set mod log channel.\n"
+                    "> `/setwelcome` — Configure welcome/leave messages.\n"
+                    "> `/autorole` — Auto-assign roles on join.\n"
+                    "> `/reactionrole` — Bind reactions to roles.\n"
+                    "> `/antispam` — Configure auto-mod.\n"
+                    "> `/banned_words` — Manage word blacklist.\n"
+                    "> `/starboard` — Set up the starboard.\n"
+                    "> `/customcommand` — Create server-specific commands.\n"
+                    "> `/aiconfig` — Configure AI for this server.\n"
+                    "> `/levelconfig` — Configure XP leveling.\n"
+                    "> `/ticketsetup` — Configure ticket system."
+                ),
+                inline=False,
+            )
+
         else:
             embed = discord.Embed(title="Error", description="Category not found.", color=discord.Color.red())
 
         await interaction.response.edit_message(embed=embed)
+
 
 class HelpView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=120)
         self.add_item(HelpSelect())
 
+
 class Core(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.start_time = time.time()
-        self.STATUS_MESSAGES = ['active in {servers} servers with {members} members', '/help']
+        self.STATUS_MESSAGES = [
+            "active in {servers} servers",
+            "/help | Recluse v2.0",
+            "watching {members} members",
+            "Type @Recluse to chat!",
+        ]
         self.status_cycle = cycle(self.STATUS_MESSAGES)
-        
         self.cycle_bot_status.start()
         self.uptime_heartbeat.start()
 
@@ -81,154 +230,200 @@ class Core(commands.Cog):
         self.cycle_bot_status.cancel()
         self.uptime_heartbeat.cancel()
 
-    # --- 🛡️ GATEKEEPER CHECK ---
     async def cog_check(self, ctx):
-        if hasattr(self.bot, 'db'):
-            is_blacklisted = await self.bot.db.global_blacklist.find_one({"target_id": ctx.author.id, "type": "user"})
-            if is_blacklisted:
-                try: await ctx.send("❌ **Access Denied:** You have been permanently blacklisted from the Recluse network.", ephemeral=True)
-                except Exception: pass
+        if hasattr(self.bot, "db"):
+            is_bl = await self.bot.db.global_blacklist.find_one(
+                {"target_id": ctx.author.id, "type": "user"}
+            )
+            if is_bl:
+                try:
+                    await ctx.send("❌ **Access Denied:** You are globally blacklisted.", ephemeral=True)
+                except Exception:
+                    pass
                 return False
         return True
 
-    # --- AUTOCOMPLETE LOGIC FOR HELP COMMAND ---
-    async def command_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        # Grabs all registered commands and filters them as the user types
-        commands = [c.name for c in self.bot.commands if not c.hidden]
-        matches = [cmd for cmd in commands if current.lower() in cmd.lower()]
-        
-        # Discord API limits autocomplete choices to 25 max
-        return [app_commands.Choice(name=match, value=match) for match in matches[:25]]
+    # ─── autocomplete ─────────────────────────────────────────────────────────
+
+    async def command_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        cmds    = [c.name for c in self.bot.commands if not c.hidden]
+        matches = [c for c in cmds if current.lower() in c.lower()]
+        return [app_commands.Choice(name=m, value=m) for m in matches[:25]]
+
+    # ─── /help ────────────────────────────────────────────────────────────────
 
     @commands.hybrid_command(
-        name="help", 
+        name="help",
         description="Shows help info and commands.",
         usage="/help [command]",
-        help="/help roleinfo"
+        help="/help roleinfo",
     )
     @app_commands.autocomplete(command=command_autocomplete)
     async def custom_help(self, ctx, command: str = None):
-        # 1. If they just typed /help, show the category dropdown
         if not command:
-            embed = discord.Embed(title="Recluse Help Desk", description="Please select a category below.", color=discord.Color.blurple())
-            embed.add_field(name="🌐 Web Dashboard", value="[Visit Dashboard](https://recluse-1.onrender.com/)", inline=True)
-            embed.add_field(name="📈 Uptime Status", value="[Check Status](https://sszvcg5v.status.cron-job.org)", inline=True)
+            embed = discord.Embed(
+                title="Recluse Help Desk",
+                description="Select a category below to browse commands.",
+                color=C_INFO,
+            )
+            embed.add_field(name="🌐 Dashboard",    value="[Visit Dashboard](https://recluse-1.onrender.com/)",         inline=True)
+            embed.add_field(name="📈 Uptime",       value="[Status Page](https://sszvcg5v.status.cron-job.org)",        inline=True)
+            embed.add_field(name="📊 Total Modules",value="10 active modules",                                           inline=True)
             return await ctx.send(embed=embed, view=HelpView())
-            
-        # 2. If they typed /help <command>, show the Dyno-style specific info
+
         cmd = self.bot.get_command(command)
         if not cmd:
-            return await ctx.send(f"❌ Could not find the command `{command}` in my registry.", ephemeral=True)
+            return await ctx.send(f"❌ Command `{command}` not found.", ephemeral=True)
 
-        desc = f"**Command: /{cmd.name}**\n\n"
+        desc = f"**Command:** `/{cmd.name}`\n\n"
         desc += f"**Description:** {cmd.description or 'No description provided.'}\n"
-        
-        if getattr(cmd, '_buckets', None) and cmd._buckets._cooldown:
-            desc += f"**Cooldown:** {int(cmd._buckets._cooldown.per)} seconds\n"
-            
-        usage_text = cmd.usage or f"/{cmd.name} {cmd.signature}".strip()
-        desc += f"**Usage:**\n{usage_text}\n"
-        
-        example_text = cmd.help or f"/{cmd.name}"
-        desc += f"**Example:**\n{example_text}"
+        if getattr(cmd, "_buckets", None) and cmd._buckets._cooldown:
+            desc += f"**Cooldown:** {int(cmd._buckets._cooldown.per)}s\n"
+        desc += f"**Usage:** `{cmd.usage or f'/{cmd.name} {cmd.signature}'.strip()}`\n"
+        desc += f"**Example:** `{cmd.help or f'/{cmd.name}'}`"
 
-        embed = discord.Embed(description=desc, color=0x2b2d31)
-        await ctx.send(embed=embed, ephemeral=False) # Ephemeral makes it so "Only you can see this"
-
-    @commands.hybrid_command(
-        name="botinfo", 
-        description="Retrieves the application's telemetry and metadata.",
-        usage="/botinfo",
-        help="/botinfo"
-    )
-    async def botinfo(self, ctx):
-        await ctx.defer() 
-        active_ai = self.bot.get_cog('AI').user_ai_preference.get(ctx.author.id, "nexusify").title() if self.bot.get_cog('AI') else "Nexusify"
-        app_info = await self.bot.application_info()
-        
-        embed = discord.Embed(title="System Telemetry", color=discord.Color.blue())
-        embed.add_field(name="Registered Owner", value=str(app_info.owner), inline=True)
-        embed.add_field(name="Websocket Latency", value=f"{round(self.bot.latency * 1000)}ms", inline=True)
-        embed.add_field(name="Your Active AI", value=f"🧠 **{active_ai}**", inline=True)
-        
-        # --- 📈 PERSISTENT UPTIME TRACKER ---
-        uptime_seconds = max(0, int(time.time() - self.start_time)) # Local fallback
-        
-        if hasattr(self.bot, 'db'):
-            uptime_data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
-            if uptime_data:
-                # Retrieve the original start time from the database
-                db_start = uptime_data.get("start_time", int(time.time()))
-                uptime_seconds = max(0, int(time.time()) - db_start)
-        
-        days, remainder = divmod(uptime_seconds, 86400)
-        hours, remainder = divmod(remainder, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        uptime_display = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
-        status_display = "🟢 **Operational**"
-
-        embed.add_field(name="Service Status", value=status_display, inline=True)
-        embed.add_field(name="Continuous Uptime", value=uptime_display, inline=True)
-        
+        embed = discord.Embed(description=desc, color=C_NEUTRAL)
         await ctx.send(embed=embed)
 
-    # --- ❤️ DATABASE HEARTBEAT LOGIC ---
+    # ─── /botinfo ─────────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(
+        name="botinfo",
+        description="Retrieves application telemetry and metadata.",
+        usage="/botinfo",
+        help="/botinfo",
+    )
+    async def botinfo(self, ctx):
+        await ctx.defer()
+        app_info = await self.bot.application_info()
+        ai_cog   = self.bot.get_cog("AI")
+        active_ai = "Auto"
+        if ai_cog:
+            pref = ai_cog._model_pref.get(ctx.author.id, "auto")
+            active_ai = {
+                "auto":     "🤖 Auto",
+                "gemini":   "✨ Gemini",
+                "nexusify": "⚡ Nexusify",
+                "sarvam":   "🇮🇳 Sarvam",
+            }.get(pref, pref.title())
+
+        uptime_seconds = max(0, int(time.time() - self.start_time))
+        if hasattr(self.bot, "db"):
+            data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
+            if data:
+                uptime_seconds = max(0, int(time.time()) - data.get("start_time", int(time.time())))
+
+        days, r    = divmod(uptime_seconds, 86400)
+        hours, r   = divmod(r, 3600)
+        mins, secs = divmod(r, 60)
+
+        guild_count  = len(self.bot.guilds)
+        member_count = sum(g.member_count for g in self.bot.guilds if g.member_count)
+
+        embed = discord.Embed(title="⚙️ System Telemetry", color=C_INFO, timestamp=datetime.datetime.utcnow())
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+        embed.add_field(name="👑 Owner",           value=str(app_info.owner),                                        inline=True)
+        embed.add_field(name="📡 WS Latency",      value=f"`{round(self.bot.latency * 1000)}ms`",                    inline=True)
+        embed.add_field(name="🧠 Your AI",         value=active_ai,                                                  inline=True)
+        embed.add_field(name="🟢 Status",          value="**Operational**",                                          inline=True)
+        embed.add_field(name="⏱️ Uptime",          value=f"`{days}d {hours}h {mins}m {secs}s`",                      inline=True)
+        embed.add_field(name="🏘️ Servers",         value=f"`{guild_count:,}` servers, `{member_count:,}` members",  inline=True)
+        embed.add_field(name="🔧 Modules",         value="`10` loaded",                                              inline=True)
+        embed.add_field(name="🐍 Library",         value=f"`discord.py {discord.__version__}`",                      inline=True)
+        await ctx.send(embed=embed)
+
+    # ─── /ping ────────────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(
+        name="ping",
+        description="Network latency diagnostics.",
+        usage="/ping",
+        help="/ping",
+    )
+    async def ping(self, ctx):
+        import time as _time
+        t0  = _time.perf_counter()
+        msg = await ctx.send("🏓 Measuring latency…")
+        api = round((_time.perf_counter() - t0) * 1000)
+        ws  = round(self.bot.latency * 1000)
+
+        colour = discord.Color.green() if ws < 100 else discord.Color.yellow() if ws < 200 else discord.Color.red()
+        bar_len = 10
+        filled  = max(0, bar_len - int(ws / 30))
+        bar     = "█" * filled + "░" * (bar_len - filled)
+
+        embed = discord.Embed(title="🏓 Pong!", color=colour, timestamp=datetime.datetime.utcnow())
+        embed.add_field(name="📡 Gateway WS", value=f"`{ws}ms`  `[{bar}]`", inline=False)
+        embed.add_field(name="🌐 API Round-trip", value=f"`{api}ms`", inline=True)
+        embed.set_footer(text="Recluse Network Diagnostics")
+        await msg.edit(content=None, embed=embed)
+
+    # ─── Heartbeat ────────────────────────────────────────────────────────────
+
     @tasks.loop(minutes=1)
     async def uptime_heartbeat(self):
-        """Records a heartbeat to MongoDB to calculate true uptime bypassing Render restarts."""
-        if hasattr(self.bot, 'db'):
-            current_time = int(time.time())
-            data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
-            
-            if not data:
-                # First time booting up the tracker
-                await self.bot.db.bot_telemetry.insert_one({
-                    "id": "uptime", 
-                    "start_time": current_time, 
-                    "last_heartbeat": current_time
-                })
+        if not hasattr(self.bot, "db"):
+            return
+        now  = int(time.time())
+        data = await self.bot.db.bot_telemetry.find_one({"id": "uptime"})
+        if not data:
+            await self.bot.db.bot_telemetry.insert_one(
+                {"id": "uptime", "start_time": now, "last_heartbeat": now}
+            )
+        else:
+            last = data.get("last_heartbeat", now)
+            if now - last > 1200:
+                await self.bot.db.bot_telemetry.update_one(
+                    {"id": "uptime"}, {"$set": {"start_time": now, "last_heartbeat": now}}
+                )
             else:
-                last_hb = data.get("last_heartbeat", current_time)
-                
-                # CRITICAL FIX: Increased tolerance to 20 minutes (1200 seconds)
-                # Render free tier cold-boots can take a while. If the gap is larger than 20 mins, 
-                # we assume the cron job failed and reset the clock.
-                if current_time - last_hb > 1200:
-                    await self.bot.db.bot_telemetry.update_one(
-                        {"id": "uptime"}, 
-                        {"$set": {"start_time": current_time, "last_heartbeat": current_time}}
-                    )
-                else:
-                    # Update the pulse timestamp to prove it's still alive!
-                    await self.bot.db.bot_telemetry.update_one(
-                        {"id": "uptime"}, 
-                        {"$set": {"last_heartbeat": current_time}}
-                    )
+                await self.bot.db.bot_telemetry.update_one(
+                    {"id": "uptime"}, {"$set": {"last_heartbeat": now}}
+                )
 
     @uptime_heartbeat.before_loop
-    async def before_uptime_heartbeat(self):
+    async def _before_heartbeat(self):
         await self.bot.wait_until_ready()
 
-    @tasks.loop(seconds=15)
+    # ─── Status cycle ─────────────────────────────────────────────────────────
+
+    @tasks.loop(seconds=20)
     async def cycle_bot_status(self):
         try:
-            sports_cog = self.bot.get_cog('Sports')
+            sports_cog     = self.bot.get_cog("Sports")
             active_matches = len(sports_cog.live_trackers) if sports_cog else 0
-            
+            gw_cog         = self.bot.get_cog("Giveaways")
+            active_gws     = 0
+            if gw_cog and hasattr(self.bot, "db"):
+                active_gws = await self.bot.db.giveaways.count_documents({"active": True})
+
             if active_matches > 0:
-                activity = discord.Activity(type=discord.ActivityType.watching, name=f"{active_matches} live cricket match{'es' if active_matches > 1 else ''}")
+                activity = discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=f"{active_matches} live cricket match{'es' if active_matches > 1 else ''}",
+                )
+            elif active_gws > 0:
+                activity = discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=f"🎉 {active_gws} active giveaway{'s' if active_gws > 1 else ''}",
+                )
             else:
-                server_count = len(self.bot.guilds)
-                member_count = sum(guild.member_count for guild in self.bot.guilds if guild.member_count)
-                activity = discord.Game(name=next(self.status_cycle).replace("{servers}", str(server_count)).replace("{members}", str(member_count)))
-                
+                servers = len(self.bot.guilds)
+                members = sum(g.member_count for g in self.bot.guilds if g.member_count)
+                raw     = next(self.status_cycle)
+                name    = raw.replace("{servers}", str(servers)).replace("{members}", str(members))
+                activity = discord.Game(name=name)
+
             await self.bot.change_presence(activity=activity)
-        except Exception: pass 
+        except Exception:
+            pass
 
     @cycle_bot_status.before_loop
-    async def before_cycle_bot_status(self):
+    async def _before_cycle(self):
         await self.bot.wait_until_ready()
+
 
 async def setup(bot):
     await bot.add_cog(Core(bot))
