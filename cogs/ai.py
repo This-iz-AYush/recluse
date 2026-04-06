@@ -789,7 +789,7 @@ class AI(commands.Cog):
             user_content = prompt
 
         messages.append({"role": "user", "content": user_content})
-        payload = {"model": "glm5", "messages": messages, "max_tokens": 1500, "temperature": 0.7}
+        payload = {"model": "gemini-3-pro", "messages": messages, "max_tokens": 1500, "temperature": 0.7}
 
         try:
             async with aiohttp.ClientSession() as session:
