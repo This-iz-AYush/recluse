@@ -189,14 +189,16 @@ class Anime(commands.Cog):
 
         headers = {
             "X-MAL-CLIENT-ID": client_id,
-            "User-Agent": "Recluse Discord Bot (Created by AYush)"
+            "User-Agent": "Recluse Discord Bot"
         }
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, headers=headers, timeout=15) as response:
                     if response.status != 200:
-                        return await ctx.send(f"❌ **API Error:** MyAnimeList returned a {response.status} status.")
+                        error_data = await response.text()
+                        return await ctx.send(f"❌ **API Error {response.status}:** `{error_data}`")
+                        
                     search_result = await response.json()
 
             data_list = search_result.get('data', [])
@@ -207,7 +209,10 @@ class Anime(commands.Cog):
             mal_id = node.get('id')
             
             title = node.get('title', 'Unknown Title')
-            japanese_title = node.get('alternative_titles', {}).get('ja', 'N/A')
+            
+            # 🛠️ FIXED: Safe dictionary fallback for titles
+            alt_titles = node.get('alternative_titles') or {}
+            japanese_title = alt_titles.get('ja', 'N/A')
             site_url = f"https://myanimelist.net/manga/{mal_id}" if mal_id else None
             
             synopsis = self.clean_html(node.get('synopsis'))
@@ -226,11 +231,21 @@ class Anime(commands.Cog):
             )
 
             dates_block = f"**Start:** {node.get('start_date', 'Unknown')}\n**End:** {node.get('end_date', 'Unknown')}"
-            genres_list = [g['name'] for g in node.get('genres', [])]
+            
+            # 🛠️ FIXED: Safe list fallback for genres
+            genres_data = node.get('genres') or []
+            genres_list = [g.get('name', 'Unknown') for g in genres_data]
             genres_block = ", ".join(genres_list) if genres_list else "None"
             
-            authors_data = [f"{a['node']['first_name']} {a['node']['last_name']}".strip() for a in node.get('authors', [])]
-            authors_block = ", ".join(authors_data) if authors_data else "None"
+            # 🛠️ FIXED: Safe parsing for authors (handles missing names gracefully)
+            authors_data = node.get('authors') or []
+            authors_list = []
+            for a in authors_data:
+                author_node = a.get('node') or {}
+                first = author_node.get('first_name') or ''
+                last = author_node.get('last_name') or ''
+                authors_list.append(f"{first} {last}".strip())
+            authors_block = ", ".join(authors_list) if authors_list else "None"
 
             embed = discord.Embed(title=title, url=site_url, description=synopsis, color=0x2ecc71) 
             
@@ -243,7 +258,8 @@ class Anime(commands.Cog):
             
             embed.add_field(name="Authors", value=authors_block, inline=False)
 
-            pictures = node.get('main_picture', {})
+            # 🛠️ FIXED: Safe dictionary fallback for pictures
+            pictures = node.get('main_picture') or {}
             if pictures.get('medium'):
                 embed.set_thumbnail(url=pictures['medium'])
             if pictures.get('large'):
@@ -257,9 +273,10 @@ class Anime(commands.Cog):
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
             
         except Exception as e:
-            if hasattr(self.bot, 'db') and ctx.guild:
-                await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Manga_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
+            # 🛠️ FIXED: Exposing real crash errors to Discord
+            import traceback
+            print(traceback.format_exc())
+            await ctx.send(f"❌ **Crash Report:** `{type(e).__name__}: {str(e)}`")
 
 async def setup(bot):
     await bot.add_cog(Anime(bot))
