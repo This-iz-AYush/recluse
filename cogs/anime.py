@@ -151,7 +151,10 @@ class Anime(commands.Cog):
             elif pictures.get('medium'):
                 embed.set_image(url=pictures['medium'])
                 
-            embed.set_footer(text="Powered by MyAnimeList API")
+            embed.set_footer(
+                text=f"Requested by {ctx.author.display_name} • Powered by MyAnimeList API", 
+                icon_url=ctx.author.display_avatar.url
+            )
 
             await ctx.send(embed=embed)
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "anime")
@@ -267,7 +270,10 @@ class Anime(commands.Cog):
             elif pictures.get('medium'):
                 embed.set_image(url=pictures['medium'])
                 
-            embed.set_footer(text="Powered by MyAnimeList API")
+            embed.set_footer(
+                text=f"Requested by {ctx.author.display_name} • Powered by MyAnimeList API", 
+                icon_url=ctx.author.display_avatar.url
+            )
 
             await ctx.send(embed=embed)
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
