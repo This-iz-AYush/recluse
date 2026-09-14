@@ -3,7 +3,7 @@ from discord.ext import commands
 import aiohttp
 import datetime
 import urllib.parse
-import asyncio  # Needed for the retry delay
+import asyncio
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -48,21 +48,23 @@ class Anime(commands.Cog):
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.jikan.moe/v4/anime?q={encoded_query}&sfw=true"
         
+        headers = {
+            "User-Agent": "Recluse Discord Bot (Created by AYush) - Contact via Discord"
+        }
+        
         search_result = None
         try:
             async with aiohttp.ClientSession() as session:
-                # Try up to 3 times to bypass temporary 504 timeouts
                 for attempt in range(3):
-                    async with session.get(url, timeout=10) as response:
+                    async with session.get(url, headers=headers, timeout=10) as response:
                         if response.status == 200:
                             search_result = await response.json()
-                            break  # Success! Break out of the retry loop
+                            break
                         elif response.status >= 500:
-                            if attempt == 2:  # If this was the 3rd attempt, give up
+                            if attempt == 2:
                                 return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status after multiple attempts. The API is likely down.")
-                            await asyncio.sleep(2)  # Wait 2 seconds before retrying
+                            await asyncio.sleep(2)
                         else:
-                            # 400, 404, 429, etc. - don't retry these, just fail
                             return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
                     
             if not search_result or not search_result.get('data'):
@@ -102,11 +104,15 @@ class Anime(commands.Cog):
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.jikan.moe/v4/manga?q={encoded_query}&sfw=true"
         
+        headers = {
+            "User-Agent": "Recluse Discord Bot (Created by AYush) - Contact via Discord"
+        }
+        
         search_result = None
         try:
             async with aiohttp.ClientSession() as session:
                 for attempt in range(3):
-                    async with session.get(url, timeout=10) as response:
+                    async with session.get(url, headers=headers, timeout=10) as response:
                         if response.status == 200:
                             search_result = await response.json()
                             break
