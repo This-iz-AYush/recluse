@@ -3,6 +3,7 @@ from discord.ext import commands
 import aiohttp
 import datetime
 import urllib.parse
+import asyncio  # Needed for the retry delay
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -44,19 +45,27 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        # Safely encode the query for the URL
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.jikan.moe/v4/anime?q={encoded_query}&sfw=true"
         
+        search_result = None
         try:
-            # Replaced Jikanpy with direct aiohttp calls to v4 API
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as response:
-                    if response.status != 200:
-                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
-                    search_result = await response.json()
+                # Try up to 3 times to bypass temporary 504 timeouts
+                for attempt in range(3):
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            search_result = await response.json()
+                            break  # Success! Break out of the retry loop
+                        elif response.status >= 500:
+                            if attempt == 2:  # If this was the 3rd attempt, give up
+                                return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status after multiple attempts. The API is likely down.")
+                            await asyncio.sleep(2)  # Wait 2 seconds before retrying
+                        else:
+                            # 400, 404, 429, etc. - don't retry these, just fail
+                            return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
                     
-            if not search_result.get('data'):
+            if not search_result or not search_result.get('data'):
                 return await ctx.send("❌ Query yielded no results from the external database.")
                 
             data = search_result['data'][0]
@@ -93,14 +102,22 @@ class Anime(commands.Cog):
         encoded_query = urllib.parse.quote(query)
         url = f"https://api.jikan.moe/v4/manga?q={encoded_query}&sfw=true"
         
+        search_result = None
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as response:
-                    if response.status != 200:
-                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
-                    search_result = await response.json()
+                for attempt in range(3):
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            search_result = await response.json()
+                            break
+                        elif response.status >= 500:
+                            if attempt == 2:
+                                return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status after multiple attempts. The API is likely down.")
+                            await asyncio.sleep(2)
+                        else:
+                            return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
 
-            if not search_result.get('data'): 
+            if not search_result or not search_result.get('data'): 
                 return await ctx.send("❌ Query yielded no results.")
                 
             data = search_result['data'][0]
