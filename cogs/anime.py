@@ -68,6 +68,8 @@ class Anime(commands.Cog):
         if not client_id:
             return await ctx.send("❌ **Configuration Error:** API key is missing. Check your environment variables.")
 
+        client_id = client_id.strip()
+
         headers = {
             "X-MAL-CLIENT-ID": client_id,
             "User-Agent": "Recluse Discord Bot"
@@ -182,6 +184,8 @@ class Anime(commands.Cog):
         
         if not client_id:
             return await ctx.send("❌ **Configuration Error:** MAL_CLIENT_ID is missing from the .env file.")
+
+        client_id = client_id.strip()
 
         headers = {
             "X-MAL-CLIENT-ID": client_id,
