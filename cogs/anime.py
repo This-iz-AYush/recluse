@@ -2,7 +2,12 @@ import discord
 from discord.ext import commands
 import aiohttp
 import datetime
-import re  # Needed to strip out HTML tags from AniList descriptions
+import os
+import re
+from dotenv import load_dotenv
+
+# Load environment variables directly in the cog
+load_dotenv()
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -34,15 +39,14 @@ class Anime(commands.Cog):
         return True
 
     def clean_html(self, raw_html):
-        """Helper function to strip <br>, <i>, and other HTML tags from descriptions."""
+        """Strips <br>, <i>, and other HTML tags from descriptions."""
         if not raw_html:
             return "No synopsis available."
-        clean_text = re.sub(r'<[^>]+>', '', raw_html)
-        return clean_text
+        return re.sub(r'<[^>]+>', '', raw_html).strip()
 
     @commands.hybrid_command(
         name="anime", 
-        description="Queries the AniList database for anime.",
+        description="Queries the MyAnimeList database for anime.",
         usage="/anime <query>",
         help="/anime attack on titan"
     )
@@ -51,66 +55,108 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        url = 'https://graphql.anilist.co'
-        
-        # Added POPULARITY_DESC to fix the bad search results
-        graphql_query = '''
-        query ($search: String) {
-          Media (search: $search, type: ANIME, sort: [POPULARITY_DESC, SEARCH_MATCH]) {
-            title { romaji english }
-            siteUrl
-            description(asHtml: false)
-            coverImage { large }
-            averageScore
-            episodes
-            status
-          }
+        url = 'https://api.myanimelist.net/v2/anime'
+        params = {
+            'q': query,
+            'limit': 1,
+            'fields': 'id,title,alternative_titles,main_picture,synopsis,mean,rank,popularity,num_episodes,average_episode_duration,status,start_season,media_type,source,start_date,end_date,genres,studios'
         }
-        '''
-        variables = {'search': query}
-        headers = {"User-Agent": "Recluse Discord Bot (Created by AYush)"}
+        
+        # This will now successfully pull from your .env file
+        client_id = os.getenv("MAL_CLIENT_ID")
+        
+        if not client_id:
+            return await ctx.send("❌ **Configuration Error:** MAL_CLIENT_ID is missing from the .env file.")
+
+        headers = {
+            "X-MAL-CLIENT-ID": client_id,
+            "User-Agent": "Recluse Discord Bot (Created by AYush)"
+        }
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json={'query': graphql_query, 'variables': variables}, headers=headers, timeout=15) as response:
+                async with session.get(url, params=params, headers=headers, timeout=15) as response:
                     if response.status != 200:
-                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
-                    
+                        return await ctx.send(f"❌ **API Error:** MyAnimeList returned a {response.status} status.")
                     search_result = await response.json()
 
-            data = search_result.get('data', {}).get('Media')
-            if not data:
-                return await ctx.send("❌ Query yielded no results from the external database.")
+            data_list = search_result.get('data', [])
+            if not data_list:
+                return await ctx.send("❌ Query yielded no results from the MyAnimeList database.")
                 
-            title = data['title'].get('english') or data['title'].get('romaji') or 'Unknown Title'
+            node = data_list[0].get('node', {})
+            mal_id = node.get('id')
             
-            embed = discord.Embed(title=title, url=data.get('siteUrl'), color=discord.Color.red())
+            # Text Processing & Formatting
+            title = node.get('title', 'Unknown Title')
+            japanese_title = node.get('alternative_titles', {}).get('ja', 'N/A')
+            site_url = f"https://myanimelist.net/anime/{mal_id}" if mal_id else None
             
-            # Clean HTML tags and truncate
-            synopsis = self.clean_html(data.get('description'))
-            embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
+            synopsis = self.clean_html(node.get('synopsis'))
+            synopsis = synopsis[:2048] + '...' if len(synopsis) > 2048 else synopsis
+
+            # Status & Broadcast
+            status = node.get('status', 'Unknown').replace('_', ' ').title()
+            season_data = node.get('start_season', {})
+            season_str = f"{season_data.get('season', '').title()} {season_data.get('year', '')}".strip() or "Unknown"
+
+            # Statistics Formatting
+            media_type = node.get('media_type', 'Unknown')
+            media_type = media_type.upper() if media_type in ['tv', 'ova', 'ona'] else media_type.title()
+            duration_secs = node.get('average_episode_duration', 0)
+            duration_mins = duration_secs // 60 if duration_secs else 'Unknown'
             
-            if data.get('coverImage') and data['coverImage'].get('large'):
-                embed.set_image(url=data['coverImage']['large'])
+            stats_block = (
+                f"📺 **Type:** {media_type}\n"
+                f"🎬 **Episodes:** {node.get('num_episodes', 'Unknown')}\n"
+                f"⏳ **Duration:** {duration_mins} mins\n"
+                f"⭐ **Score:** {node.get('mean', 'N/A')}\n"
+                f"📈 **Rank:** #{node.get('rank', 'N/A')}\n"
+                f"🔥 **Popularity:** #{node.get('popularity', 'N/A')}\n"
+                f"📚 **Source:** {node.get('source', 'Unknown').replace('_', ' ').title()}"
+            )
+
+            # Dates, Genres, Studios
+            dates_block = f"**Start:** {node.get('start_date', 'Unknown')}\n**End:** {node.get('end_date', 'Unknown')}"
+            genres_list = [g['name'] for g in node.get('genres', [])]
+            genres_block = ", ".join(genres_list) if genres_list else "None"
+            studios_list = [s['name'] for s in node.get('studios', [])]
+            studios_block = ", ".join(studios_list) if studios_list else "None"
+
+            # Embed Construction
+            embed = discord.Embed(title=title, url=site_url, description=synopsis, color=0x3498db) 
             
-            # Convert /100 score to /10 format
-            score = f"{data['averageScore'] / 10:.1f}/10" if data.get('averageScore') else 'N/A'
+            embed.add_field(name="Japanese Title", value=japanese_title, inline=False)
+            embed.add_field(name="Broadcast", value=f"**Status:** {status}\n**Season:** {season_str}", inline=False)
+            embed.add_field(name="Statistics", value=stats_block, inline=False)
             
-            embed.add_field(name="Community Score", value=score)
-            embed.add_field(name="Total Episodes", value=str(data.get('episodes', 'N/A')))
-            embed.add_field(name="Broadcast Status", value=str(data.get('status', 'Unknown')).replace('_', ' ').title())
+            embed.add_field(name="Dates", value=dates_block, inline=True)
+            embed.add_field(name="Genres", value=genres_block, inline=True)
             
+            embed.add_field(name="Studios", value=studios_block, inline=False)
+
+            # Image Handling
+            pictures = node.get('main_picture', {})
+            if pictures.get('medium'):
+                embed.set_thumbnail(url=pictures['medium'])
+            if pictures.get('large'):
+                embed.set_image(url=pictures['large'])
+            elif pictures.get('medium'):
+                embed.set_image(url=pictures['medium'])
+                
+            embed.set_footer(text="Powered by MyAnimeList API")
+
             await ctx.send(embed=embed)
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "anime")
             
         except Exception as e:
             if hasattr(self.bot, 'db') and ctx.guild:
                 await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Anime_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-            await ctx.send("❌ **API Timeout:** The AniList database is currently unreachable.")
+            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
 
     @commands.hybrid_command(
         name="manga", 
-        description="Queries the AniList database for textual publication data.",
+        description="Queries the MyAnimeList database for textual publication data.",
         usage="/manga <query>",
         help="/manga berserk"
     )
@@ -119,60 +165,91 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        url = 'https://graphql.anilist.co'
-        
-        graphql_query = '''
-        query ($search: String) {
-          Media (search: $search, type: MANGA, sort: [POPULARITY_DESC, SEARCH_MATCH]) {
-            title { romaji english }
-            siteUrl
-            description(asHtml: false)
-            coverImage { large }
-            averageScore
-            chapters
-            volumes
-            status
-          }
+        url = 'https://api.myanimelist.net/v2/manga'
+        params = {
+            'q': query,
+            'limit': 1,
+            'fields': 'id,title,alternative_titles,main_picture,synopsis,mean,rank,popularity,num_chapters,num_volumes,status,media_type,start_date,end_date,genres,authors'
         }
-        '''
-        variables = {'search': query}
-        headers = {"User-Agent": "Recluse Discord Bot (Created by AYush)"}
+        
+        client_id = os.getenv("MAL_CLIENT_ID")
+        
+        if not client_id:
+            return await ctx.send("❌ **Configuration Error:** MAL_CLIENT_ID is missing from the .env file.")
+
+        headers = {
+            "X-MAL-CLIENT-ID": client_id,
+            "User-Agent": "Recluse Discord Bot (Created by AYush)"
+        }
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json={'query': graphql_query, 'variables': variables}, headers=headers, timeout=15) as response:
+                async with session.get(url, params=params, headers=headers, timeout=15) as response:
                     if response.status != 200:
-                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
-                    
+                        return await ctx.send(f"❌ **API Error:** MyAnimeList returned a {response.status} status.")
                     search_result = await response.json()
 
-            data = search_result.get('data', {}).get('Media')
-            if not data:
-                return await ctx.send("❌ Query yielded no results.")
+            data_list = search_result.get('data', [])
+            if not data_list:
+                return await ctx.send("❌ Query yielded no results from the MyAnimeList database.")
                 
-            title = data['title'].get('english') or data['title'].get('romaji') or 'Unknown Title'
+            node = data_list[0].get('node', {})
+            mal_id = node.get('id')
             
-            embed = discord.Embed(title=title, url=data.get('siteUrl'), color=discord.Color.green())
+            title = node.get('title', 'Unknown Title')
+            japanese_title = node.get('alternative_titles', {}).get('ja', 'N/A')
+            site_url = f"https://myanimelist.net/manga/{mal_id}" if mal_id else None
             
-            synopsis = self.clean_html(data.get('description'))
-            embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
+            synopsis = self.clean_html(node.get('synopsis'))
+            synopsis = synopsis[:2048] + '...' if len(synopsis) > 2048 else synopsis
+
+            status = node.get('status', 'Unknown').replace('_', ' ').title()
+            media_type = node.get('media_type', 'Unknown').title()
             
-            if data.get('coverImage') and data['coverImage'].get('large'):
-                embed.set_image(url=data['coverImage']['large'])
+            stats_block = (
+                f"📖 **Type:** {media_type}\n"
+                f"📑 **Chapters:** {node.get('num_chapters', 'Unknown')}\n"
+                f"📚 **Volumes:** {node.get('num_volumes', 'Unknown')}\n"
+                f"⭐ **Score:** {node.get('mean', 'N/A')}\n"
+                f"📈 **Rank:** #{node.get('rank', 'N/A')}\n"
+                f"🔥 **Popularity:** #{node.get('popularity', 'N/A')}"
+            )
+
+            dates_block = f"**Start:** {node.get('start_date', 'Unknown')}\n**End:** {node.get('end_date', 'Unknown')}"
+            genres_list = [g['name'] for g in node.get('genres', [])]
+            genres_block = ", ".join(genres_list) if genres_list else "None"
             
-            score = f"{data['averageScore'] / 10:.1f}/10" if data.get('averageScore') else 'N/A'
+            authors_data = [f"{a['node']['first_name']} {a['node']['last_name']}".strip() for a in node.get('authors', [])]
+            authors_block = ", ".join(authors_data) if authors_data else "None"
+
+            embed = discord.Embed(title=title, url=site_url, description=synopsis, color=0x2ecc71) 
             
-            embed.add_field(name="Community Score", value=score)
-            embed.add_field(name="Published Chapters", value=str(data.get('chapters', 'N/A')))
-            embed.add_field(name="Bound Volumes", value=str(data.get('volumes', 'N/A')))
+            embed.add_field(name="Japanese Title", value=japanese_title, inline=False)
+            embed.add_field(name="Status", value=f"**Publishing:** {status}", inline=False)
+            embed.add_field(name="Statistics", value=stats_block, inline=False)
             
+            embed.add_field(name="Dates", value=dates_block, inline=True)
+            embed.add_field(name="Genres", value=genres_block, inline=True)
+            
+            embed.add_field(name="Authors", value=authors_block, inline=False)
+
+            pictures = node.get('main_picture', {})
+            if pictures.get('medium'):
+                embed.set_thumbnail(url=pictures['medium'])
+            if pictures.get('large'):
+                embed.set_image(url=pictures['large'])
+            elif pictures.get('medium'):
+                embed.set_image(url=pictures['medium'])
+                
+            embed.set_footer(text="Powered by MyAnimeList API")
+
             await ctx.send(embed=embed)
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
             
         except Exception as e:
             if hasattr(self.bot, 'db') and ctx.guild:
                 await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Manga_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-            await ctx.send("❌ **API Timeout:** The AniList database is currently unreachable.")
+            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
 
 async def setup(bot):
     await bot.add_cog(Anime(bot))
