@@ -2,8 +2,6 @@ import discord
 from discord.ext import commands
 import aiohttp
 import datetime
-import urllib.parse
-import asyncio
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -36,7 +34,7 @@ class Anime(commands.Cog):
 
     @commands.hybrid_command(
         name="anime", 
-        description="Queries the MyAnimeList database for anime.",
+        description="Queries the AniList database for anime.",
         usage="/anime <query>",
         help="/anime attack on titan"
     )
@@ -45,42 +43,52 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://api.jikan.moe/v4/anime?q={encoded_query}&sfw=true"
+        url = 'https://graphql.anilist.co'
         
-        headers = {
-            "User-Agent": "Recluse Discord Bot (Created by AYush) - Contact via Discord"
+        # GraphQL query specifically for Anime
+        graphql_query = '''
+        query ($search: String) {
+          Media (search: $search, type: ANIME) {
+            title { romaji english }
+            siteUrl
+            description(asHtml: false)
+            coverImage { large }
+            averageScore
+            episodes
+            status
+          }
         }
-        
-        search_result = None
+        '''
+        variables = {'search': query}
+        headers = {"User-Agent": "Recluse Discord Bot (Created by AYush)"}
+
         try:
             async with aiohttp.ClientSession() as session:
-                for attempt in range(3):
-                    async with session.get(url, headers=headers, timeout=10) as response:
-                        if response.status == 200:
-                            search_result = await response.json()
-                            break
-                        elif response.status >= 500:
-                            if attempt == 2:
-                                return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status after multiple attempts. The API is likely down.")
-                            await asyncio.sleep(2)
-                        else:
-                            return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
+                async with session.post(url, json={'query': graphql_query, 'variables': variables}, headers=headers, timeout=10) as response:
+                    if response.status != 200:
+                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
                     
-            if not search_result or not search_result.get('data'):
+                    search_result = await response.json()
+
+            data = search_result.get('data', {}).get('Media')
+            if not data:
                 return await ctx.send("❌ Query yielded no results from the external database.")
                 
-            data = search_result['data'][0]
-            embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.red())
-            synopsis = data.get('synopsis') or 'No synopsis available in database.'
+            # Prefer English title if available, fallback to Romaji
+            title = data['title'].get('english') or data['title'].get('romaji') or 'Unknown Title'
+            
+            embed = discord.Embed(title=title, url=data.get('siteUrl'), color=discord.Color.red())
+            
+            synopsis = data.get('description') or 'No synopsis available in database.'
             embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
             
-            try: embed.set_image(url=data['images']['jpg']['large_image_url'])
-            except (KeyError, TypeError): pass
+            if data.get('coverImage') and data['coverImage'].get('large'):
+                embed.set_image(url=data['coverImage']['large'])
             
-            embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
+            score = f"{data['averageScore']}/100" if data.get('averageScore') else 'N/A'
+            embed.add_field(name="Community Score", value=score)
             embed.add_field(name="Total Episodes", value=str(data.get('episodes', 'N/A')))
-            embed.add_field(name="Broadcast Status", value=str(data.get('status', 'Unknown')))
+            embed.add_field(name="Broadcast Status", value=str(data.get('status', 'Unknown')).replace('_', ' ').title())
             
             await ctx.send(embed=embed)
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "anime")
@@ -88,11 +96,11 @@ class Anime(commands.Cog):
         except Exception as e:
             if hasattr(self.bot, 'db') and ctx.guild:
                 await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Anime_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
+            await ctx.send("❌ **API Timeout:** The AniList database is currently unreachable.")
 
     @commands.hybrid_command(
         name="manga", 
-        description="Queries the MyAnimeList database for textual publication data.",
+        description="Queries the AniList database for textual publication data.",
         usage="/manga <query>",
         help="/manga berserk"
     )
@@ -101,40 +109,50 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://api.jikan.moe/v4/manga?q={encoded_query}&sfw=true"
+        url = 'https://graphql.anilist.co'
         
-        headers = {
-            "User-Agent": "Recluse Discord Bot (Created by AYush) - Contact via Discord"
+        # GraphQL query specifically for Manga
+        graphql_query = '''
+        query ($search: String) {
+          Media (search: $search, type: MANGA) {
+            title { romaji english }
+            siteUrl
+            description(asHtml: false)
+            coverImage { large }
+            averageScore
+            chapters
+            volumes
+            status
+          }
         }
-        
-        search_result = None
+        '''
+        variables = {'search': query}
+        headers = {"User-Agent": "Recluse Discord Bot (Created by AYush)"}
+
         try:
             async with aiohttp.ClientSession() as session:
-                for attempt in range(3):
-                    async with session.get(url, headers=headers, timeout=10) as response:
-                        if response.status == 200:
-                            search_result = await response.json()
-                            break
-                        elif response.status >= 500:
-                            if attempt == 2:
-                                return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status after multiple attempts. The API is likely down.")
-                            await asyncio.sleep(2)
-                        else:
-                            return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
+                async with session.post(url, json={'query': graphql_query, 'variables': variables}, headers=headers, timeout=10) as response:
+                    if response.status != 200:
+                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
+                    
+                    search_result = await response.json()
 
-            if not search_result or not search_result.get('data'): 
+            data = search_result.get('data', {}).get('Media')
+            if not data:
                 return await ctx.send("❌ Query yielded no results.")
                 
-            data = search_result['data'][0]
-            embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.green())
-            synopsis = data.get('synopsis') or 'No synopsis available.'
+            title = data['title'].get('english') or data['title'].get('romaji') or 'Unknown Title'
+            
+            embed = discord.Embed(title=title, url=data.get('siteUrl'), color=discord.Color.green())
+            
+            synopsis = data.get('description') or 'No synopsis available.'
             embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
             
-            try: embed.set_image(url=data['images']['jpg']['large_image_url'])
-            except (KeyError, TypeError): pass
+            if data.get('coverImage') and data['coverImage'].get('large'):
+                embed.set_image(url=data['coverImage']['large'])
             
-            embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
+            score = f"{data['averageScore']}/100" if data.get('averageScore') else 'N/A'
+            embed.add_field(name="Community Score", value=score)
             embed.add_field(name="Published Chapters", value=str(data.get('chapters', 'N/A')))
             embed.add_field(name="Bound Volumes", value=str(data.get('volumes', 'N/A')))
             
@@ -144,7 +162,7 @@ class Anime(commands.Cog):
         except Exception as e:
             if hasattr(self.bot, 'db') and ctx.guild:
                 await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Manga_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
+            await ctx.send("❌ **API Timeout:** The AniList database is currently unreachable.")
 
 async def setup(bot):
     await bot.add_cog(Anime(bot))
