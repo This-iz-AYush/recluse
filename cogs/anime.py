@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
-from jikanpy import AioJikan
+import aiohttp
 import datetime
+import urllib.parse
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -43,31 +44,40 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        async with AioJikan() as jikan:
-            try:
-                search_result = await jikan.search('anime', query)
-                if not search_result.get('data'):
-                    return await ctx.send("❌ Query yielded no results from the external database.")
+        # Safely encode the query for the URL
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://api.jikan.moe/v4/anime?q={encoded_query}&sfw=true"
+        
+        try:
+            # Replaced Jikanpy with direct aiohttp calls to v4 API
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as response:
+                    if response.status != 200:
+                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
+                    search_result = await response.json()
+                    
+            if not search_result.get('data'):
+                return await ctx.send("❌ Query yielded no results from the external database.")
                 
-                data = search_result['data'][0]
-                embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.red())
-                synopsis = data.get('synopsis') or 'No synopsis available in database.'
-                embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
-                
-                try: embed.set_image(url=data['images']['jpg']['large_image_url'])
-                except (KeyError, TypeError): pass
-                
-                embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
-                embed.add_field(name="Total Episodes", value=str(data.get('episodes', 'N/A')))
-                embed.add_field(name="Broadcast Status", value=str(data.get('status', 'Unknown')))
-                
-                await ctx.send(embed=embed)
-                if ctx.guild: await self.log_telemetry(ctx.guild.id, "anime")
-                
-            except Exception as e:
-                if hasattr(self.bot, 'db') and ctx.guild:
-                    await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Anime_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-                await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
+            data = search_result['data'][0]
+            embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.red())
+            synopsis = data.get('synopsis') or 'No synopsis available in database.'
+            embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
+            
+            try: embed.set_image(url=data['images']['jpg']['large_image_url'])
+            except (KeyError, TypeError): pass
+            
+            embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
+            embed.add_field(name="Total Episodes", value=str(data.get('episodes', 'N/A')))
+            embed.add_field(name="Broadcast Status", value=str(data.get('status', 'Unknown')))
+            
+            await ctx.send(embed=embed)
+            if ctx.guild: await self.log_telemetry(ctx.guild.id, "anime")
+            
+        except Exception as e:
+            if hasattr(self.bot, 'db') and ctx.guild:
+                await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Anime_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
+            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
 
     @commands.hybrid_command(
         name="manga", 
@@ -80,30 +90,38 @@ class Anime(commands.Cog):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
         
-        async with AioJikan() as jikan:
-            try:
-                search_result = await jikan.search('manga', query)
-                if not search_result.get('data'): return await ctx.send("❌ Query yielded no results.")
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://api.jikan.moe/v4/manga?q={encoded_query}&sfw=true"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as response:
+                    if response.status != 200:
+                        return await ctx.send(f"❌ **API Error:** The database returned a {response.status} status.")
+                    search_result = await response.json()
+
+            if not search_result.get('data'): 
+                return await ctx.send("❌ Query yielded no results.")
                 
-                data = search_result['data'][0]
-                embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.green())
-                synopsis = data.get('synopsis') or 'No synopsis available.'
-                embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
-                
-                try: embed.set_image(url=data['images']['jpg']['large_image_url'])
-                except (KeyError, TypeError): pass
-                
-                embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
-                embed.add_field(name="Published Chapters", value=str(data.get('chapters', 'N/A')))
-                embed.add_field(name="Bound Volumes", value=str(data.get('volumes', 'N/A')))
-                
-                await ctx.send(embed=embed)
-                if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
-                
-            except Exception as e:
-                if hasattr(self.bot, 'db') and ctx.guild:
-                    await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Manga_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
-                await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
+            data = search_result['data'][0]
+            embed = discord.Embed(title=data.get('title', 'Unknown Title'), url=data.get('url'), color=discord.Color.green())
+            synopsis = data.get('synopsis') or 'No synopsis available.'
+            embed.description = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
+            
+            try: embed.set_image(url=data['images']['jpg']['large_image_url'])
+            except (KeyError, TypeError): pass
+            
+            embed.add_field(name="Community Score", value=str(data.get('score', 'N/A')))
+            embed.add_field(name="Published Chapters", value=str(data.get('chapters', 'N/A')))
+            embed.add_field(name="Bound Volumes", value=str(data.get('volumes', 'N/A')))
+            
+            await ctx.send(embed=embed)
+            if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
+            
+        except Exception as e:
+            if hasattr(self.bot, 'db') and ctx.guild:
+                await self.bot.db.system_health.insert_one({"guild_id": ctx.guild.id, "module": "Manga_API", "error": type(e).__name__, "timestamp": datetime.datetime.utcnow().timestamp()})
+            await ctx.send("❌ **API Timeout:** The MyAnimeList database is currently unreachable.")
 
 async def setup(bot):
     await bot.add_cog(Anime(bot))
