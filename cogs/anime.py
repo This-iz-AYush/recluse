@@ -12,12 +12,67 @@ load_dotenv()
 class ListPaginator(discord.ui.View):
     def __init__(self, data_list, author_id, username, chunk_size=10):
         super().__init__(timeout=120)
+        self.original_data = data_list
         self.data_list = data_list
         self.author_id = author_id
         self.username = username
         self.chunk_size = chunk_size
         self.current_page = 0
-        self.max_pages = max(1, (len(data_list) + chunk_size - 1) // chunk_size)
+        
+        # --- Dynamic Genre Filter ---
+        self.available_genres = {}
+        for item in self.original_data:
+            genres = item.get('node', {}).get('genres', [])
+            for g in genres:
+                name = g.get('name')
+                if name:
+                    self.available_genres[name] = self.available_genres.get(name, 0) + 1
+                    
+        # Sort genres by frequency, keeping the top 24 to leave room for the "All" option
+        top_genres = sorted(self.available_genres.items(), key=lambda x: x[1], reverse=True)[:24]
+        
+        options = [discord.SelectOption(label="All Genres", value="All", emoji="🏷️")]
+        for genre, count in top_genres:
+            options.append(discord.SelectOption(label=genre, value=genre, description=f"{count} anime"))
+            
+        self.genre_select = discord.ui.Select(
+            placeholder="Filter by Genre...",
+            options=options,
+            row=0
+        )
+        self.genre_select.callback = self.filter_callback
+        self.add_item(self.genre_select)
+        
+        # --- Navigation Buttons ---
+        self.btn_skip_back = discord.ui.Button(label="≪", style=discord.ButtonStyle.secondary, row=1)
+        self.btn_prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.primary, row=1)
+        self.btn_page = discord.ui.Button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True, row=1)
+        self.btn_next = discord.ui.Button(label="▶", style=discord.ButtonStyle.primary, row=1)
+        self.btn_skip_forward = discord.ui.Button(label="≫", style=discord.ButtonStyle.secondary, row=1)
+
+        self.btn_skip_back.callback = self.skip_back
+        self.btn_prev.callback = self.prev_page
+        self.btn_next.callback = self.next_page
+        self.btn_skip_forward.callback = self.skip_forward
+
+        self.add_item(self.btn_skip_back)
+        self.add_item(self.btn_prev)
+        self.add_item(self.btn_page)
+        self.add_item(self.btn_next)
+        self.add_item(self.btn_skip_forward)
+        
+        self.update_buttons()
+
+    @property
+    def max_pages(self):
+        return max(1, (len(self.data_list) + self.chunk_size - 1) // self.chunk_size)
+
+    def update_buttons(self):
+        self.btn_page.label = f"{self.current_page + 1} / {self.max_pages}"
+        self.btn_skip_back.disabled = self.current_page == 0
+        self.btn_prev.disabled = self.current_page == 0
+        self.btn_next.disabled = self.current_page >= self.max_pages - 1
+        self.btn_skip_forward.disabled = self.current_page >= self.max_pages - 1
 
     def generate_embed(self):
         start = self.current_page * self.chunk_size
@@ -27,8 +82,11 @@ class ListPaginator(discord.ui.View):
         embed = discord.Embed(
             title=f"MyAnimeList: {self.username}", 
             description="", 
-            color=0x3498db
+            color=0x2b2d31  # Appealing dark gray to match the Discord UI
         )
+        
+        if not page_data:
+            embed.description = "No anime found matching this filter."
         
         for idx, item in enumerate(page_data, start=start+1):
             title = item.get('node', {}).get('title', 'Unknown Title')
@@ -40,7 +98,7 @@ class ListPaginator(discord.ui.View):
             
             embed.description += f"**{idx}.** {title}\n{emoji} {status} *(Score: {score}/10)*\n\n"
             
-        embed.set_footer(text=f"Page {self.current_page + 1} of {self.max_pages} • Recluse Database")
+        embed.set_footer(text=f"Total: {len(self.data_list)} Anime • Recluse Database")
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -49,21 +107,38 @@ class ListPaginator(discord.ui.View):
         await interaction.response.send_message("❌ This isn't your menu!", ephemeral=True)
         return False
 
-    @discord.ui.button(label="◀️ Prev", style=discord.ButtonStyle.blurple)
-    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+    async def filter_callback(self, interaction: discord.Interaction):
+        selected = self.genre_select.values[0]
+        if selected == "All":
+            self.data_list = self.original_data
         else:
-            await interaction.response.defer()
+            self.data_list = [
+                item for item in self.original_data 
+                if any(g.get('name') == selected for g in item.get('node', {}).get('genres', []))
+            ]
+        self.current_page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
 
-    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.blurple)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.max_pages - 1:
-            self.current_page += 1
-            await interaction.response.edit_message(embed=self.generate_embed(), view=self)
-        else:
-            await interaction.response.defer()
+    async def skip_back(self, interaction: discord.Interaction):
+        self.current_page = max(0, self.current_page - 10)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    async def prev_page(self, interaction: discord.Interaction):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    async def next_page(self, interaction: discord.Interaction):
+        self.current_page = min(self.max_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    async def skip_forward(self, interaction: discord.Interaction):
+        self.current_page = min(self.max_pages - 1, self.current_page + 10)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
 
 class Anime(commands.Cog):
     def __init__(self, bot):
@@ -122,7 +197,7 @@ class Anime(commands.Cog):
         description="View your tracked MyAnimeList entries.",
         usage="/myanimelist"
     )
-    @commands.cooldown(1, 15, commands.BucketType.user)
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def myanimelist(self, ctx):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
@@ -141,7 +216,8 @@ class Anime(commands.Cog):
             return await ctx.send("❌ **Configuration Error:** API key is missing. Check your environment variables.")
 
         url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
-        params = {'limit': 1000, 'fields': 'list_status'}
+        # ⚠️ CRITICAL: 'genres' has been added to the fields parameter here so the filter can read them
+        params = {'limit': 1000, 'fields': 'list_status,genres'}
         headers = {
             "X-MAL-CLIENT-ID": client_id.strip(),
             "User-Agent": "Recluse Discord Bot"
