@@ -62,7 +62,9 @@ def _embed_anime() -> discord.Embed:
         name="Database Search",
         value=(
             "> `/anime <query>` — Queries MyAnimeList for anime.\n"
-            "> `/manga <query>` — Queries MyAnimeList for manga."
+            "> `/manga <query>` — Queries MyAnimeList for manga.\n"
+            "> `/mal_link <username>` — Link your MAL account.\n"
+            "> `/myanimelist` — View your tracked MAL entries."
         ),
         inline=False,
     )
@@ -96,9 +98,9 @@ def _embed_moderation() -> discord.Embed:
 
 def _embed_misc() -> discord.Embed:
     e = discord.Embed(title="🗂️ Miscellaneous Commands", color=discord.Color.teal())
-    e.add_field(name="👤 User Utilities", value="> `/whois` `/avatar` `/afk`",                              inline=False)
+    e.add_field(name="👤 User Utilities", value="> `/whois` `/avatar` `/afk`",                               inline=False)
     e.add_field(name="🏢 Server Info",    value="> `/serverinfo` `/roleinfo` `/channelinfo` `/membercount`", inline=False)
-    e.add_field(name="🧰 General Tools", value="> `/poll` `/color` `/search`",                              inline=False)
+    e.add_field(name="🧰 General Tools", value="> `/poll` `/color` `/search`",                               inline=False)
     return e
 
 
@@ -620,23 +622,23 @@ class HelpSelect(discord.ui.Select):
 
         options = [
             discord.SelectOption(label="Telemetry",         description="Bot info and uptime stats",         emoji="📊"),
-            discord.SelectOption(label="Anime & Manga",     description="Search MyAnimeList database",        emoji="🎌"),
-            discord.SelectOption(label="Sports",            description="Live Cricket Score",                 emoji="🏏"),
-            discord.SelectOption(label="Moderation",        description="Ban, mute, purge and more",          emoji="🛡️"),
-            discord.SelectOption(label="Miscellaneous",     description="Server info, avatars, ping, afk",    emoji="🗂️"),
-            discord.SelectOption(label="Generative AI",     description="Create images from text",            emoji="🎨"),
-            discord.SelectOption(label="Conversational AI", description="Chat with Recluse",                  emoji="🤖"),
-            discord.SelectOption(label="Leveling",          description="XP, ranks and leaderboards",         emoji="📈"),
-            discord.SelectOption(label="Tickets",           description="Support ticket system",              emoji="🎫"),
-            discord.SelectOption(label="Giveaways",         description="Host and manage giveaways",          emoji="🎉"),
-            discord.SelectOption(label="Admin Config",      description="Server setup and configuration",     emoji="⚙️"),
+            discord.SelectOption(label="Anime & Manga",     description="Search MyAnimeList database",       emoji="🎌"),
+            discord.SelectOption(label="Sports",            description="Live Cricket Score",                emoji="🏏"),
+            discord.SelectOption(label="Moderation",        description="Ban, mute, purge and more",         emoji="🛡️"),
+            discord.SelectOption(label="Miscellaneous",     description="Server info, avatars, ping, afk",   emoji="🗂️"),
+            discord.SelectOption(label="Generative AI",     description="Create images from text",           emoji="🎨"),
+            discord.SelectOption(label="Conversational AI", description="Chat with Recluse",                 emoji="🤖"),
+            discord.SelectOption(label="Leveling",          description="XP, ranks and leaderboards",        emoji="📈"),
+            discord.SelectOption(label="Tickets",           description="Support ticket system",             emoji="🎫"),
+            discord.SelectOption(label="Giveaways",         description="Host and manage giveaways",         emoji="🎉"),
+            discord.SelectOption(label="Admin Config",      description="Server setup and configuration",    emoji="⚙️"),
             discord.SelectOption(label="Anti-Nuke",         description="Nuke detection & server protection", emoji="🔒"),
-            discord.SelectOption(label="Fun",               description="8ball, dice, roast, memes & more",   emoji="🎮"),
+            discord.SelectOption(label="Fun",               description="8ball, dice, roast, memes & more",  emoji="🎮"),
             discord.SelectOption(label="Info & Lookup",     description="Wiki, weather, GitHub, crypto & more",emoji="🌐"),
-            discord.SelectOption(label="Auto-Response",     description="Keyword trigger system",             emoji="⚡"),
-            #discord.SelectOption(label="Suggestions",       description="Submit & vote on suggestions",       emoji="💡"),
-            discord.SelectOption(label="Reminders",         description="Personal reminder system",           emoji="⏰"),
-            discord.SelectOption(label="Birthdays",         description="Birthday tracking & celebrations",   emoji="🎂"),
+            discord.SelectOption(label="Auto-Response",     description="Keyword trigger system",            emoji="⚡"),
+            #discord.SelectOption(label="Suggestions",       description="Submit & vote on suggestions",      emoji="💡"),
+            discord.SelectOption(label="Reminders",         description="Personal reminder system",          emoji="⏰"),
+            discord.SelectOption(label="Birthdays",         description="Birthday tracking & celebrations",  emoji="🎂"),
         ]
 
         if include_dev:
@@ -832,14 +834,14 @@ class Core(commands.Cog):
             timestamp=datetime.datetime.utcnow(),
         )
         embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        embed.add_field(name="👑 Owner",       value=str(app_info.owner),                                       inline=True)
-        embed.add_field(name="📡 WS Latency",  value=f"`{round(self.bot.latency * 1000)}ms`",                   inline=True)
-        embed.add_field(name="🧠 Your AI",     value=active_ai,                                                 inline=True)
-        embed.add_field(name="🟢 Status",      value="**Operational**",                                         inline=True)
-        embed.add_field(name="⏱️ Uptime",      value=f"`{days}d {hours}h {mins}m {secs}s`",                     inline=True)
-        embed.add_field(name="🏘️ Servers",    value=f"`{guild_count:,}` servers, `{member_count:,}` members",  inline=True)
-        embed.add_field(name="🔧 Modules",     value="`17` loaded",                                             inline=True)
-        embed.add_field(name="🐍 Library",     value=f"`discord.py {discord.__version__}`",                     inline=True)
+        embed.add_field(name="👑 Owner",       value=str(app_info.owner),                                      inline=True)
+        embed.add_field(name="📡 WS Latency",  value=f"`{round(self.bot.latency * 1000)}ms`",                  inline=True)
+        embed.add_field(name="🧠 Your AI",     value=active_ai,                                                inline=True)
+        embed.add_field(name="🟢 Status",      value="**Operational**",                                        inline=True)
+        embed.add_field(name="⏱️ Uptime",      value=f"`{days}d {hours}h {mins}m {secs}s`",                    inline=True)
+        embed.add_field(name="🏘️ Servers",    value=f"`{guild_count:,}` servers, `{member_count:,}` members", inline=True)
+        embed.add_field(name="🔧 Modules",     value="`17` loaded",                                            inline=True)
+        embed.add_field(name="🐍 Library",     value=f"`discord.py {discord.__version__}`",                    inline=True)
         await ctx.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -866,7 +868,7 @@ class Core(commands.Cog):
 
         embed = discord.Embed(title="🏓 Pong!", color=colour, timestamp=datetime.datetime.utcnow())
         embed.add_field(name="📡 Gateway WS",    value=f"`{ws}ms`  `[{bar}]`", inline=False)
-        embed.add_field(name="🌐 API Round-trip", value=f"`{api}ms`",           inline=True)
+        embed.add_field(name="🌐 API Round-trip", value=f"`{api}ms`",            inline=True)
         embed.set_footer(text="Recluse Network Diagnostics")
         await msg.edit(content=None, embed=embed)
 
