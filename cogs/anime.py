@@ -112,28 +112,37 @@ class Anime(commands.Cog):
                 linked_user = await self.bot.db.mal_users.find_one({"discord_id": ctx.author.id})
                 if linked_user:
                     username = linked_user.get("mal_username")
+                    
+                    # 1. Ask for up to 1000 items from the user's list (API Maximum)
                     user_list_url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
-                    user_params = {'anime_id': mal_id, 'fields': 'list_status'}
+                    user_params = {'limit': 1000, 'fields': 'list_status'}
                     
                     try:
                         async with aiohttp.ClientSession() as session:
                             async with session.get(user_list_url, params=user_params, headers=headers) as user_res:
                                 if user_res.status == 200:
                                     user_data = await user_res.json()
-                                    if user_data.get('data'):
-                                        status_node = user_data['data'][0].get('list_status', {})
-                                        personal_status = status_node.get('status', 'unknown').replace('_', ' ').title()
-                                        personal_score = status_node.get('score', 0)
-                                        eps_watched = status_node.get('num_episodes_watched', 0)
+                                    
+                                    # 2. Loop through the returned list to find the matching anime ID
+                                    found_status = None
+                                    for item in user_data.get('data', []):
+                                        if item.get('node', {}).get('id') == mal_id:
+                                            found_status = item.get('list_status', {})
+                                            break
+                                    
+                                    if found_status:
+                                        personal_status = found_status.get('status', 'unknown').replace('_', ' ').title()
+                                        personal_score = found_status.get('score', 0)
+                                        eps_watched = found_status.get('num_episodes_watched', 0)
                                         
                                         status_emoji = "🟢" if personal_status == "Watching" else "🔵" if personal_status == "Completed" else "🟡" if personal_status == "On Hold" else "🔴" if personal_status == "Dropped" else "⚪"
                                         
                                         user_status_val = f"{status_emoji} **Status:** {personal_status} ｜ ⭐ **Score:** {personal_score}/10 ｜ 🎬 **Watched:** {eps_watched} eps"
                                     else:
-                                        user_status_val = "*This anime is not on your MAL list.*"
-                    except Exception:
-                        pass # Silently fail so the embed still sends
-
+                                        user_status_val = "*This anime is not on your MAL list (or is buried past your 1000 most recent entries).*"
+                    except Exception as e:
+                        pass # Silently fail so the main embed still sends
+                        
             # --- Data Extraction & Formatting ---
             def code_fmt(val):
                 return f"`{val}`" if val and str(val).strip() else "``"
