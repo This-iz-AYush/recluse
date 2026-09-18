@@ -56,7 +56,6 @@ class Anime(commands.Cog):
         await ctx.defer()
         
         url = 'https://api.myanimelist.net/v2/anime'
-        # Added extra fields to match the requested layout (rating, broadcast, num_list_users, etc.)
         params = {
             'q': query,
             'limit': 1,
@@ -128,17 +127,20 @@ class Anime(commands.Cog):
             status = node.get('status', '').replace('_', ' ').title()
             link = f"https://myanimelist.net/anime/{mal_id}/{title.replace(' ', '_')}" if mal_id else ""
 
-            # --- Embed Construction ---
-            # Using the bright green color from the screenshot
-            embed = discord.Embed(title=f"My Anime List search result for {query}", color=0x2ecc71)
-            
-            # Setting Thumbnail to top right
-            pictures = node.get('main_picture', {})
-            if pictures.get('medium'):
-                embed.set_thumbnail(url=pictures['medium'])
-            elif pictures.get('large'):
-                embed.set_thumbnail(url=pictures['large'])
+            # Synopsis processing
+            synopsis = self.clean_html(node.get('synopsis'))
+            # Discord limits descriptions to 4096 characters.
+            synopsis = synopsis[:4093] + '...' if len(synopsis) > 4096 else synopsis
 
+            # --- Embed Construction ---
+            embed = discord.Embed(
+                title=title, 
+                url=link, 
+                description=synopsis, 
+                color=0x3498db # Blue strip matching your screenshot
+            )
+            
+            # Grid Layout (3 columns)
             # Row 1
             embed.add_field(name="Premiered", value=code_fmt(premiered), inline=True)
             embed.add_field(name="Broadcast", value=code_fmt(broadcast), inline=True)
@@ -154,7 +156,7 @@ class Anime(commands.Cog):
             embed.add_field(name="Rating", value=code_fmt(rating), inline=True)
             embed.add_field(name="Aired", value=code_fmt(aired), inline=True)
             
-            # Row 4 (Favorite might require a different endpoint, using N/A as placeholder if missing)
+            # Row 4
             embed.add_field(name="Score", value=code_fmt(score), inline=True)
             embed.add_field(name="Favorite", value=code_fmt(""), inline=True) 
             embed.add_field(name="Ranked", value=code_fmt(ranked), inline=True)
@@ -173,15 +175,21 @@ class Anime(commands.Cog):
             embed.add_field(name="Synonyms", value=code_fmt(synonyms), inline=True)
             embed.add_field(name="Status", value=code_fmt(status), inline=True)
             embed.add_field(name="Identifier", value=code_fmt(mal_id), inline=True)
-            
-            # Link at the bottom (inline=False so it sits on its own row)
-            if link:
-                embed.add_field(name="Link", value=link, inline=False)
 
-            # Footer layout matching screenshot
-            current_time = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+            # Image Handling
+            pictures = node.get('main_picture', {})
+            if pictures.get('medium'):
+                # Sets the small image in the top right corner
+                embed.set_thumbnail(url=pictures['medium'])
+            
+            if pictures.get('large'):
+                # Sets the large poster image at the bottom
+                embed.set_image(url=pictures['large'])
+            elif pictures.get('medium'):
+                embed.set_image(url=pictures['medium'])
+                
             embed.set_footer(
-                text=f"Requested by {ctx.author.display_name} • {current_time}", 
+                text=f"Requested by {ctx.author.display_name} • Powered by MyAnimeList API", 
                 icon_url=ctx.author.display_avatar.url
             )
 
@@ -192,6 +200,7 @@ class Anime(commands.Cog):
             import traceback
             print(traceback.format_exc())
             await ctx.send(f"❌ **Crash Report:** `{type(e).__name__}: {str(e)}`")
+            
     @commands.hybrid_command(
         name="manga", 
         description="Queries the MyAnimeList database for textual publication data.",
