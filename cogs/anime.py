@@ -79,7 +79,7 @@ class Anime(commands.Cog):
 
         params = {
             'q': query,
-            'limit': 1,
+            'limit': 10,
             'nsfw': 'true' if is_nsfw_channel else 'false',
             'fields': 'id,title,alternative_titles,main_picture,synopsis,mean,rank,popularity,num_episodes,average_episode_duration,status,start_season,media_type,source,start_date,end_date,genres,studios,rating,broadcast,num_list_users,num_scoring_users'
         }
@@ -106,8 +106,33 @@ class Anime(commands.Cog):
             data_list = search_result.get('data', [])
             if not data_list:
                 return await ctx.send("❌ Query yielded no results from the MyAnimeList database.")
-                
-            node = data_list[0].get('node', {})
+
+            # --- SMART TITLE MATCHING ---
+            clean_q = re.sub(r'[^a-zA-Z0-9]', '', query).lower()
+            selected_node = None
+
+            for entry in data_list:
+                n = entry.get('node', {})
+                titles_to_check = [
+                    n.get('title', ''),
+                    (n.get('alternative_titles') or {}).get('en', ''),
+                    (n.get('alternative_titles') or {}).get('ja', '')
+                ] + (n.get('alternative_titles') or {}).get('synonyms', [])
+
+                clean_titles = [re.sub(r'[^a-zA-Z0-9]', '', t).lower() for t in titles_to_check if t]
+
+                # 1. Exact match (handles queries like "K" or exact titles)
+                if clean_q in clean_titles:
+                    selected_node = n
+                    break
+
+                # 2. Handles common aliases (e.g. "K Project" matching anime "K")
+                if clean_q in [t + "project" for t in clean_titles]:
+                    selected_node = n
+                    break
+
+            # Fallback to top result if no exact match is found
+            node = selected_node if selected_node else data_list[0].get('node', {})
             mal_id = node.get('id')
             title = node.get('title', 'Unknown Title')
             
