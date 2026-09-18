@@ -9,6 +9,62 @@ from dotenv import load_dotenv
 # Load environment variables directly in the cog
 load_dotenv()
 
+class ListPaginator(discord.ui.View):
+    def __init__(self, data_list, author_id, username, chunk_size=10):
+        super().__init__(timeout=120)
+        self.data_list = data_list
+        self.author_id = author_id
+        self.username = username
+        self.chunk_size = chunk_size
+        self.current_page = 0
+        self.max_pages = max(1, (len(data_list) + chunk_size - 1) // chunk_size)
+
+    def generate_embed(self):
+        start = self.current_page * self.chunk_size
+        end = start + self.chunk_size
+        page_data = self.data_list[start:end]
+
+        embed = discord.Embed(
+            title=f"MyAnimeList: {self.username}", 
+            description="", 
+            color=0x3498db
+        )
+        
+        for idx, item in enumerate(page_data, start=start+1):
+            title = item.get('node', {}).get('title', 'Unknown Title')
+            status_data = item.get('list_status', {})
+            status = status_data.get('status', 'unknown').replace('_', ' ').title()
+            score = status_data.get('score', 0)
+            
+            emoji = "🟢" if status == "Watching" else "🔵" if status == "Completed" else "🟡" if status == "On Hold" else "🔴" if status == "Dropped" else "⚪"
+            
+            embed.description += f"**{idx}.** {title}\n{emoji} {status} *(Score: {score}/10)*\n\n"
+            
+        embed.set_footer(text=f"Page {self.current_page + 1} of {self.max_pages} • Recluse Database")
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.author_id:
+            return True
+        await interaction.response.send_message("❌ This isn't your menu!", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="◀️ Prev", style=discord.ButtonStyle.blurple)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.blurple)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.max_pages - 1:
+            self.current_page += 1
+            await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
 class Anime(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -60,6 +116,57 @@ class Anime(commands.Cog):
             upsert=True
         )
         await ctx.send(f"✅ Successfully linked MyAnimeList account: **{username}**")
+
+    @commands.hybrid_command(
+        name="myanimelist", 
+        description="View your tracked MyAnimeList entries.",
+        usage="/myanimelist"
+    )
+    @commands.cooldown(1, 15, commands.BucketType.user)
+    async def myanimelist(self, ctx):
+        if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
+        await ctx.defer()
+        
+        if not hasattr(self.bot, 'db'):
+            return await ctx.send("❌ **Database Error:** MongoDB connection is not available.")
+            
+        linked_user = await self.bot.db.mal_users.find_one({"discord_id": ctx.author.id})
+        if not linked_user:
+            return await ctx.send("❌ You haven't linked your MyAnimeList account! Use `/mal_link <username>` first.")
+            
+        username = linked_user.get("mal_username")
+        client_id = os.getenv("MAL_CLIENT_ID")
+        
+        if not client_id:
+            return await ctx.send("❌ **Configuration Error:** API key is missing. Check your environment variables.")
+
+        url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
+        params = {'limit': 1000, 'fields': 'list_status'}
+        headers = {
+            "X-MAL-CLIENT-ID": client_id.strip(),
+            "User-Agent": "Recluse Discord Bot"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status == 404:
+                        return await ctx.send(f"❌ User **{username}** not found on MyAnimeList.")
+                    if response.status != 200:
+                        error_data = await response.text()
+                        return await ctx.send(f"❌ **API Error {response.status}:** `{error_data}`")
+                        
+                    user_data = await response.json()
+        except Exception as e:
+            return await ctx.send(f"❌ **Crash Report:** `{type(e).__name__}: {str(e)}`")
+            
+        anime_array = user_data.get('data', [])
+        if not anime_array:
+            return await ctx.send("❌ Your list is empty or could not be fetched.")
+            
+        view = ListPaginator(anime_array, ctx.author.id, username, chunk_size=10)
+        await ctx.send(embed=view.generate_embed(), view=view)
+        if ctx.guild: await self.log_telemetry(ctx.guild.id, "myanimelist")
 
     @commands.hybrid_command(
         name="anime", 
