@@ -216,7 +216,7 @@ class Anime(commands.Cog):
 
             # Interactive Ticking Timestamp
             current_unix = int(datetime.datetime.now().timestamp())
-            embed.add_field(name="Query Time", value=f"<t:{current_unix}:T>", inline=False)
+            embed.add_field(name="Query Time", value=f"<t:{current_unix}:R>", inline=False)
 
             # Personal Tracking Data
             if user_status_val:
