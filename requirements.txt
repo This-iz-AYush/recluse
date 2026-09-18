@@ -14,6 +14,7 @@ quart-cors>=0.7.0
  
 # AI APIs
 aiohttp>=3.9.0
+google-genai
  
 # Search
 duckduckgo-search>=6.0.0
