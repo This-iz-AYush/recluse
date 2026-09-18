@@ -73,9 +73,14 @@ class Anime(commands.Cog):
         await ctx.defer()
         
         url = 'https://api.myanimelist.net/v2/anime'
+
+        # Check if the command is being run in an age-restricted channel
+        is_nsfw_channel = ctx.channel.is_nsfw() if hasattr(ctx.channel, 'is_nsfw') else False
+
         params = {
             'q': query,
             'limit': 1,
+            'nsfw': 'true' if is_nsfw_channel else 'false',
             'fields': 'id,title,alternative_titles,main_picture,synopsis,mean,rank,popularity,num_episodes,average_episode_duration,status,start_season,media_type,source,start_date,end_date,genres,studios,rating,broadcast,num_list_users,num_scoring_users'
         }
         
