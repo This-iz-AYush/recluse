@@ -106,14 +106,12 @@ class Anime(commands.Cog):
             mal_id = node.get('id')
             title = node.get('title', 'Unknown Title')
             
-            # --- Personal List Fetching (Method 2) ---
+            # --- Personal List Fetching (Method 2 with limit 1000 fix) ---
             user_status_val = ""
             if hasattr(self.bot, 'db'):
                 linked_user = await self.bot.db.mal_users.find_one({"discord_id": ctx.author.id})
                 if linked_user:
                     username = linked_user.get("mal_username")
-                    
-                    # 1. Ask for up to 1000 items from the user's list (API Maximum)
                     user_list_url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
                     user_params = {'limit': 1000, 'fields': 'list_status'}
                     
@@ -123,13 +121,12 @@ class Anime(commands.Cog):
                                 if user_res.status == 200:
                                     user_data = await user_res.json()
                                     
-                                    # 2. Loop through the returned list to find the matching anime ID
                                     found_status = None
                                     for item in user_data.get('data', []):
                                         if item.get('node', {}).get('id') == mal_id:
                                             found_status = item.get('list_status', {})
                                             break
-                                    
+                                            
                                     if found_status:
                                         personal_status = found_status.get('status', 'unknown').replace('_', ' ').title()
                                         personal_score = found_status.get('score', 0)
@@ -140,9 +137,9 @@ class Anime(commands.Cog):
                                         user_status_val = f"{status_emoji} **Status:** {personal_status} ｜ ⭐ **Score:** {personal_score}/10 ｜ 🎬 **Watched:** {eps_watched} eps"
                                     else:
                                         user_status_val = "*This anime is not on your MAL list (or is buried past your 1000 most recent entries).*"
-                    except Exception as e:
+                    except Exception:
                         pass # Silently fail so the main embed still sends
-                        
+
             # --- Data Extraction & Formatting ---
             def code_fmt(val):
                 return f"`{val}`" if val and str(val).strip() else "``"
@@ -182,38 +179,50 @@ class Anime(commands.Cog):
             # --- Embed Construction ---
             embed = discord.Embed(title=title, url=link, description=synopsis, color=0x3498db)
             
+            # Row 1
             embed.add_field(name="Premiered", value=code_fmt(premiered), inline=True)
             embed.add_field(name="Broadcast", value=code_fmt(broadcast), inline=True)
             embed.add_field(name="Genres", value=code_fmt(genres), inline=True)
             
+            # Row 2
             embed.add_field(name="English Title", value=code_fmt(en_title), inline=True)
             embed.add_field(name="Japanese Title", value=code_fmt(ja_title), inline=True)
             embed.add_field(name="Type", value=code_fmt(media_type), inline=True)
             
+            # Row 3
             embed.add_field(name="Episodes", value=code_fmt(episodes), inline=True)
             embed.add_field(name="Rating", value=code_fmt(rating), inline=True)
             embed.add_field(name="Aired", value=code_fmt(aired), inline=True)
             
+            # Row 4
             embed.add_field(name="Score", value=code_fmt(score), inline=True)
             embed.add_field(name="Favorite", value=code_fmt(""), inline=True) 
             embed.add_field(name="Ranked", value=code_fmt(ranked), inline=True)
             
+            # Row 5
             embed.add_field(name="Duration", value=code_fmt(duration), inline=True)
             embed.add_field(name="Studios", value=code_fmt(studios), inline=True)
             embed.add_field(name="Popularity", value=code_fmt(popularity), inline=True)
             
+            # Row 6
             embed.add_field(name="Members", value=code_fmt(members), inline=True)
             embed.add_field(name="Score Stats", value=code_fmt(score_stats), inline=True)
             embed.add_field(name="Source", value=code_fmt(source), inline=True)
             
+            # Row 7
             embed.add_field(name="Synonyms", value=code_fmt(synonyms), inline=True)
             embed.add_field(name="Status", value=code_fmt(status), inline=True)
             embed.add_field(name="Identifier", value=code_fmt(mal_id), inline=True)
 
-            # Append the personal tracking data as a full-width field right above the image
+            # Interactive Ticking Timestamp
+            current_unix = int(datetime.datetime.now().timestamp())
+            embed.add_field(name="Query Time", value=f"<t:{current_unix}:T>", inline=False)
+
+            # Personal Tracking Data
             if user_status_val:
                 embed.add_field(name=f"Your MAL Status ({linked_user.get('mal_username')})", value=user_status_val, inline=False)
 
+            # Image Handling
             pictures = node.get('main_picture', {})
             if pictures.get('medium'):
                 embed.set_thumbnail(url=pictures['medium'])
@@ -223,8 +232,9 @@ class Anime(commands.Cog):
             elif pictures.get('medium'):
                 embed.set_image(url=pictures['medium'])
                 
+            # Footer matching the selected immersive design
             embed.set_footer(
-                text=f"Requested by {ctx.author.display_name} • Recluse by AYush • Powered by MAL API", 
+                text=f"Requested by {ctx.author.display_name} • Recluse Database • Powered by MAL API", 
                 icon_url=ctx.author.display_avatar.url
             )
 
