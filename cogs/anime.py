@@ -13,42 +13,56 @@ class ListPaginator(discord.ui.View):
     def __init__(self, data_list, author_id, username, chunk_size=10):
         super().__init__(timeout=120)
         self.original_data = data_list
-        self.data_list = data_list
         self.author_id = author_id
         self.username = username
         self.chunk_size = chunk_size
         self.current_page = 0
         
-        # --- Dynamic Genre Filter ---
-        self.available_genres = {}
-        for item in self.original_data:
-            genres = item.get('node', {}).get('genres', [])
-            for g in genres:
-                name = g.get('name')
-                if name:
-                    self.available_genres[name] = self.available_genres.get(name, 0) + 1
-                    
-        # Sort genres by frequency, keeping the top 24 to leave room for the "All" option
-        top_genres = sorted(self.available_genres.items(), key=lambda x: x[1], reverse=True)[:24]
+        # State trackers
+        self.active_status = "all"
+        self.active_sort = "default"
         
-        options = [discord.SelectOption(label="All Genres", value="All", emoji="🏷️")]
-        for genre, count in top_genres:
-            options.append(discord.SelectOption(label=genre, value=genre, description=f"{count} anime"))
-            
-        self.genre_select = discord.ui.Select(
-            placeholder="Filter by Genre...",
-            options=options,
+        # Filtered & sorted view
+        self.view_data = list(self.original_data)
+        
+        # ─── 1. Status Filter Select (Row 0) ───
+        status_options = [
+            discord.SelectOption(label="All Statuses", value="all", emoji="📑", default=True),
+            discord.SelectOption(label="Watching", value="watching", emoji="🟢"),
+            discord.SelectOption(label="Completed", value="completed", emoji="🔵"),
+            discord.SelectOption(label="On Hold", value="on_hold", emoji="🟡"),
+            discord.SelectOption(label="Dropped", value="dropped", emoji="🔴"),
+            discord.SelectOption(label="Plan to Watch", value="plan_to_watch", emoji="⚪"),
+        ]
+        self.status_select = discord.ui.Select(
+            placeholder="Filter by Status...",
+            options=status_options,
             row=0
         )
-        self.genre_select.callback = self.filter_callback
-        self.add_item(self.genre_select)
-        
-        # --- Navigation Buttons ---
-        self.btn_skip_back = discord.ui.Button(label="≪", style=discord.ButtonStyle.secondary, row=1)
-        self.btn_prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.primary, row=1)
-        self.btn_page = discord.ui.Button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True, row=1)
-        self.btn_next = discord.ui.Button(label="▶", style=discord.ButtonStyle.primary, row=1)
-        self.btn_skip_forward = discord.ui.Button(label="≫", style=discord.ButtonStyle.secondary, row=1)
+        self.status_select.callback = self.status_callback
+        self.add_item(self.status_select)
+
+        # ─── 2. Sort Dropdown (Row 1) ───
+        sort_options = [
+            discord.SelectOption(label="Default (Recently Updated)", value="default", emoji="🕒", default=True),
+            discord.SelectOption(label="Sort by Genre (A - Z)", value="genre", emoji="🏷️"),
+            discord.SelectOption(label="Sort by Title (A - Z)", value="title", emoji="🔤"),
+            discord.SelectOption(label="Sort by Score (High to Low)", value="score", emoji="⭐"),
+        ]
+        self.sort_select = discord.ui.Select(
+            placeholder="Sort by...",
+            options=sort_options,
+            row=1
+        )
+        self.sort_select.callback = self.sort_callback
+        self.add_item(self.sort_select)
+
+        # ─── 3. Navigation Controls (Row 2) ───
+        self.btn_skip_back = discord.ui.Button(label="≪", style=discord.ButtonStyle.secondary, row=2)
+        self.btn_prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.primary, row=2)
+        self.btn_page = discord.ui.Button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True, row=2)
+        self.btn_next = discord.ui.Button(label="▶", style=discord.ButtonStyle.primary, row=2)
+        self.btn_skip_forward = discord.ui.Button(label="≫", style=discord.ButtonStyle.secondary, row=2)
 
         self.btn_skip_back.callback = self.skip_back
         self.btn_prev.callback = self.prev_page
@@ -65,10 +79,36 @@ class ListPaginator(discord.ui.View):
 
     @property
     def max_pages(self):
-        return max(1, (len(self.data_list) + self.chunk_size - 1) // self.chunk_size)
+        return max(1, (len(self.view_data) + self.chunk_size - 1) // self.chunk_size)
+
+    def apply_filters_and_sorting(self):
+        # 1. Filter by Status
+        if self.active_status == "all":
+            result = list(self.original_data)
+        else:
+            result = [
+                item for item in self.original_data
+                if item.get("list_status", {}).get("status") == self.active_status
+            ]
+
+        # 2. Sort Data
+        if self.active_sort == "genre":
+            # Sorts by primary genre name, unclassified genres fall to bottom
+            def get_primary_genre(item):
+                genres = item.get("node", {}).get("genres", [])
+                return genres[0].get("name", "zzzz") if genres else "zzzz"
+            result.sort(key=get_primary_genre)
+        elif self.active_sort == "title":
+            result.sort(key=lambda item: item.get("node", {}).get("title", "").lower())
+        elif self.active_sort == "score":
+            result.sort(key=lambda item: item.get("list_status", {}).get("score", 0), reverse=True)
+
+        self.view_data = result
+        self.current_page = 0
+        self.update_buttons()
 
     def update_buttons(self):
-        self.btn_page.label = f"{self.current_page + 1} / {self.max_pages}"
+        self.btn_page.label = f"{self.current_page + 1}/{self.max_pages}"
         self.btn_skip_back.disabled = self.current_page == 0
         self.btn_prev.disabled = self.current_page == 0
         self.btn_next.disabled = self.current_page >= self.max_pages - 1
@@ -77,28 +117,40 @@ class ListPaginator(discord.ui.View):
     def generate_embed(self):
         start = self.current_page * self.chunk_size
         end = start + self.chunk_size
-        page_data = self.data_list[start:end]
+        page_data = self.view_data[start:end]
 
         embed = discord.Embed(
-            title=f"MyAnimeList: {self.username}", 
-            description="", 
-            color=0x2b2d31  # Appealing dark gray to match the Discord UI
+            title=f"MyAnimeList: {self.username}",
+            description="",
+            color=0x2b2d31
         )
-        
+
+        status_label = self.active_status.replace("_", " ").title() if self.active_status != "all" else "All"
+        embed.description = f"**Status Filter:** `{status_label}` ｜ **Sort:** `{self.active_sort.title()}`\n\n"
+
         if not page_data:
-            embed.description = "No anime found matching this filter."
-        
-        for idx, item in enumerate(page_data, start=start+1):
-            title = item.get('node', {}).get('title', 'Unknown Title')
-            status_data = item.get('list_status', {})
-            status = status_data.get('status', 'unknown').replace('_', ' ').title()
-            score = status_data.get('score', 0)
-            
-            emoji = "🟢" if status == "Watching" else "🔵" if status == "Completed" else "🟡" if status == "On Hold" else "🔴" if status == "Dropped" else "⚪"
-            
-            embed.description += f"**{idx}.** {title}\n{emoji} {status} *(Score: {score}/10)*\n\n"
-            
-        embed.set_footer(text=f"Total: {len(self.data_list)} Anime • Recluse Database")
+            embed.description += "*No anime found matching the selected filters.*"
+
+        for idx, item in enumerate(page_data, start=start + 1):
+            node = item.get("node", {})
+            title = node.get("title", "Unknown Title")
+            genres = [g.get("name") for g in node.get("genres", []) if g.get("name")]
+            primary_genre = f" `[{genres[0]}]`" if genres else ""
+
+            status_data = item.get("list_status", {})
+            status = status_data.get("status", "unknown").replace("_", " ").title()
+            score = status_data.get("score", 0)
+
+            emoji = (
+                "🟢" if status == "Watching" else
+                "🔵" if status == "Completed" else
+                "🟡" if status == "On Hold" else
+                "🔴" if status == "Dropped" else "⚪"
+            )
+
+            embed.description += f"**{idx}.** {title}{primary_genre}\n{emoji} {status} *(Score: {score}/10)*\n\n"
+
+        embed.set_footer(text=f"Total: {len(self.view_data)} Anime • Page {self.current_page + 1} of {self.max_pages}")
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -107,17 +159,20 @@ class ListPaginator(discord.ui.View):
         await interaction.response.send_message("❌ This isn't your menu!", ephemeral=True)
         return False
 
-    async def filter_callback(self, interaction: discord.Interaction):
-        selected = self.genre_select.values[0]
-        if selected == "All":
-            self.data_list = self.original_data
-        else:
-            self.data_list = [
-                item for item in self.original_data 
-                if any(g.get('name') == selected for g in item.get('node', {}).get('genres', []))
-            ]
-        self.current_page = 0
-        self.update_buttons()
+    async def status_callback(self, interaction: discord.Interaction):
+        self.active_status = self.status_select.values[0]
+        # Update dropdown visual selection state
+        for opt in self.status_select.options:
+            opt.default = (opt.value == self.active_status)
+        self.apply_filters_and_sorting()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    async def sort_callback(self, interaction: discord.Interaction):
+        self.active_sort = self.sort_select.values[0]
+        # Update dropdown visual selection state
+        for opt in self.sort_select.options:
+            opt.default = (opt.value == self.active_sort)
+        self.apply_filters_and_sorting()
         await interaction.response.edit_message(embed=self.generate_embed(), view=self)
 
     async def skip_back(self, interaction: discord.Interaction):
@@ -136,7 +191,7 @@ class ListPaginator(discord.ui.View):
         await interaction.response.edit_message(embed=self.generate_embed(), view=self)
 
     async def skip_forward(self, interaction: discord.Interaction):
-        self.current_page = min(self.max_pages - 1, self.current_page + 10)
+        self.current_page = min(self.max_pages - 1, self.current_page + 5)
         self.update_buttons()
         await interaction.response.edit_message(embed=self.generate_embed(), view=self)
 
@@ -194,10 +249,10 @@ class Anime(commands.Cog):
 
     @commands.hybrid_command(
         name="myanimelist", 
-        description="View your tracked MyAnimeList entries.",
+        description="View, sort, and filter your tracked MyAnimeList entries.",
         usage="/myanimelist"
     )
-    @commands.cooldown(1, 30, commands.BucketType.user)
+    @commands.cooldown(1, 10, commands.BucketType.user)
     async def myanimelist(self, ctx):
         if await self.bot.is_owner(ctx.author): ctx.command.reset_cooldown(ctx)
         await ctx.defer()
@@ -216,7 +271,6 @@ class Anime(commands.Cog):
             return await ctx.send("❌ **Configuration Error:** API key is missing. Check your environment variables.")
 
         url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
-        # ⚠️ CRITICAL: 'genres' has been added to the fields parameter here so the filter can read them
         params = {'limit': 1000, 'fields': 'list_status,genres'}
         headers = {
             "X-MAL-CLIENT-ID": client_id.strip(),
