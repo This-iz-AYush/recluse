@@ -45,6 +45,23 @@ class Anime(commands.Cog):
         return re.sub(r'<[^>]+>', '', raw_html).strip()
 
     @commands.hybrid_command(
+        name="mal_link", 
+        description="Link your public MyAnimeList username to Recluse.",
+        usage="/mal_link <username>"
+    )
+    async def mal_link(self, ctx, username: str):
+        """Stores the user's MAL username in MongoDB for personal tracking data."""
+        if not hasattr(self.bot, 'db'):
+            return await ctx.send("❌ **Database Error:** MongoDB connection is not available.")
+            
+        await self.bot.db.mal_users.update_one(
+            {"discord_id": ctx.author.id},
+            {"$set": {"mal_username": username}},
+            upsert=True
+        )
+        await ctx.send(f"✅ Successfully linked MyAnimeList account: **{username}**")
+
+    @commands.hybrid_command(
         name="anime", 
         description="Queries the MyAnimeList database for anime.",
         usage="/anime <query>",
@@ -89,24 +106,48 @@ class Anime(commands.Cog):
             mal_id = node.get('id')
             title = node.get('title', 'Unknown Title')
             
+            # --- Personal List Fetching (Method 2) ---
+            user_status_val = ""
+            if hasattr(self.bot, 'db'):
+                linked_user = await self.bot.db.mal_users.find_one({"discord_id": ctx.author.id})
+                if linked_user:
+                    username = linked_user.get("mal_username")
+                    user_list_url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
+                    user_params = {'anime_id': mal_id, 'fields': 'list_status'}
+                    
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(user_list_url, params=user_params, headers=headers) as user_res:
+                                if user_res.status == 200:
+                                    user_data = await user_res.json()
+                                    if user_data.get('data'):
+                                        status_node = user_data['data'][0].get('list_status', {})
+                                        personal_status = status_node.get('status', 'unknown').replace('_', ' ').title()
+                                        personal_score = status_node.get('score', 0)
+                                        eps_watched = status_node.get('num_episodes_watched', 0)
+                                        
+                                        status_emoji = "🟢" if personal_status == "Watching" else "🔵" if personal_status == "Completed" else "🟡" if personal_status == "On Hold" else "🔴" if personal_status == "Dropped" else "⚪"
+                                        
+                                        user_status_val = f"{status_emoji} **Status:** {personal_status} ｜ ⭐ **Score:** {personal_score}/10 ｜ 🎬 **Watched:** {eps_watched} eps"
+                                    else:
+                                        user_status_val = "*This anime is not on your MAL list.*"
+                    except Exception:
+                        pass # Silently fail so the embed still sends
+
             # --- Data Extraction & Formatting ---
             def code_fmt(val):
-                """Helper to wrap values in backticks or return empty backticks if missing."""
                 return f"`{val}`" if val and str(val).strip() else "``"
 
-            # Titles & Synonyms
             alt_titles = node.get('alternative_titles', {})
             en_title = alt_titles.get('en', '')
             ja_title = alt_titles.get('ja', '')
             synonyms = ", ".join(alt_titles.get('synonyms', []))
             
-            # Dates & Broadcast
             season_data = node.get('start_season', {})
             premiered = f"{season_data.get('season', '').title()} {season_data.get('year', '')}".strip()
             broadcast = node.get('broadcast', {}).get('day_of_the_week', '').title()
             aired = f"{node.get('start_date', '')}"
             
-            # Stats & Details
             genres = ", ".join([g['name'] for g in node.get('genres', [])])
             media_type = node.get('media_type', 'Unknown').upper() if node.get('media_type') in ['tv', 'ova', 'ona'] else node.get('media_type', '').title()
             episodes = node.get('num_episodes', '')
@@ -115,7 +156,6 @@ class Anime(commands.Cog):
             ranked = f"#{node.get('rank')}" if node.get('rank') else ""
             popularity = f"#{node.get('popularity')}" if node.get('popularity') else ""
             
-            # Duration calculation
             dur_secs = node.get('average_episode_duration', 0)
             dur_hours, dur_mins = divmod(dur_secs // 60, 60)
             duration = f"{dur_hours} hr. {dur_mins} min." if dur_hours > 0 else f"{dur_mins} min." if dur_mins > 0 else ""
@@ -127,69 +167,55 @@ class Anime(commands.Cog):
             status = node.get('status', '').replace('_', ' ').title()
             link = f"https://myanimelist.net/anime/{mal_id}/{title.replace(' ', '_')}" if mal_id else ""
 
-            # Synopsis processing
             synopsis = self.clean_html(node.get('synopsis'))
-            # Discord limits descriptions to 4096 characters.
-            synopsis = synopsis[:4093] + '...' if len(synopsis) > 4096 else synopsis
+            synopsis = synopsis[:4000] + '...' if len(synopsis) > 4000 else synopsis
 
             # --- Embed Construction ---
-            embed = discord.Embed(
-                title=title, 
-                url=link, 
-                description=synopsis, 
-                color=0x3498db # Blue strip matching your screenshot
-            )
+            embed = discord.Embed(title=title, url=link, description=synopsis, color=0x3498db)
             
-            # Grid Layout (3 columns)
-            # Row 1
             embed.add_field(name="Premiered", value=code_fmt(premiered), inline=True)
             embed.add_field(name="Broadcast", value=code_fmt(broadcast), inline=True)
             embed.add_field(name="Genres", value=code_fmt(genres), inline=True)
             
-            # Row 2
             embed.add_field(name="English Title", value=code_fmt(en_title), inline=True)
             embed.add_field(name="Japanese Title", value=code_fmt(ja_title), inline=True)
             embed.add_field(name="Type", value=code_fmt(media_type), inline=True)
             
-            # Row 3
             embed.add_field(name="Episodes", value=code_fmt(episodes), inline=True)
             embed.add_field(name="Rating", value=code_fmt(rating), inline=True)
             embed.add_field(name="Aired", value=code_fmt(aired), inline=True)
             
-            # Row 4
             embed.add_field(name="Score", value=code_fmt(score), inline=True)
             embed.add_field(name="Favorite", value=code_fmt(""), inline=True) 
             embed.add_field(name="Ranked", value=code_fmt(ranked), inline=True)
             
-            # Row 5
             embed.add_field(name="Duration", value=code_fmt(duration), inline=True)
             embed.add_field(name="Studios", value=code_fmt(studios), inline=True)
             embed.add_field(name="Popularity", value=code_fmt(popularity), inline=True)
             
-            # Row 6
             embed.add_field(name="Members", value=code_fmt(members), inline=True)
             embed.add_field(name="Score Stats", value=code_fmt(score_stats), inline=True)
             embed.add_field(name="Source", value=code_fmt(source), inline=True)
             
-            # Row 7
             embed.add_field(name="Synonyms", value=code_fmt(synonyms), inline=True)
             embed.add_field(name="Status", value=code_fmt(status), inline=True)
             embed.add_field(name="Identifier", value=code_fmt(mal_id), inline=True)
 
-            # Image Handling
+            # Append the personal tracking data as a full-width field right above the image
+            if user_status_val:
+                embed.add_field(name=f"Your MAL Status ({linked_user.get('mal_username')})", value=user_status_val, inline=False)
+
             pictures = node.get('main_picture', {})
             if pictures.get('medium'):
-                # Sets the small image in the top right corner
                 embed.set_thumbnail(url=pictures['medium'])
             
             if pictures.get('large'):
-                # Sets the large poster image at the bottom
                 embed.set_image(url=pictures['large'])
             elif pictures.get('medium'):
                 embed.set_image(url=pictures['medium'])
                 
             embed.set_footer(
-                text=f"Requested by {ctx.author.display_name} • Powered by MyAnimeList API", 
+                text=f"Requested by {ctx.author.display_name} • Recluse by AYush • Powered by MAL API", 
                 icon_url=ctx.author.display_avatar.url
             )
 
@@ -200,7 +226,7 @@ class Anime(commands.Cog):
             import traceback
             print(traceback.format_exc())
             await ctx.send(f"❌ **Crash Report:** `{type(e).__name__}: {str(e)}`")
-            
+
     @commands.hybrid_command(
         name="manga", 
         description="Queries the MyAnimeList database for textual publication data.",
@@ -224,10 +250,8 @@ class Anime(commands.Cog):
         if not client_id:
             return await ctx.send("❌ **Configuration Error:** MAL_CLIENT_ID is missing from the .env file.")
 
-        client_id = client_id.strip()
-
         headers = {
-            "X-MAL-CLIENT-ID": client_id,
+            "X-MAL-CLIENT-ID": client_id.strip(),
             "User-Agent": "Recluse Discord Bot"
         }
 
@@ -248,8 +272,6 @@ class Anime(commands.Cog):
             mal_id = node.get('id')
             
             title = node.get('title', 'Unknown Title')
-            
-            # 🛠️ FIXED: Safe dictionary fallback for titles
             alt_titles = node.get('alternative_titles') or {}
             japanese_title = alt_titles.get('ja', 'N/A')
             site_url = f"https://myanimelist.net/manga/{mal_id}" if mal_id else None
@@ -271,12 +293,10 @@ class Anime(commands.Cog):
 
             dates_block = f"**Start:** {node.get('start_date', 'Unknown')}\n**End:** {node.get('end_date', 'Unknown')}"
             
-            # 🛠️ FIXED: Safe list fallback for genres
             genres_data = node.get('genres') or []
             genres_list = [g.get('name', 'Unknown') for g in genres_data]
             genres_block = ", ".join(genres_list) if genres_list else "None"
             
-            # 🛠️ FIXED: Safe parsing for authors (handles missing names gracefully)
             authors_data = node.get('authors') or []
             authors_list = []
             for a in authors_data:
@@ -297,7 +317,6 @@ class Anime(commands.Cog):
             
             embed.add_field(name="Authors", value=authors_block, inline=False)
 
-            # 🛠️ FIXED: Safe dictionary fallback for pictures
             pictures = node.get('main_picture') or {}
             if pictures.get('medium'):
                 embed.set_thumbnail(url=pictures['medium'])
@@ -307,7 +326,7 @@ class Anime(commands.Cog):
                 embed.set_image(url=pictures['medium'])
                 
             embed.set_footer(
-                text=f"Requested by {ctx.author.display_name} • Powered by MyAnimeList API", 
+                text=f"Requested by {ctx.author.display_name} • Recluse by AYush • Powered by MAL API", 
                 icon_url=ctx.author.display_avatar.url
             )
 
@@ -315,7 +334,6 @@ class Anime(commands.Cog):
             if ctx.guild: await self.log_telemetry(ctx.guild.id, "manga")
             
         except Exception as e:
-            # 🛠️ FIXED: Exposing real crash errors to Discord
             import traceback
             print(traceback.format_exc())
             await ctx.send(f"❌ **Crash Report:** `{type(e).__name__}: {str(e)}`")
