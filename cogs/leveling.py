@@ -2,7 +2,7 @@
 leveling.py  —  Recluse Bot  v2.0
 ═══════════════════════════════════════════════════════════════════════
 Dual-Track XP System (Text & Voice) with anti-AFK, quality filters, 
-and highly customized Pillow rank cards.
+and highly customized premium Pillow rank cards.
 ═══════════════════════════════════════════════════════════════════════
 """
 
@@ -15,7 +15,7 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 XP_PER_MSG_DEFAULT = 15
 COOLDOWN_DEFAULT   = 60
@@ -44,12 +44,22 @@ async def create_rank_card(
     v_lvl: int, v_cur: int, v_req: int, 
     rank_pos: int
 ) -> io.BytesIO:
-    width, height = 800, 320
-    bg_color = (25, 25, 30) 
+    # Expanded canvas for better breathing room
+    width, height = 800, 350
+    # Discord dark theme background
+    bg_color = (30, 31, 34) 
     card = Image.new("RGBA", (width, height), bg_color)
-    draw = ImageDraw.Draw(card)
-
+    
     accent_color = member.color.to_rgb() if member.color.value else (88, 101, 242)
+
+    # --- PREMIUM UPGRADE: Atmospheric Avatar Glow ---
+    glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow_layer)
+    glow_draw.ellipse((-20, 20, 280, 320), fill=(accent_color[0], accent_color[1], accent_color[2], 50))
+    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(45))
+    card.alpha_composite(glow_layer)
+
+    draw = ImageDraw.Draw(card)
 
     # Fetch Avatar
     async with aiohttp.ClientSession() as session:
@@ -61,63 +71,76 @@ async def create_rank_card(
     ImageDraw.Draw(mask).ellipse((0, 0, 180, 180), fill=255)
     avatar.putalpha(mask)
     
-    draw.ellipse((36, 66, 224, 254), outline=accent_color, width=4)
-    card.paste(avatar, (40, 70), avatar)
+    # Clean, slightly thinner ring
+    draw.ellipse((37, 82, 223, 268), outline=accent_color, width=4)
+    card.paste(avatar, (40, 85), avatar)
 
     # Fonts
     try:
         font_xl    = ImageFont.truetype("font.ttf", 46)
         font_large = ImageFont.truetype("font.ttf", 36)
         font_med   = ImageFont.truetype("font.ttf", 26)
-        font_small = ImageFont.truetype("font.ttf", 22)
+        font_small = ImageFont.truetype("font.ttf", 20)
     except IOError:
         font_xl = font_large = font_med = font_small = ImageFont.load_default()
 
     # Top Text (Server, Username, Rank)
-    draw.text((260, 45), guild_name.upper(), font=font_small, fill=(150, 150, 150))
-    draw.text((260, 75), member.display_name, font=font_xl, fill=(255, 255, 255))
+    draw.text((270, 50), guild_name.upper(), font=font_small, fill=(150, 154, 160))
+    draw.text((270, 75), member.display_name, font=font_xl, fill=(255, 255, 255))
     
     rank_text = f"RANK #{rank_pos}"
     rank_bbox = draw.textbbox((0, 0), rank_text, font=font_large)
-    draw.text((width - 50 - (rank_bbox[2] - rank_bbox[0]), 85), rank_text, font=font_large, fill=(200, 200, 200))
+    draw.text((width - 50 - (rank_bbox[2] - rank_bbox[0]), 85), rank_text, font=font_large, fill=(180, 184, 190))
 
     # --- TEXT LEVEL TRACK ---
-    t_lbl_y, t_bar_y = 155, 185
+    t_lbl_y, t_bar_y = 165, 205  # Increased spacing
     
-    # Text Icon (Chat Bubble)
-    draw.rounded_rectangle([250, t_bar_y, 280, t_bar_y + 16], radius=5, fill=accent_color)
-    draw.polygon([(255, t_bar_y + 15), (265, t_bar_y + 15), (255, t_bar_y + 22)], fill=accent_color)
+    # Paper Plane Icon
+    plane_pts = [(250, t_bar_y), (275, t_bar_y + 7), (250, t_bar_y + 14), (258, t_bar_y + 7)]
+    draw.polygon(plane_pts, fill=(220, 222, 225))
     
-    draw.text((300, t_lbl_y), f"TEXT LEVEL {t_lvl}", font=font_med, fill=accent_color)
+    draw.text((300, t_lbl_y), f"Message Level: {t_lvl}", font=font_med, fill=(240, 242, 245))
     
     t_xp_text = f"{format_xp(t_cur)} / {format_xp(t_req)} XP"
     t_xp_bbox = draw.textbbox((0, 0), t_xp_text, font=font_small)
-    draw.text((width - 50 - (t_xp_bbox[2] - t_xp_bbox[0]), t_lbl_y + 3), t_xp_text, font=font_small, fill=(180, 180, 180))
+    draw.text((width - 50 - (t_xp_bbox[2] - t_xp_bbox[0]), t_lbl_y + 5), t_xp_text, font=font_small, fill=(150, 154, 160))
 
-    draw.rounded_rectangle([300, t_bar_y, 750, t_bar_y + 16], radius=8, fill=(40, 40, 45))
+    # Bar Background
+    draw.rounded_rectangle([300, t_bar_y, 750, t_bar_y + 14], radius=7, fill=(43, 45, 49))
     t_progress = max(0, min(1, t_cur / t_req))
-    if int(450 * t_progress) > 15: 
-        draw.rounded_rectangle([300, t_bar_y, 300 + int(450 * t_progress), t_bar_y + 16], radius=8, fill=accent_color)
+    t_fill_w = int(450 * t_progress)
+    
+    if t_fill_w > 12: 
+        # Bar Fill
+        draw.rounded_rectangle([300, t_bar_y, 300 + t_fill_w, t_bar_y + 14], radius=7, fill=accent_color)
+        # Premium Upgrade: Translucent rounded tip highlight
+        draw.ellipse([300 + t_fill_w - 14, t_bar_y, 300 + t_fill_w, t_bar_y + 14], fill=(255, 255, 255, 60))
 
     # --- VOICE LEVEL TRACK ---
-    v_lbl_y, v_bar_y = 230, 260
+    v_lbl_y, v_bar_y = 255, 295  # Increased spacing
     
-    # Voice Icon (Microphone)
-    draw.rounded_rectangle([260, v_bar_y - 2, 270, v_bar_y + 10], radius=4, fill=accent_color)
-    draw.arc([254, v_bar_y, 276, v_bar_y + 14], start=0, end=180, fill=accent_color, width=2)
-    draw.line([(265, v_bar_y + 14), (265, v_bar_y + 21)], fill=accent_color, width=2)
-    draw.line([(258, v_bar_y + 21), (272, v_bar_y + 21)], fill=accent_color, width=2)
+    # Microphone Icon 
+    draw.rounded_rectangle([258, v_bar_y - 4, 268, v_bar_y + 6], radius=4, fill=(220, 222, 225))
+    draw.arc([254, v_bar_y, 272, v_bar_y + 12], start=0, end=180, fill=(220, 222, 225), width=2)
+    draw.line([(263, v_bar_y + 12), (263, v_bar_y + 19)], fill=(220, 222, 225), width=2)
+    draw.line([(257, v_bar_y + 19), (269, v_bar_y + 19)], fill=(220, 222, 225), width=2)
 
-    draw.text((300, v_lbl_y), f"VOICE LEVEL {v_lvl}", font=font_med, fill=accent_color)
+    draw.text((300, v_lbl_y), f"Voice Level: {v_lvl}", font=font_med, fill=(240, 242, 245))
     
     v_xp_text = f"{format_xp(v_cur)} / {format_xp(v_req)} XP"
     v_xp_bbox = draw.textbbox((0, 0), v_xp_text, font=font_small)
-    draw.text((width - 50 - (v_xp_bbox[2] - v_xp_bbox[0]), v_lbl_y + 3), v_xp_text, font=font_small, fill=(180, 180, 180))
+    draw.text((width - 50 - (v_xp_bbox[2] - v_xp_bbox[0]), v_lbl_y + 5), v_xp_text, font=font_small, fill=(150, 154, 160))
 
-    draw.rounded_rectangle([300, v_bar_y, 750, v_bar_y + 16], radius=8, fill=(40, 40, 45))
+    # Bar Background
+    draw.rounded_rectangle([300, v_bar_y, 750, v_bar_y + 14], radius=7, fill=(43, 45, 49))
     v_progress = max(0, min(1, v_cur / v_req))
-    if int(450 * v_progress) > 15: 
-        draw.rounded_rectangle([300, v_bar_y, 300 + int(450 * v_progress), v_bar_y + 16], radius=8, fill=accent_color)
+    v_fill_w = int(450 * v_progress)
+    
+    if v_fill_w > 12: 
+        # Bar Fill
+        draw.rounded_rectangle([300, v_bar_y, 300 + v_fill_w, v_bar_y + 14], radius=7, fill=accent_color)
+        # Premium Upgrade: Translucent rounded tip highlight
+        draw.ellipse([300 + v_fill_w - 14, v_bar_y, 300 + v_fill_w, v_bar_y + 14], fill=(255, 255, 255, 60))
 
     buffer = io.BytesIO()
     card.save(buffer, format="PNG")
