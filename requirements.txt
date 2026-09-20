@@ -30,3 +30,6 @@ jikanpy-v4==1.0.2
  
 # Environment
 python-dotenv>=1.0.0
+
+# text
+Pillow
