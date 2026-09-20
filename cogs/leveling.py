@@ -1,44 +1,32 @@
 """
 leveling.py  —  Recluse Bot  v2.0
 ═══════════════════════════════════════════════════════════════════════
-MEE6/Carl-bot style XP & Ranking system — the #1 server-growth driver.
-
-Features
-  • Per-guild XP tracking with configurable rewards & cooldowns
-  • Smooth level-up formula  (xp_needed = 5 × lvl² + 50 × lvl + 100)
-  • Level-role rewards (configured via /levelrole in admin.py)
-  • /rank  — personal rank card (text-based, no Pillow dependency)
-  • /leaderboard  — paginated top-10 embed
-  • /givexp, /setlevel, /resetxp  — admin overrides
-  • XP multiplier per server
-  • Bonus XP for voice activity (optional, if voice state enabled)
+Custom XP & Ranking system with anti-AFK, quality filters, and image cards.
 ═══════════════════════════════════════════════════════════════════════
 """
 
 import datetime
 import random
 import time
+import io
+import aiohttp
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from PIL import Image, ImageDraw, ImageFont
 
-XP_PER_MSG_DEFAULT = 15   # base; actual = random(15, 25) × multiplier
-COOLDOWN_DEFAULT   = 60   # seconds between XP grants
+XP_PER_MSG_DEFAULT = 15
+COOLDOWN_DEFAULT   = 60
 
 
 def _xp_for_level(level: int) -> int:
-    """XP required to reach `level` from level 0."""
     return 5 * (level ** 2) + 50 * level + 100
 
-
 def _total_xp_for_level(level: int) -> int:
-    """Cumulative XP needed to reach this level."""
     return sum(_xp_for_level(i) for i in range(level))
 
-
 def _level_from_xp(total_xp: int) -> tuple[int, int, int]:
-    """Return (level, current_xp_in_level, xp_needed_for_next)."""
     level = 0
     while total_xp >= _xp_for_level(level):
         total_xp -= _xp_for_level(level)
@@ -46,10 +34,60 @@ def _level_from_xp(total_xp: int) -> tuple[int, int, int]:
     return level, total_xp, _xp_for_level(level)
 
 
-def _progress_bar(current: int, total: int, length: int = 20) -> str:
-    filled = int(length * current / max(total, 1))
-    bar    = "█" * filled + "░" * (length - filled)
-    return f"[{bar}]"
+async def create_rank_card(member: discord.Member, level: int, cur_xp: int, needed_xp: int, rank_pos: int) -> io.BytesIO:
+    width, height = 800, 250
+    bg_color = (25, 25, 30) 
+    card = Image.new("RGBA", (width, height), bg_color)
+    draw = ImageDraw.Draw(card)
+
+    accent_color = member.color.to_rgb() if member.color.value else (88, 101, 242)
+
+    # Fetch Avatar
+    async with aiohttp.ClientSession() as session:
+        async with session.get(member.display_avatar.with_format("png").with_size(256).url) as resp:
+            avatar_bytes = await resp.read()
+            
+    avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((160, 160))
+    mask = Image.new("L", (160, 160), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, 160, 160), fill=255)
+    avatar.putalpha(mask)
+    
+    draw.ellipse((45, 45, 215, 215), outline=accent_color, width=4)
+    card.paste(avatar, (50, 50), avatar)
+
+    # Fonts - assumes font.ttf is in the same directory as bot.py
+    try:
+        font_large = ImageFont.truetype("font.ttf", 42)
+        font_medium = ImageFont.truetype("font.ttf", 32)
+        font_small = ImageFont.truetype("font.ttf", 24)
+    except IOError:
+        font_large = font_medium = font_small = ImageFont.load_default()
+
+    # Text
+    draw.text((250, 60), member.display_name, font=font_large, fill=(255, 255, 255))
+    draw.text((250, 115), f"RANK #{rank_pos}", font=font_medium, fill=(200, 200, 200))
+    draw.text((450, 115), f"LEVEL {level}", font=font_medium, fill=accent_color)
+    
+    xp_text = f"{cur_xp:,} / {needed_xp:,} XP"
+    xp_bbox = draw.textbbox((0, 0), xp_text, font=font_small)
+    xp_width = xp_bbox[2] - xp_bbox[0]
+    draw.text((width - 50 - xp_width, 140), xp_text, font=font_small, fill=(180, 180, 180))
+
+    # Progress Bar
+    bar_x, bar_y = 250, 175
+    bar_width, bar_height = 500, 25
+    
+    draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], radius=12, fill=(40, 40, 45))
+    
+    progress = max(0, min(1, cur_xp / needed_xp))
+    fill_width = int(bar_width * progress)
+    if fill_width > 15: 
+        draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], radius=12, fill=accent_color)
+
+    buffer = io.BytesIO()
+    card.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 
 class LeaderboardView(discord.ui.View):
@@ -86,20 +124,14 @@ class LeaderboardView(discord.ui.View):
 
 
 class Leveling(commands.Cog):
-    """XP / Leveling system for Recluse."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # cooldown tracking  { (guild_id, user_id): last_xp_unix }
         self._xp_cd: dict[tuple[int, int], float] = {}
-        # voice join time  { (guild_id, user_id): join_unix }
         self._voice_joined: dict[tuple[int, int], float] = {}
         self.voice_xp_ticker.start()
 
     def cog_unload(self):
         self.voice_xp_ticker.cancel()
-
-    # ─── helpers ─────────────────────────────────────────────────────────────
 
     async def _get_cfg(self, guild_id: int) -> dict:
         if not hasattr(self.bot, "db"):
@@ -109,17 +141,9 @@ class Leveling(commands.Cog):
 
     async def _get_user(self, guild_id: int, user_id: int) -> dict:
         doc = await self.bot.db.levels.find_one({"guild_id": guild_id, "user_id": user_id})
-        return doc or {"guild_id": guild_id, "user_id": user_id, "xp": 0, "total_xp": 0}
-
-    async def _save_user(self, guild_id: int, user_id: int, xp: int):
-        await self.bot.db.levels.update_one(
-            {"guild_id": guild_id, "user_id": user_id},
-            {"$set": {"xp": xp, "last_updated": datetime.datetime.utcnow().timestamp()}},
-            upsert=True,
-        )
+        return doc or {"guild_id": guild_id, "user_id": user_id, "xp": 0}
 
     async def _grant_xp(self, guild: discord.Guild, member: discord.Member, amount: int):
-        """Core XP grant — checks level-ups and awards level-roles."""
         if not hasattr(self.bot, "db"):
             return
         doc = await self._get_user(guild.id, member.id)
@@ -142,30 +166,19 @@ class Leveling(commands.Cog):
 
     async def _on_level_up(self, guild: discord.Guild, member: discord.Member, level: int):
         cfg = await self._get_cfg(guild.id)
-        # Level-up notification
         ch_id = cfg.get("levelup_channel")
-        msg   = cfg.get(
-            "levelup_message",
-            "🎉 {user} just levelled up to **Level {level}**!",
-        )
+        msg   = cfg.get("levelup_message", "🎉 {user} just levelled up to **Level {level}**!")
         msg = msg.replace("{user}", member.mention).replace("{level}", str(level))
 
-        # Find a channel
-        channel = None
-        if ch_id:
-            channel = guild.get_channel(ch_id)
-
+        channel = guild.get_channel(ch_id) if ch_id else None
         if channel:
             try:
                 await channel.send(msg)
             except discord.Forbidden:
                 pass
 
-        # Level-role rewards
         if hasattr(self.bot, "db"):
-            role_doc = await self.bot.db.level_roles.find_one(
-                {"guild_id": guild.id, "level": level}
-            )
+            role_doc = await self.bot.db.level_roles.find_one({"guild_id": guild.id, "level": level})
             if role_doc:
                 role = guild.get_role(role_doc["role_id"])
                 if role:
@@ -173,8 +186,6 @@ class Leveling(commands.Cog):
                         await member.add_roles(role, reason=f"Level {level} reward")
                     except discord.Forbidden:
                         pass
-
-    # ─── XP on message ───────────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -185,6 +196,10 @@ class Leveling(commands.Cog):
         if not cfg.get("leveling_enabled", True):
             return
 
+        clean_text = message.content.strip()
+        if len(clean_text) < 5 and not message.attachments:
+            return
+
         key      = (message.guild.id, message.author.id)
         now      = time.monotonic()
         cooldown = cfg.get("xp_cooldown", COOLDOWN_DEFAULT)
@@ -193,17 +208,18 @@ class Leveling(commands.Cog):
             return
         self._xp_cd[key] = now
 
-        base       = random.randint(15, 25)
+        base = random.randint(15, 25)
+        if message.attachments:
+            base += 10 
+        elif len(clean_text) > 80:
+            base += 5   
+
         multiplier = float(cfg.get("xp_multiplier", 1.0))
         amount     = max(1, int(base * multiplier))
         await self._grant_xp(message.guild, message.author, amount)
 
-    # ─── Voice XP (every 5 min) ───────────────────────────────────────────────
-
     @commands.Cog.listener()
-    async def on_voice_state_update(
-        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
-    ):
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         key = (member.guild.id, member.id)
         if after.channel and not before.channel:
             self._voice_joined[key] = time.time()
@@ -217,33 +233,48 @@ class Leveling(commands.Cog):
             elapsed = now - join_ts
             if elapsed < 300:
                 continue
+            
             guild = self.bot.get_guild(gid)
             if not guild:
                 continue
             member = guild.get_member(uid)
             if not member or member.bot:
                 continue
+                
+            voice_state = member.voice
+            if not voice_state or not voice_state.channel:
+                self._voice_joined.pop((gid, uid), None)
+                continue
+
+            humans_in_vc = [m for m in voice_state.channel.members if not m.bot]
+            if len(humans_in_vc) < 2:
+                continue
+
+            if voice_state.self_deaf or voice_state.deaf:
+                continue
+
             cfg = await self._get_cfg(gid)
             if not cfg.get("leveling_enabled", True):
                 continue
-            mult   = float(cfg.get("xp_multiplier", 1.0))
-            amount = max(1, int(10 * mult))
+
+            mult = float(cfg.get("xp_multiplier", 1.0))
+            if voice_state.self_stream or voice_state.self_video:
+                mult *= 1.25
+                
+            amount = max(1, int(15 * mult))
             await self._grant_xp(guild, member, amount)
-            self._voice_joined[(gid, uid)] = now  # reset timer
+            self._voice_joined[(gid, uid)] = now
 
     @voice_xp_ticker.before_loop
     async def _before_voice(self):
         await self.bot.wait_until_ready()
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /rank  — personal rank card
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="rank", description="View your XP rank card.")
     @app_commands.describe(member="Member to look up (default: yourself).")
     async def rank(self, interaction: discord.Interaction, member: discord.Member | None = None):
         if not interaction.guild:
             return await interaction.response.send_message("Server-only.", ephemeral=True)
+            
         target = member or interaction.user
         if not hasattr(self.bot, "db"):
             return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
@@ -251,11 +282,9 @@ class Leveling(commands.Cog):
         await interaction.response.defer()
 
         doc = await self._get_user(interaction.guild.id, target.id)
-        xp  = doc.get("xp", 0)
+        xp = doc.get("xp", 0)
         lvl, cur_xp, needed = _level_from_xp(xp)
-        bar = _progress_bar(cur_xp, needed)
 
-        # Server rank
         cursor = self.bot.db.levels.find({"guild_id": interaction.guild.id}).sort("xp", -1)
         rank_pos = 1
         async for entry in cursor:
@@ -263,23 +292,10 @@ class Leveling(commands.Cog):
                 break
             rank_pos += 1
 
-        embed = discord.Embed(color=target.color if target.color.value else discord.Color(0x5865F2))
-        embed.set_author(name=f"{target.display_name}'s Rank", icon_url=target.display_avatar.url)
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="🏅 Server Rank", value=f"**#{rank_pos}**", inline=True)
-        embed.add_field(name="⬆️ Level",       value=f"**{lvl}**",      inline=True)
-        embed.add_field(name="✨ Total XP",    value=f"`{xp:,}`",        inline=True)
-        embed.add_field(
-            name=f"Progress  {cur_xp:,} / {needed:,} XP",
-            value=f"`{bar}` {int(cur_xp / needed * 100)}%",
-            inline=False,
-        )
-        embed.set_footer(text=interaction.guild.name)
-        await interaction.followup.send(embed=embed)
+        image_buffer = await create_rank_card(target, lvl, cur_xp, needed, rank_pos)
+        file = discord.File(fp=image_buffer, filename="rank.png")
+        await interaction.followup.send(file=file)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /leaderboard
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="leaderboard", description="View the XP leaderboard.")
     @app_commands.describe(page="Page number to jump to.")
@@ -331,10 +347,6 @@ class Leveling(commands.Cog):
         view._update()
         await interaction.followup.send(embed=pages[start], view=view)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Admin overrides
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="givexp", description="[Admin] Give XP to a member.")
     @app_commands.describe(member="Target member.", amount="XP to give.")
     @app_commands.default_permissions(manage_guild=True)
@@ -378,7 +390,6 @@ class Leveling(commands.Cog):
         await interaction.response.send_message(
             f"✅ Reset XP for {member.mention}.", ephemeral=True
         )
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Leveling(bot))
