@@ -695,7 +695,7 @@ class Core(commands.Cog):
         self.start_time   = time.time()
         self.STATUS_MESSAGES = [
             "active in {servers} servers",
-            "/help | Recluse v2.0",
+            "/help | Recluse v2.1",
             "watching {members} members",
             "Type @Recluse to chat!",
         ]
