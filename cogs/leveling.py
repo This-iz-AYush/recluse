@@ -44,19 +44,17 @@ async def create_rank_card(
     v_lvl: int, v_cur: int, v_req: int, 
     rank_pos: int
 ) -> io.BytesIO:
-    # Expanded canvas for better breathing room
     width, height = 800, 350
-    # Discord dark theme background
     bg_color = (30, 31, 34) 
     card = Image.new("RGBA", (width, height), bg_color)
     
     accent_color = member.color.to_rgb() if member.color.value else (88, 101, 242)
 
-    # --- PREMIUM UPGRADE: Atmospheric Avatar Glow ---
+    # Ambient Avatar Glow
     glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow_layer)
-    glow_draw.ellipse((-20, 20, 280, 320), fill=(accent_color[0], accent_color[1], accent_color[2], 50))
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(45))
+    glow_draw.ellipse((-20, 20, 280, 320), fill=(accent_color[0], accent_color[1], accent_color[2], 40))
+    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(50))
     card.alpha_composite(glow_layer)
 
     draw = ImageDraw.Draw(card)
@@ -71,20 +69,19 @@ async def create_rank_card(
     ImageDraw.Draw(mask).ellipse((0, 0, 180, 180), fill=255)
     avatar.putalpha(mask)
     
-    # Clean, slightly thinner ring
     draw.ellipse((37, 82, 223, 268), outline=accent_color, width=4)
     card.paste(avatar, (40, 85), avatar)
 
-    # Fonts
+    # Typography
     try:
-        font_xl    = ImageFont.truetype("font.ttf", 46)
+        font_xl    = ImageFont.truetype("font.ttf", 44)
         font_large = ImageFont.truetype("font.ttf", 36)
-        font_med   = ImageFont.truetype("font.ttf", 26)
-        font_small = ImageFont.truetype("font.ttf", 20)
+        font_med   = ImageFont.truetype("font.ttf", 22)
+        font_small = ImageFont.truetype("font.ttf", 18)
     except IOError:
         font_xl = font_large = font_med = font_small = ImageFont.load_default()
 
-    # Top Text (Server, Username, Rank)
+    # Top Header
     draw.text((270, 50), guild_name.upper(), font=font_small, fill=(150, 154, 160))
     draw.text((270, 75), member.display_name, font=font_xl, fill=(255, 255, 255))
     
@@ -92,55 +89,64 @@ async def create_rank_card(
     rank_bbox = draw.textbbox((0, 0), rank_text, font=font_large)
     draw.text((width - 50 - (rank_bbox[2] - rank_bbox[0]), 85), rank_text, font=font_large, fill=(180, 184, 190))
 
-    # --- TEXT LEVEL TRACK ---
-    t_lbl_y, t_bar_y = 165, 205  # Increased spacing
+    # Bar Configuration
+    bar_x = 300
+    bar_w = 450
+    bar_h = 24
+    icon_x = 265
+    icon_c = (180, 184, 190)
+
+    # ─────────────────────────────────────────────────────────
+    # MESSAGE LEVEL TRACK
+    # ─────────────────────────────────────────────────────────
+    t_bar_y = 180
+    t_center = t_bar_y + (bar_h // 2)
     
-    # Paper Plane Icon
-    plane_pts = [(250, t_bar_y), (275, t_bar_y + 7), (250, t_bar_y + 14), (258, t_bar_y + 7)]
-    draw.polygon(plane_pts, fill=(220, 222, 225))
+    # Paper Plane Icon (Anchored to exact bar center)
+    plane_pts = [
+        (icon_x - 12, t_center - 2),  # Left tip
+        (icon_x + 12, t_center - 8),  # Top right tip
+        (icon_x + 6,  t_center + 10), # Bottom right tip
+        (icon_x - 2,  t_center + 2)   # Inner bottom
+    ]
+    draw.polygon(plane_pts, fill=icon_c)
     
-    draw.text((300, t_lbl_y), f"Message Level: {t_lvl}", font=font_med, fill=(240, 242, 245))
-    
+    # Text Labels
+    draw.text((bar_x, t_bar_y - 30), f"Message Level: {t_lvl}", font=font_med, fill=(240, 242, 245))
     t_xp_text = f"{format_xp(t_cur)} / {format_xp(t_req)} XP"
     t_xp_bbox = draw.textbbox((0, 0), t_xp_text, font=font_small)
-    draw.text((width - 50 - (t_xp_bbox[2] - t_xp_bbox[0]), t_lbl_y + 5), t_xp_text, font=font_small, fill=(150, 154, 160))
+    draw.text((bar_x + bar_w - (t_xp_bbox[2] - t_xp_bbox[0]), t_bar_y - 28), t_xp_text, font=font_small, fill=(150, 154, 160))
 
-    # Bar Background
-    draw.rounded_rectangle([300, t_bar_y, 750, t_bar_y + 14], radius=7, fill=(43, 45, 49))
-    t_progress = max(0, min(1, t_cur / t_req))
-    t_fill_w = int(450 * t_progress)
-    
-    if t_fill_w > 12: 
-        # Bar Fill
-        draw.rounded_rectangle([300, t_bar_y, 300 + t_fill_w, t_bar_y + 14], radius=7, fill=accent_color)
-        # Premium Upgrade: Translucent rounded tip highlight
-        draw.ellipse([300 + t_fill_w - 14, t_bar_y, 300 + t_fill_w, t_bar_y + 14], fill=(255, 255, 255, 60))
+    # Progress Bar
+    draw.rounded_rectangle([bar_x, t_bar_y, bar_x + bar_w, t_bar_y + bar_h], radius=bar_h//2, fill=(43, 45, 49))
+    t_prog = max(0, min(1, t_cur / max(1, t_req)))
+    t_fill_w = max(bar_h, int(bar_w * t_prog))  # Minimum width ensures perfect circle at 0%
+    draw.rounded_rectangle([bar_x, t_bar_y, bar_x + t_fill_w, t_bar_y + bar_h], radius=bar_h//2, fill=accent_color)
 
-    # --- VOICE LEVEL TRACK ---
-    v_lbl_y, v_bar_y = 255, 295  # Increased spacing
-    
-    # Microphone Icon 
-    draw.rounded_rectangle([258, v_bar_y - 4, 268, v_bar_y + 6], radius=4, fill=(220, 222, 225))
-    draw.arc([254, v_bar_y, 272, v_bar_y + 12], start=0, end=180, fill=(220, 222, 225), width=2)
-    draw.line([(263, v_bar_y + 12), (263, v_bar_y + 19)], fill=(220, 222, 225), width=2)
-    draw.line([(257, v_bar_y + 19), (269, v_bar_y + 19)], fill=(220, 222, 225), width=2)
 
-    draw.text((300, v_lbl_y), f"Voice Level: {v_lvl}", font=font_med, fill=(240, 242, 245))
+    # ─────────────────────────────────────────────────────────
+    # VOICE LEVEL TRACK
+    # ─────────────────────────────────────────────────────────
+    v_bar_y = 270
+    v_center = v_bar_y + (bar_h // 2)
     
+    # Microphone Icon (Anchored to exact bar center)
+    draw.rounded_rectangle([icon_x - 4, v_center - 10, icon_x + 4, v_center + 4], radius=4, fill=icon_c)
+    draw.arc([icon_x - 8, v_center - 6, icon_x + 8, v_center + 8], start=0, end=180, fill=icon_c, width=2)
+    draw.line([(icon_x, v_center + 8), (icon_x, v_center + 14)], fill=icon_c, width=2)
+    draw.line([(icon_x - 6, v_center + 14), (icon_x + 6, v_center + 14)], fill=icon_c, width=2)
+
+    # Text Labels
+    draw.text((bar_x, v_bar_y - 30), f"Voice Level: {v_lvl}", font=font_med, fill=(240, 242, 245))
     v_xp_text = f"{format_xp(v_cur)} / {format_xp(v_req)} XP"
     v_xp_bbox = draw.textbbox((0, 0), v_xp_text, font=font_small)
-    draw.text((width - 50 - (v_xp_bbox[2] - v_xp_bbox[0]), v_lbl_y + 5), v_xp_text, font=font_small, fill=(150, 154, 160))
+    draw.text((bar_x + bar_w - (v_xp_bbox[2] - v_xp_bbox[0]), v_bar_y - 28), v_xp_text, font=font_small, fill=(150, 154, 160))
 
-    # Bar Background
-    draw.rounded_rectangle([300, v_bar_y, 750, v_bar_y + 14], radius=7, fill=(43, 45, 49))
-    v_progress = max(0, min(1, v_cur / v_req))
-    v_fill_w = int(450 * v_progress)
-    
-    if v_fill_w > 12: 
-        # Bar Fill
-        draw.rounded_rectangle([300, v_bar_y, 300 + v_fill_w, v_bar_y + 14], radius=7, fill=accent_color)
-        # Premium Upgrade: Translucent rounded tip highlight
-        draw.ellipse([300 + v_fill_w - 14, v_bar_y, 300 + v_fill_w, v_bar_y + 14], fill=(255, 255, 255, 60))
+    # Progress Bar
+    draw.rounded_rectangle([bar_x, v_bar_y, bar_x + bar_w, v_bar_y + bar_h], radius=bar_h//2, fill=(43, 45, 49))
+    v_prog = max(0, min(1, v_cur / max(1, v_req)))
+    v_fill_w = max(bar_h, int(bar_w * v_prog))  # Minimum width ensures perfect circle at 0%
+    draw.rounded_rectangle([bar_x, v_bar_y, bar_x + v_fill_w, v_bar_y + bar_h], radius=bar_h//2, fill=accent_color)
 
     buffer = io.BytesIO()
     card.save(buffer, format="PNG")
@@ -237,7 +243,7 @@ class Leveling(commands.Cog):
                     "total_xp": total_xp,
                     "last_updated": datetime.datetime.utcnow().timestamp()
                 },
-                "$unset": {"xp": ""} # Clean up legacy data format
+                "$unset": {"xp": ""} 
             },
             upsert=True,
         )
@@ -365,15 +371,12 @@ class Leveling(commands.Cog):
 
         doc = await self._get_user(interaction.guild.id, target.id)
         
-        # Parse Text Data
         t_xp = doc.get("text_xp", 0)
         t_lvl, t_cur, t_req = _level_from_xp(t_xp)
         
-        # Parse Voice Data
         v_xp = doc.get("voice_xp", 0)
         v_lvl, v_cur, v_req = _level_from_xp(v_xp)
 
-        # Global Server Rank based on total_xp
         cursor = self.bot.db.levels.find({"guild_id": interaction.guild.id}).sort("total_xp", -1)
         rank_pos = 1
         async for entry in cursor:
