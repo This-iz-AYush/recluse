@@ -95,41 +95,82 @@ class Recluse(commands.Bot):
                     return False, "⛔ **Server Blacklisted:** This server is restricted. Leaving."
         return True, ""
 
+    async def _dashboard_module_check(self, guild_id: int, cog_name: str | None, cmd_name: str) -> tuple[bool, str]:
+        """Fetches the dashboard settings and checks if a module or command is disabled."""
+        if not hasattr(self, "db"):
+            return True, ""
+
+        settings = await self.db.guild_settings.find_one({"guild_id": guild_id})
+        if not settings:
+            return True, ""
+
+        disabled_cogs = settings.get("disabled_cogs", [])
+        disabled_cmds = settings.get("disabled_cmds", [])
+
+        if cog_name and cog_name in disabled_cogs:
+            return False, f"❌ The `{cog_name}` module is disabled in this server."
+
+        if cmd_name in disabled_cmds:
+            return False, f"❌ The `/{cmd_name}` command is disabled in this server."
+
+        return True, ""
+
     async def global_interaction_check(self, interaction: discord.Interaction) -> bool:
         is_owner = await self.is_owner(interaction.user)
         guild_id = interaction.guild_id
+        
+        # 1. Global Bans & Lockdown Check
         passed, msg = await self._core_security_check(interaction.user.id, guild_id, is_owner)
         if not passed:
             if "Leaving" in msg and interaction.guild:
-                try:
-                    await interaction.response.send_message(msg, ephemeral=True)
-                except Exception:
-                    pass
+                try: await interaction.response.send_message(msg, ephemeral=True)
+                except Exception: pass
                 await interaction.guild.leave()
             else:
-                try:
-                    await interaction.response.send_message(msg, ephemeral=True)
-                except Exception:
-                    pass
+                try: await interaction.response.send_message(msg, ephemeral=True)
+                except Exception: pass
             return False
+            
+        # 2. Dashboard Module Toggle Check (Slash Commands)
+        if guild_id and interaction.command:
+            # Safely extract the cog name from the slash command binding
+            cog_name = getattr(interaction.command.binding, "qualified_name", type(interaction.command.binding).__name__) if interaction.command.binding else None
+            cmd_name = interaction.command.name
+            
+            allowed, block_msg = await self._dashboard_module_check(guild_id, cog_name, cmd_name)
+            if not allowed:
+                try: await interaction.response.send_message(block_msg, ephemeral=True)
+                except Exception: pass
+                return False
+
         return True
 
     async def global_prefix_check(self, ctx: commands.Context) -> bool:
         is_owner = await self.is_owner(ctx.author)
         guild_id = ctx.guild.id if ctx.guild else None
+        
+        # 1. Global Bans & Lockdown Check
         passed, msg = await self._core_security_check(ctx.author.id, guild_id, is_owner)
         if not passed:
             if "Leaving" in msg and ctx.guild:
-                try:
-                    await ctx.send(msg)
-                except Exception:
-                    pass
+                try: await ctx.send(msg)
+                except Exception: pass
                 await ctx.guild.leave()
             else:
                 await ctx.send(msg)
             return False
-        return True
+            
+        # 2. Dashboard Module Toggle Check (Prefix Commands)
+        if guild_id and ctx.command:
+            cog_name = ctx.cog.qualified_name if ctx.cog else None
+            cmd_name = ctx.command.qualified_name
+            
+            allowed, block_msg = await self._dashboard_module_check(guild_id, cog_name, cmd_name)
+            if not allowed:
+                await ctx.send(block_msg, delete_after=5)
+                return False
 
+        return True
     # ─────────────────────────────────────────────────────────────────────────
     # Anti-spam middleware  (runs on every message before cogs see it)
     # ─────────────────────────────────────────────────────────────────────────
