@@ -1,6 +1,5 @@
 """
 cogs/dashboard.py — Recluse Web Dashboard
-Comprehensive web administration interface with category, command, and subcommand control.
 """
 
 import os
@@ -11,6 +10,8 @@ import aiohttp
 from aiohttp import web
 import discord
 from discord.ext import commands
+import random
+import string
 
 
 class Dashboard(commands.Cog):
@@ -18,10 +19,8 @@ class Dashboard(commands.Cog):
         self.bot = bot
         self.bot.dashboard_maintenance = False
 
-        # Initialize aiohttp Application with Security Middleware
         self.app = web.Application(middlewares=[self.security_middleware])
 
-        # Dynamic Route Registration
         self.app.add_routes([
             web.get('/', self.home),
             web.get('/login', self.login),
@@ -61,16 +60,11 @@ class Dashboard(commands.Cog):
         ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
         request['visitor_ip'] = ip
 
-        # 1. IP Ban Enforcement
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             is_banned = await self.bot.db.ip_bans.find_one({"ip": ip})
             if is_banned:
-                return web.Response(
-                    text="403 Forbidden: Your IP address has been permanently restricted.", 
-                    status=403
-                )
+                return web.Response(text="403 Forbidden: Your IP address has been permanently restricted.", status=403)
 
-        # 2. Independent Maintenance Mode
         if getattr(self.bot, 'dashboard_maintenance', False):
             allowed_paths = ['/login', '/callback', '/logout', '/owner_panel', '/api/owner_action']
             if request.path not in allowed_paths:
@@ -106,16 +100,12 @@ class Dashboard(commands.Cog):
                             <p class="text-zinc-400 text-sm mb-6 leading-relaxed">
                                 The management console is currently undergoing maintenance. Discord bot functions and commands remain fully active.
                             </p>
-                            <div class="py-2 px-4 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-400 inline-block">
-                                Status: Upgrades in progress
-                            </div>
                         </div>
                     </body>
                     </html>
                     """
                     return web.Response(text=maintenance_html, content_type='text/html', status=503)
 
-        # 3. Security Verification Bypass / Cookie Check
         if request.path == '/api/verify_visitor':
             return await handler(request)
 
@@ -156,23 +146,17 @@ class Dashboard(commands.Cog):
                             <div class="spinner"></div>
                             <div>
                                 <div class="text-sm font-semibold text-white">Verifying browser connection...</div>
-                                <div class="text-xs text-zinc-500">Checking client integrity</div>
                             </div>
                         </div>
                         <span class="text-xs font-mono text-zinc-600">ID: {ray_id}</span>
                     </div>
-                </div>
-                <div class="text-center text-xs text-zinc-600 font-mono">
-                    Protected by Recluse Network Security
                 </div>
                 <script>
                     setTimeout(async () => {{
                         try {{
                             await fetch('/api/verify_visitor', {{ method: 'POST' }});
                             window.location.reload();
-                        }} catch (e) {{
-                            console.error(e);
-                        }}
+                        }} catch (e) {{ console.error(e); }}
                     }}, 1200);
                 </script>
             </body>
@@ -180,7 +164,6 @@ class Dashboard(commands.Cog):
             """
             return web.Response(text=verify_html, content_type='text/html')
 
-        # 4. Visit Telemetry Logging
         if hasattr(self.bot, 'db') and ip != 'Unknown':
             session_id = request.cookies.get("recluse_session")
             discord_username = None
@@ -259,7 +242,7 @@ class Dashboard(commands.Cog):
         """
 
     # ─────────────────────────────────────────────────────────────────────────
-    # AUTHENTICATION ROUTES
+    # AUTHENTICATION
     # ─────────────────────────────────────────────────────────────────────────
 
     async def login(self, request):
@@ -267,10 +250,7 @@ class Dashboard(commands.Cog):
         redirect_uri = os.getenv("REDIRECT_URI")
         if not client_id or not redirect_uri:
             return web.Response(text="Configuration Error: Client ID or Redirect URI not defined.", status=500)
-        oauth_url = (
-            f"https://discord.com/api/oauth2/authorize?client_id={client_id}"
-            f"&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
-        )
+        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri)}&response_type=code&scope=identify%20guilds"
         raise web.HTTPFound(oauth_url)
 
     async def callback(self, request):
@@ -324,7 +304,7 @@ class Dashboard(commands.Cog):
         return response
 
     # ─────────────────────────────────────────────────────────────────────────
-    # HOME & SERVER SELECTION
+    # HOME
     # ─────────────────────────────────────────────────────────────────────────
 
     async def home(self, request):
@@ -339,39 +319,25 @@ class Dashboard(commands.Cog):
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
-                <title>Recluse | Discord Moderation & Architecture</title>
+                <title>Recluse | Discord Moderation</title>
                 <link rel="icon" type="image/png" href="{bot_avatar}">
                 <script src="https://cdn.tailwindcss.com"></script>
-                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
             </head>
-            <body class="bg-[#09090b] text-zinc-100 min-h-screen flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+            <body class="bg-[#09090b] text-zinc-100 min-h-screen flex flex-col font-sans">
                 <header class="border-b border-zinc-800/80 px-8 py-5 flex items-center justify-between max-w-7xl mx-auto w-full">
-                    <div class="flex items-center gap-3 font-bold text-lg tracking-tight">
+                    <div class="flex items-center gap-3 font-bold text-lg">
                         <img src="{bot_avatar}" class="w-8 h-8 rounded-xl border border-zinc-800" alt="Recluse">
                         <span>Recluse</span>
                     </div>
-                    <a href="/login" class="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition">
-                        Log In with Discord
-                    </a>
+                    <a href="/login" class="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition">Log In with Discord</a>
                 </header>
 
                 <main class="flex-1 max-w-7xl mx-auto w-full px-8 flex flex-col items-center justify-center text-center py-20">
-                    <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-400 mb-8">
-                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Recluse Network v2.0
-                    </div>
-                    <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight text-white max-w-3xl mb-6">
-                        Complete server governance and intelligence.
-                    </h1>
-                    <p class="text-zinc-400 max-w-xl text-base sm:text-lg mb-10 leading-relaxed">
-                        Control modules, enforce granular command restrictions, automate raid lockdowns, and integrate generative models from a unified dashboard.
-                    </p>
+                    <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight text-white max-w-3xl mb-6">Complete server governance.</h1>
+                    <p class="text-zinc-400 max-w-xl text-base sm:text-lg mb-10 leading-relaxed">Control modules, enforce granular command restrictions, automate raid lockdowns, and integrate generative models from a unified dashboard.</p>
                     <div class="flex flex-wrap gap-4 justify-center">
-                        <a href="/login" class="px-6 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-sm transition shadow-lg shadow-blue-600/20">
-                            Open Management Console
-                        </a>
-                        <a href="{invite_link}" target="_blank" class="px-6 py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 font-semibold text-sm transition">
-                            Add to Server
-                        </a>
+                        <a href="/login" class="px-6 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-sm transition shadow-lg shadow-blue-600/20">Open Management Console</a>
+                        <a href="{invite_link}" target="_blank" class="px-6 py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 font-semibold text-sm transition">Add to Server</a>
                     </div>
                 </main>
             </body>
@@ -394,10 +360,7 @@ class Dashboard(commands.Cog):
                     if resp.status == 200:
                         user_guilds = await resp.json()
 
-        admin_guilds = [
-            g for g in user_guilds
-            if (int(g.get('permissions', 0)) & 0x8) == 0x8 or (int(g.get('permissions', 0)) & 0x20) == 0x20
-        ]
+        admin_guilds = [g for g in user_guilds if (int(g.get('permissions', 0)) & 0x8) == 0x8 or (int(g.get('permissions', 0)) & 0x20) == 0x20]
         bot_guild_ids = [g.id for g in self.bot.guilds]
 
         cards_html = ""
@@ -417,17 +380,7 @@ class Dashboard(commands.Cog):
                         <span class="text-xs font-mono text-zinc-500">{g['id']}</span>
                     </div>
                 </div>
-                <a href="{target_url}" class="w-full py-2.5 rounded-xl {btn_class} font-semibold text-xs text-center transition">
-                    {btn_text}
-                </a>
-            </div>
-            """
-
-        if not cards_html:
-            cards_html = """
-            <div class="col-span-full py-16 text-center text-zinc-500">
-                <i class="fa-solid fa-server text-3xl mb-3"></i>
-                <p class="text-sm">No servers found where you possess Manage Server or Administrator rights.</p>
+                <a href="{target_url}" class="w-full py-2.5 rounded-xl {btn_class} font-semibold text-xs text-center transition">{btn_text}</a>
             </div>
             """
 
@@ -453,12 +406,9 @@ class Dashboard(commands.Cog):
                         <img src="{user_avatar}" class="w-6 h-6 rounded-lg object-cover" alt="{user_name}">
                         <span class="text-xs font-semibold text-zinc-300">{user_name}</span>
                     </div>
-                    <a href="/logout" class="text-zinc-500 hover:text-zinc-300 text-sm transition" title="Log Out">
-                        <i class="fa-solid fa-right-from-bracket"></i>
-                    </a>
+                    <a href="/logout" class="text-zinc-500 hover:text-zinc-300 text-sm transition"><i class="fa-solid fa-right-from-bracket"></i></a>
                 </div>
             </header>
-
             <main class="flex-1 max-w-6xl w-full mx-auto p-8">
                 <div class="mb-8">
                     <h1 class="text-2xl font-bold text-white mb-1">Select a Server</h1>
@@ -474,34 +424,26 @@ class Dashboard(commands.Cog):
         return web.Response(text=selector_html, content_type='text/html')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # GRANULAR DYNO-STYLE MODULE & COMMAND MANAGER
+    # MODULES & COMMANDS
     # ─────────────────────────────────────────────────────────────────────────
 
     async def manage_modules(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
 
-        guild_id_str = request.match_info.get('guild_id')
-        try:
-            guild_id = int(guild_id_str)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
-
+        guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.Response(text="Recluse is not present in this server.", status=404)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
 
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
-            return web.Response(text="Forbidden: Manage Guild permission required.", status=403)
+            return web.Response(text="Forbidden", status=403)
 
         settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
         settings = settings or {}
         disabled_cogs = settings.get("disabled_cogs", [])
         disabled_cmds = settings.get("disabled_cmds", [])
 
-        # Build dynamic list of all cogs and their registered commands
         modules_html = ""
         for cog_name, cog in self.bot.cogs.items():
             if cog_name.lower() in ["dashboard", "jishaku", "database", "owner"]:
@@ -510,25 +452,50 @@ class Dashboard(commands.Cog):
             cog_checked = "" if cog_name in disabled_cogs else "checked"
             cog_opacity = "opacity-60" if cog_name in disabled_cogs else ""
 
+            # Safely grab both prefix commands and app commands (slash commands)
+            all_cmds = []
+            
+            # 1. Prefix Commands
+            if hasattr(cog, 'walk_commands'):
+                for cmd in cog.walk_commands():
+                    all_cmds.append({
+                        "name": cmd.qualified_name,
+                        "desc": cmd.help or cmd.description or "No description specified.",
+                        "is_sub": cmd.parent is not None
+                    })
+            
+            # 2. Slash Commands
+            if hasattr(cog, 'walk_app_commands'):
+                for app_cmd in cog.walk_app_commands():
+                    all_cmds.append({
+                        "name": app_cmd.name,
+                        "desc": app_cmd.description or "No description specified.",
+                        "is_sub": False # Simplification for app commands
+                    })
+
+            # Deduplicate by name just in case of hybrid commands
+            seen = set()
+            unique_cmds = []
+            for cmd in all_cmds:
+                if cmd["name"] not in seen:
+                    seen.add(cmd["name"])
+                    unique_cmds.append(cmd)
+
             commands_list_html = ""
-            for cmd in cog.walk_commands():
-                cmd_name = cmd.qualified_name
-                cmd_desc = cmd.help or cmd.description or "No description specified."
-                is_sub = cmd.parent is not None
-                indent_class = "pl-8 border-l-2 border-zinc-800 ml-4 my-1" if is_sub else "py-3 border-b border-zinc-800/60 last:border-0"
-                cmd_checked = "" if (cmd_name in disabled_cmds or cog_name in disabled_cogs) else "checked"
+            for cmd in unique_cmds:
+                indent_class = "pl-8 border-l-2 border-zinc-800 ml-4 my-1" if cmd["is_sub"] else "py-3 border-b border-zinc-800/60 last:border-0"
+                cmd_checked = "" if (cmd["name"] in disabled_cmds or cog_name in disabled_cogs) else "checked"
 
                 commands_list_html += f"""
                 <div class="flex items-center justify-between {indent_class} transition">
                     <div>
                         <div class="flex items-center gap-2">
-                            <span class="text-xs font-mono font-bold text-zinc-200">/{cmd_name}</span>
-                            {"<span class='text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400'>Sub</span>" if is_sub else ""}
+                            <span class="text-xs font-mono font-bold text-zinc-200">/{cmd["name"]}</span>
                         </div>
-                        <p class="text-xs text-zinc-500 mt-0.5">{cmd_desc}</p>
+                        <p class="text-xs text-zinc-500 mt-0.5">{cmd["desc"]}</p>
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer ml-4">
-                        <input type="checkbox" value="{cmd_name}" class="sr-only peer cmd-toggle" data-cog="{cog_name}" {cmd_checked}>
+                        <input type="checkbox" value="{cmd["name"]}" class="sr-only peer cmd-toggle" data-cog="{cog_name}" {cmd_checked}>
                         <div class="w-8 h-4 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
                     </label>
                 </div>
@@ -569,28 +536,22 @@ class Dashboard(commands.Cog):
         <html lang="en">
         <head>
             <meta charset="UTF-8">
-            <title>{guild.name} | Modules &amp; Commands</title>
+            <title>{guild.name} | Modules</title>
             <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-            <style>
-                ::-webkit-scrollbar {{ width: 6px; }}
-                ::-webkit-scrollbar-track {{ background: #09090b; }}
-                ::-webkit-scrollbar-thumb {{ background: #27272a; border-radius: 3px; }}
-            </style>
+            <style>::-webkit-scrollbar {{ width: 6px; }} ::-webkit-scrollbar-track {{ background: #09090b; }} ::-webkit-scrollbar-thumb {{ background: #27272a; border-radius: 3px; }}</style>
         </head>
         <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
             {sidebar_html}
-
             <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
                 <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
                     <div>
-                        <h1 class="font-bold text-sm text-white">Module &amp; Command Controller</h1>
+                        <h1 class="font-bold text-sm text-white">Module & Command Controller</h1>
                         <p class="text-xs text-zinc-500">Dyno-style granular permissions</p>
                     </div>
                     <button onclick="saveModuleConfiguration()" id="saveBtn" class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition shadow-lg shadow-blue-600/20 flex items-center gap-2">
-                        <i class="fa-solid fa-cloud-arrow-up"></i>
-                        <span>Save Configuration</span>
+                        <i class="fa-solid fa-cloud-arrow-up"></i><span>Save Configuration</span>
                     </button>
                 </header>
 
@@ -599,7 +560,7 @@ class Dashboard(commands.Cog):
                         <div class="mb-6 p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 flex items-start gap-3">
                             <i class="fa-solid fa-circle-info text-blue-400 mt-0.5 text-sm"></i>
                             <p class="text-xs text-zinc-400 leading-relaxed">
-                                Disabling an entire category blocks all its commands immediately. Unchecking an individual command or subcommand blocks only that specific action while leaving the parent module active.
+                                Disabling an entire category blocks all its commands immediately. Unchecking an individual command blocks only that specific action while leaving the parent module active.
                             </p>
                         </div>
                         {modules_html}
@@ -612,15 +573,12 @@ class Dashboard(commands.Cog):
                     const body = document.getElementById('body-' + cogName);
                     const arrow = document.getElementById('arrow-' + cogName);
                     if (body.classList.contains('hidden')) {{
-                        body.classList.remove('hidden');
-                        arrow.classList.add('rotate-90');
+                        body.classList.remove('hidden'); arrow.classList.add('rotate-90');
                     }} else {{
-                        body.classList.add('hidden');
-                        arrow.classList.remove('rotate-90');
+                        body.classList.add('hidden'); arrow.classList.remove('rotate-90');
                     }}
                 }}
 
-                // Master cog toggle updates its child command toggles visually
                 document.querySelectorAll('.cog-toggle').forEach(cogToggle => {{
                     cogToggle.addEventListener('change', function() {{
                         const cogName = this.value;
@@ -643,17 +601,14 @@ class Dashboard(commands.Cog):
 
                     const disabledCogs = [];
                     document.querySelectorAll('.cog-toggle:not(:checked)').forEach(t => disabledCogs.push(t.value));
-
                     const disabledCmds = [];
                     document.querySelectorAll('.cmd-toggle:not(:checked)').forEach(t => disabledCmds.push(t.value));
 
                     try {{
                         const res = await fetch('/api/modules/{guild_id}', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                             body: JSON.stringify({{ disabled_cogs: disabledCogs, disabled_cmds: disabledCmds }})
                         }});
-
                         if (res.ok) {{
                             btn.innerHTML = '<i class="fa-solid fa-check"></i><span>Saved Successfully</span>';
                             btn.classList.remove('bg-blue-600', 'hover:bg-blue-500');
@@ -664,13 +619,10 @@ class Dashboard(commands.Cog):
                                 btn.classList.add('bg-blue-600', 'hover:bg-blue-500');
                                 btn.disabled = false;
                             }}, 2000);
-                        }} else {{
-                            throw new Error("Failed to save");
-                        }}
+                        }} else throw new Error("Failed to save");
                     }} catch (e) {{
                         alert("Error saving settings: " + e.message);
-                        btn.innerHTML = originalHtml;
-                        btn.disabled = false;
+                        btn.innerHTML = originalHtml; btn.disabled = false;
                     }}
                 }}
             </script>
@@ -681,46 +633,33 @@ class Dashboard(commands.Cog):
 
     async def update_modules(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.json_response({"error": "Unauthorized"}, status=401)
+        if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
 
-        guild_id_str = request.match_info.get('guild_id')
-        try:
-            guild_id = int(guild_id_str)
-        except ValueError:
-            return web.json_response({"error": "Invalid guild ID"}, status=400)
-
+        guild_id = int(request.match_info.get('guild_id'))
         data = await request.json()
-        disabled_cogs = data.get("disabled_cogs", [])
-        disabled_cmds = data.get("disabled_cmds", [])
 
         if hasattr(self.bot, 'db'):
             await self.bot.db.guild_settings.update_one(
                 {"guild_id": guild_id},
-                {"$set": {"disabled_cogs": disabled_cogs, "disabled_cmds": disabled_cmds}},
+                {"$set": {
+                    "disabled_cogs": data.get("disabled_cogs", []), 
+                    "disabled_cmds": data.get("disabled_cmds", [])
+                }},
                 upsert=True
             )
-
         return web.json_response({"success": True})
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SERVER OVERVIEW PAGE
+    # OVERVIEW, AUTOMOD, LOCKDOWN, LOGS
     # ─────────────────────────────────────────────────────────────────────────
 
     async def manage_server(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
 
-        guild_id_str = request.match_info.get('guild_id')
-        try:
-            guild_id = int(guild_id_str)
-        except ValueError:
-            return web.Response(text="Invalid Server ID.", status=400)
-
+        guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.Response(text="Bot is not in this server.", status=404)
+        if not guild: return web.Response(text="Bot is not in this server.", status=404)
 
         member = guild.get_member(int(user_session['discord_id']))
         if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
@@ -744,12 +683,10 @@ class Dashboard(commands.Cog):
         </head>
         <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
             {sidebar_html}
-
             <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
                 <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
                     <span class="font-bold text-sm text-white">Server Overview</span>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-8">
                     <div class="max-w-4xl mx-auto space-y-6">
                         <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
@@ -761,9 +698,6 @@ class Dashboard(commands.Cog):
                                     <div class="flex items-center gap-3">
                                         <span class="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300">
                                             <i class="fa-solid fa-users mr-1.5 text-zinc-500"></i> {guild.member_count:,} Members
-                                        </span>
-                                        <span class="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300">
-                                            <i class="fa-solid fa-shield mr-1.5 text-zinc-500"></i> Roles: {len(guild.roles)}
                                         </span>
                                     </div>
                                 </div>
@@ -786,21 +720,6 @@ class Dashboard(commands.Cog):
                                 <div class="text-xl font-bold text-white capitalize">{settings.get("default_ai_model", "nexusify")}</div>
                             </div>
                         </div>
-
-                        <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
-                            <h3 class="font-bold text-white text-sm mb-4">Quick Navigation</h3>
-                            <div class="flex flex-wrap gap-3">
-                                <a href="/modules/{guild_id}" class="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 transition">
-                                    <i class="fa-solid fa-layer-group mr-2 text-blue-400"></i> Command Switches
-                                </a>
-                                <a href="/automod/{guild_id}" class="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 transition">
-                                    <i class="fa-solid fa-shield-halved mr-2 text-amber-400"></i> Auto Mod Rules
-                                </a>
-                                <a href="/lockdown/{guild_id}" class="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 transition">
-                                    <i class="fa-solid fa-lock mr-2 text-red-400"></i> Emergency Protocol
-                                </a>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </main>
@@ -809,30 +728,20 @@ class Dashboard(commands.Cog):
         """
         return web.Response(text=html, content_type='text/html')
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # AUTO MODERATION PAGE
-    # ─────────────────────────────────────────────────────────────────────────
-
     async def auto_mod(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
 
         guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.Response(text="Server not found", status=404)
+        if not guild: return web.Response(text="Server not found", status=404)
 
         settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
         settings = settings or {}
         banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase"])
         words_string = ", ".join(banned_words)
 
-        pills = "".join(
-            f'<span class="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-red-400">{w}</span>'
-            for w in banned_words if w.strip()
-        )
-
+        pills = "".join(f'<span class="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-red-400">{w}</span>' for w in banned_words if w.strip())
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
         sidebar_html = self._render_sidebar(guild_id, "automod", guild.name, guild_icon)
 
@@ -848,12 +757,10 @@ class Dashboard(commands.Cog):
         </head>
         <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
             {sidebar_html}
-
             <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
                 <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
                     <span class="font-bold text-sm text-white">Automated Content Filtration</span>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-8">
                     <div class="max-w-4xl mx-auto space-y-6">
                         <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
@@ -861,30 +768,22 @@ class Dashboard(commands.Cog):
                             <p class="text-xs text-zinc-400 mb-4">Enter exact words or phrases to filter automatically. Separate items with commas.</p>
                             <textarea id="bannedWords" rows="4" class="w-full bg-[#09090b] border border-zinc-800 rounded-xl p-4 text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500 transition">{words_string}</textarea>
                             <div class="mt-4 flex justify-end">
-                                <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition">
-                                    Update Filters
-                                </button>
+                                <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition">Update Filters</button>
                             </div>
                         </div>
-
                         <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
                             <h3 class="font-bold text-white text-sm mb-3">Active Filters Loaded</h3>
-                            <div class="flex flex-wrap gap-2">
-                                {pills if pills else '<span class="text-xs text-zinc-600">No active word restrictions.</span>'}
-                            </div>
+                            <div class="flex flex-wrap gap-2">{pills if pills else '<span class="text-xs text-zinc-600">No active word restrictions.</span>'}</div>
                         </div>
                     </div>
                 </div>
             </main>
-
             <script>
                 async function saveBannedWords() {{
                     const words = document.getElementById('bannedWords').value;
-                    const btn = document.getElementById('saveWordsBtn');
-                    btn.innerText = 'Updating...';
+                    const btn = document.getElementById('saveWordsBtn'); btn.innerText = 'Updating...';
                     await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
+                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{ action: 'update_automod', words: words }})
                     }});
                     window.location.reload();
@@ -895,19 +794,13 @@ class Dashboard(commands.Cog):
         """
         return web.Response(text=html, content_type='text/html')
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # SERVER LOCKDOWN PAGE
-    # ─────────────────────────────────────────────────────────────────────────
-
     async def server_lockdown(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
 
         guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.Response(text="Server not found", status=404)
+        if not guild: return web.Response(text="Server not found", status=404)
 
         settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
         settings = settings or {}
@@ -928,12 +821,10 @@ class Dashboard(commands.Cog):
         </head>
         <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
             {sidebar_html}
-
             <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
                 <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
                     <span class="font-bold text-sm text-white">Emergency Protocols</span>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-8 flex items-center justify-center">
                     <div class="max-w-md w-full bg-[#121215] border border-zinc-800/80 rounded-2xl p-8 text-center">
                         <div class="w-16 h-16 mx-auto rounded-2xl {'bg-red-500/10 border border-red-500/20 text-red-500' if is_locked else 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-500'} flex items-center justify-center mb-5 text-2xl">
@@ -949,15 +840,12 @@ class Dashboard(commands.Cog):
                     </div>
                 </div>
             </main>
-
             <script>
                 async function toggleLockdown(targetState) {{
                     if (targetState && !confirm("ENGAGE LOCKDOWN: This revokes Send Messages from @everyone. Proceed?")) return;
-                    const btn = document.getElementById('lockBtn');
-                    btn.innerText = 'Processing...';
+                    const btn = document.getElementById('lockBtn'); btn.innerText = 'Processing...';
                     const res = await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
+                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{ action: 'toggle_lockdown', state: targetState }})
                     }});
                     const data = await res.json();
@@ -970,19 +858,13 @@ class Dashboard(commands.Cog):
         """
         return web.Response(text=html, content_type='text/html')
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # AUDIT LOGS & EVENT VIEWER
-    # ─────────────────────────────────────────────────────────────────────────
-
     async def server_logs(self, request):
         user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.HTTPFound('/login')
+        if not user_session: return web.HTTPFound('/login')
 
         guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.Response(text="Server not found", status=404)
+        if not guild: return web.Response(text="Server not found", status=404)
 
         rows_html = ""
         if hasattr(self.bot, 'db'):
@@ -1016,12 +898,10 @@ class Dashboard(commands.Cog):
         </head>
         <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
             {sidebar_html}
-
             <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
                 <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
                     <span class="font-bold text-sm text-white">Automated Security Audits</span>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-8">
                     <div class="max-w-5xl mx-auto bg-[#121215] border border-zinc-800/80 rounded-2xl overflow-hidden">
                         <table class="w-full text-left">
@@ -1033,9 +913,7 @@ class Dashboard(commands.Cog):
                                     <th class="py-3 px-4">Payload</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {rows_html}
-                            </tbody>
+                            <tbody>{rows_html}</tbody>
                         </table>
                     </div>
                 </div>
@@ -1046,17 +924,174 @@ class Dashboard(commands.Cog):
         return web.Response(text=html, content_type='text/html')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # WIZARD & MISC CONFIGURATIONS
+    # WIZARD & MISC RESTORATION (Updated to SaaS UI)
     # ─────────────────────────────────────────────────────────────────────────
 
     async def wizard_setup(self, request):
-        return web.HTTPFound(f"/modules/{request.match_info.get('guild_id')}")
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.HTTPFound('/login')
+
+        guild_id = int(request.match_info.get('guild_id'))
+        guild = self.bot.get_guild(guild_id)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
+        settings = settings or {}
+
+        ai_model = settings.get("default_ai_model", "nexusify")
+        nexusify_checked = "checked" if ai_model == "nexusify" else ""
+        gemini_checked = "checked" if ai_model == "gemini" else ""
+        sarvam_checked = "checked" if ai_model == "sarvam" else ""
+
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
+        sidebar_html = self._render_sidebar(guild_id, "wizard", guild.name, guild_icon)
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>{guild.name} | Wizard</title>
+            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+        </head>
+        <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
+            {sidebar_html}
+            <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
+                <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
+                    <span class="font-bold text-sm text-white">Setup Wizard</span>
+                </header>
+                <div class="flex-1 overflow-y-auto p-8 flex items-center justify-center">
+                    <div class="max-w-2xl w-full bg-[#121215] border border-zinc-800/80 rounded-2xl p-8">
+                        <div class="mb-6">
+                            <h2 class="text-xl font-bold text-white">Select Default AI Core</h2>
+                            <p class="text-xs text-zinc-400 mt-1">Choose the primary generative model for chat interactions in this server.</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                            <label class="flex flex-col p-4 rounded-xl border border-zinc-800 bg-[#09090b] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                <input type="radio" name="ai_model" value="nexusify" class="absolute right-4 top-4 text-blue-600 bg-zinc-800" {nexusify_checked}>
+                                <i class="fa-solid fa-network-wired text-xl text-blue-400 mb-2"></i>
+                                <span class="text-white font-bold text-sm">Nexusify</span>
+                                <span class="text-zinc-500 text-[10px] mt-1">Grok-3 architecture</span>
+                            </label>
+                            <label class="flex flex-col p-4 rounded-xl border border-zinc-800 bg-[#09090b] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                <input type="radio" name="ai_model" value="gemini" class="absolute right-4 top-4 text-blue-600 bg-zinc-800" {gemini_checked}>
+                                <i class="fa-brands fa-google text-xl text-emerald-400 mb-2"></i>
+                                <span class="text-white font-bold text-sm">Gemini</span>
+                                <span class="text-zinc-500 text-[10px] mt-1">Flash 2.5 vision</span>
+                            </label>
+                            <label class="flex flex-col p-4 rounded-xl border border-zinc-800 bg-[#09090b] cursor-pointer hover:border-blue-500 transition group relative overflow-hidden">
+                                <input type="radio" name="ai_model" value="sarvam" class="absolute right-4 top-4 text-blue-600 bg-zinc-800" {sarvam_checked}>
+                                <i class="fa-solid fa-language text-xl text-orange-400 mb-2"></i>
+                                <span class="text-white font-bold text-sm">Sarvam</span>
+                                <span class="text-zinc-500 text-[10px] mt-1">Multilingual text</span>
+                            </label>
+                        </div>
+                        <div class="flex justify-end">
+                            <button onclick="saveSetup()" id="saveBtn" class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition">Save Configuration</button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <script>
+                async function saveSetup() {{
+                    const btn = document.getElementById('saveBtn'); btn.innerText = 'Saving...';
+                    const model = document.querySelector('input[name="ai_model"]:checked').value;
+                    await fetch('/api/settings/{guild_id}', {{
+                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ action: 'update_ai_model', model: model }})
+                    }});
+                    btn.innerText = 'Saved!';
+                    setTimeout(() => {{ btn.innerText = 'Save Configuration'; }}, 2000);
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type='text/html')
 
     async def misc_settings(self, request):
-        return web.HTTPFound(f"/modules/{request.match_info.get('guild_id')}")
+        user_session = await self.get_user_session(request)
+        if not user_session: return web.HTTPFound('/login')
+
+        guild_id = int(request.match_info.get('guild_id'))
+        guild = self.bot.get_guild(guild_id)
+        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+
+        member = guild.get_member(int(user_session['discord_id']))
+        if not member or not (member.guild_permissions.administrator or member.guild_permissions.manage_guild):
+            return web.Response(text="Access Denied.", status=403)
+
+        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
+        settings = settings or {}
+
+        misc_checked = "checked" if settings.get("misc_enabled", True) else ""
+        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
+        sidebar_html = self._render_sidebar(guild_id, "misc", guild.name, guild_icon)
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>{guild.name} | Misc</title>
+            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            <style>
+                .toggle-checkbox:checked {{ right: 0; border-color: #2563eb; }}
+                .toggle-checkbox:checked + .toggle-label {{ background-color: #2563eb; }}
+            </style>
+        </head>
+        <body class="bg-[#09090b] text-zinc-100 h-screen flex overflow-hidden font-sans">
+            {sidebar_html}
+            <main class="flex-1 flex flex-col h-screen overflow-hidden bg-[#09090b]">
+                <header class="h-16 border-b border-zinc-800/80 px-8 flex items-center justify-between shrink-0">
+                    <span class="font-bold text-sm text-white">Miscellaneous Utilities</span>
+                </header>
+                <div class="flex-1 overflow-y-auto p-8">
+                    <div class="max-w-3xl mx-auto bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
+                        <div class="flex justify-between items-center mb-6 border-b border-zinc-800 pb-4">
+                            <div>
+                                <h3 class="text-white font-bold text-sm">Dynamic AFK & Information Tools</h3>
+                                <p class="text-xs text-zinc-400 mt-1">Enables <code>/afk</code>, <code>/whois</code>, and <code>/serverinfo</code>.</p>
+                            </div>
+                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in ml-4">
+                                <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600"/>
+                                <label class="toggle-label block overflow-hidden h-5 rounded-full bg-zinc-700 cursor-pointer transition-colors duration-300"></label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <script>
+                document.getElementById('toggleMisc').addEventListener('change', async function() {{
+                    const label = this.nextElementSibling;
+                    if(this.checked) {{
+                        this.style.left = 'auto'; this.style.right = '0';
+                        this.style.borderColor = '#2563eb'; label.style.backgroundColor = '#2563eb';
+                    }} else {{
+                        this.style.right = 'auto'; this.style.left = '0';
+                        this.style.borderColor = '#52525b'; label.style.backgroundColor = '#3f3f46';
+                    }}
+                    await fetch('/api/settings/{guild_id}', {{
+                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ action: 'toggle', module: 'toggleMisc', enabled: this.checked }})
+                    }});
+                }});
+            </script>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type='text/html')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # OWNER PANEL & IP FIREWALL
+    # OWNER PANEL & IP FIREWALL (Restored Discord User Mappings)
     # ─────────────────────────────────────────────────────────────────────────
 
     async def owner_panel(self, request):
@@ -1083,10 +1118,16 @@ class Dashboard(commands.Cog):
         ip_rows = ""
         if hasattr(self.bot, 'db'):
             async for v in self.bot.db.visit_logs.find().sort("last_visit", -1).limit(30):
+                last_user = v.get('last_user', 'Guest')
+                user_badge_color = "bg-violet-500/10 text-violet-400 border-violet-500/20" if last_user != 'Guest' else "bg-zinc-800 text-zinc-400 border-zinc-700"
                 ip_rows += f"""
-                <div class="flex items-center justify-between py-2 border-b border-zinc-800/60 last:border-0 text-xs">
-                    <span class="font-mono text-zinc-400">{v.get('ip')}</span>
-                    <button onclick="ipAction('ban', '{v.get('ip')}')" class="px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition">
+                <div class="flex items-center justify-between py-3 border-b border-zinc-800/60 last:border-0 text-xs filter-row">
+                    <div>
+                        <span class="font-mono text-zinc-300 ip-text">{v.get('ip')}</span>
+                        <span class="ml-2 text-[10px] px-2 py-0.5 rounded border {user_badge_color} user-text">{last_user}</span>
+                        <div class="text-[10px] text-zinc-500 mt-1">Hits: {v.get('hits', 1)}</div>
+                    </div>
+                    <button onclick="ipAction('ban', '{v.get('ip')}')" class="px-3 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/20 transition font-semibold">
                         Ban
                     </button>
                 </div>
@@ -1103,7 +1144,7 @@ class Dashboard(commands.Cog):
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
         </head>
         <body class="bg-[#09090b] text-zinc-100 min-h-screen p-8">
-            <div class="max-w-5xl mx-auto space-y-6">
+            <div class="max-w-6xl mx-auto space-y-6">
                 <div class="flex items-center justify-between border-b border-zinc-800 pb-5">
                     <div>
                         <h1 class="text-xl font-bold text-white">System Override Console</h1>
@@ -1112,20 +1153,35 @@ class Dashboard(commands.Cog):
                     <a href="/" class="text-xs text-zinc-400 hover:text-white">Exit to Home</a>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-5">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6">
                         <h2 class="font-bold text-white text-sm mb-4">Hot-Reload Cogs</h2>
-                        {cogs_html}
+                        <div class="overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                            {cogs_html}
+                        </div>
                     </div>
 
-                    <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-5">
-                        <h2 class="font-bold text-white text-sm mb-4">Recent Ingress Telemetry</h2>
-                        {ip_rows if ip_rows else '<p class="text-xs text-zinc-600">No logged hits.</p>'}
+                    <div class="bg-[#121215] border border-zinc-800/80 rounded-2xl p-6 flex flex-col h-[580px]">
+                        <h2 class="font-bold text-white text-sm mb-2">Ingress Telemetry</h2>
+                        <input type="text" id="ipSearch" placeholder="Search IP or Discord Username..." class="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-white mb-4 focus:outline-none focus:border-blue-500 transition">
+                        <div class="overflow-y-auto flex-1 pr-2 custom-scrollbar" id="ipContainer">
+                            {ip_rows if ip_rows else '<p class="text-xs text-zinc-600">No logged hits.</p>'}
+                        </div>
                     </div>
                 </div>
             </div>
 
             <script>
+                document.getElementById('ipSearch').addEventListener('input', function(e) {{
+                    const query = e.target.value.toLowerCase();
+                    document.querySelectorAll('.filter-row').forEach(row => {{
+                        const ip = row.querySelector('.ip-text').innerText.toLowerCase();
+                        const user = row.querySelector('.user-text').innerText.toLowerCase();
+                        if (ip.includes(query) || user.includes(query)) row.style.display = 'flex';
+                        else row.style.display = 'none';
+                    }});
+                }});
+
                 async function reloadModule(name) {{
                     const res = await fetch('/api/owner_action', {{
                         method: 'POST',
@@ -1146,6 +1202,11 @@ class Dashboard(commands.Cog):
                     window.location.reload();
                 }}
             </script>
+            <style>
+                .custom-scrollbar::-webkit-scrollbar {{ width: 6px; }}
+                .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }}
+                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: #27272a; border-radius: 3px; }}
+            </style>
         </body>
         </html>
         """
@@ -1162,8 +1223,7 @@ class Dashboard(commands.Cog):
 
         guild_id = int(request.match_info.get('guild_id'))
         guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return web.json_response({"error": "Guild missing"}, status=404)
+        if not guild: return web.json_response({"error": "Guild missing"}, status=404)
 
         data = await request.json()
         action = data.get('action')
@@ -1175,6 +1235,27 @@ class Dashboard(commands.Cog):
                 await self.bot.db.guild_settings.update_one(
                     {"guild_id": guild_id},
                     {"$set": {"banned_words": words}},
+                    upsert=True
+                )
+            return web.json_response({"success": True})
+
+        elif action == 'update_ai_model':
+            model = data.get('model')
+            if hasattr(self.bot, 'db'):
+                await self.bot.db.guild_settings.update_one(
+                    {"guild_id": guild_id},
+                    {"$set": {"default_ai_model": model}},
+                    upsert=True
+                )
+            return web.json_response({"success": True})
+
+        elif action == 'toggle':
+            module = data.get('module')
+            enabled = data.get('enabled')
+            if module == 'toggleMisc' and hasattr(self.bot, 'db'):
+                await self.bot.db.guild_settings.update_one(
+                    {"guild_id": guild_id},
+                    {"$set": {"misc_enabled": enabled}},
                     upsert=True
                 )
             return web.json_response({"success": True})
