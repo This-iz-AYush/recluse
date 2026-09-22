@@ -1,12 +1,12 @@
 """
-admin.py  —  Recluse Bot  v2.0
+admin.py  —  Recluse Bot  v2.1
 ═══════════════════════════════════════════════════════════════════════
 Centralised server-administration & configuration hub.
 
 Covers:
   • Server setup wizard
   • Module enable/disable toggles
-  • AI model config  (moved here from ai.py)
+  • AI model config
   • Logging system
   • Welcome / leave messages
   • Auto-role on join
@@ -36,12 +36,11 @@ C_ERR     = discord.Color.red()
 C_INFO    = discord.Color(0x5865F2)   # Discord Blurple
 C_NEUTRAL = discord.Color(0x2b2d31)
 
-# ─── AI engine label map (shared with ai.py) ──────────────────────────────────
+# ─── AI engine label map (Synced with ai.py Groq/Gemini update) ───────────────
 AI_LABELS = {
     "auto":     "🤖 Auto (Smart Routing)",
+    "groq":     "⚡ Groq (GPT OSS 120B)",
     "gemini":   "✨ Gemini 2.5 Flash",
-    "nexusify": "⚡ Nexusify GLM-5",
-    "sarvam":   "🇮🇳 Sarvam 30B",
 }
 
 
@@ -72,6 +71,10 @@ async def _save_settings(bot, guild_id: int, update: dict):
         {"$set": update},
         upsert=True,
     )
+    # IMPORTANT: Invalidate the AI cog's cache so config changes apply instantly
+    ai_cog = bot.get_cog("AI")
+    if ai_cog and hasattr(ai_cog, "_invalidate_guild_cfg"):
+        ai_cog._invalidate_guild_cfg(guild_id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -178,10 +181,7 @@ class Admin(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # reaction-role in-memory cache  { guild_id: { message_id: { emoji: role_id } } }
         self._rr_cache: dict[int, dict[int, dict[str, int]]] = {}
-
-    # ─── generic permission guard ────────────────────────────────────────────
 
     async def _admin_check(self, interaction: discord.Interaction) -> bool:
         if not interaction.guild:
@@ -193,10 +193,6 @@ class Admin(commands.Cog):
             "❌ You need **Manage Server** permission to use this command.", ephemeral=True
         )
         return False
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /setup  — interactive wizard
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="setup", description="Launch the interactive server setup wizard.")
     @app_commands.default_permissions(manage_guild=True)
@@ -213,10 +209,6 @@ class Admin(commands.Cog):
         )
         view = SetupView(self.bot, interaction.guild, interaction.user)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /config view  — display all settings
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="config", description="View or reset this server's full configuration.")
     @app_commands.default_permissions(manage_guild=True)
@@ -235,15 +227,15 @@ class Admin(commands.Cog):
 
         embed = discord.Embed(title=f"⚙️ Config — {interaction.guild.name}", color=C_INFO,
                               timestamp=datetime.datetime.utcnow())
-        # Channels
-        embed.add_field(name="📋 Log Channel",       value=_ch(cfg.get("log_channel")),          inline=True)
-        embed.add_field(name="👋 Welcome Channel",   value=_ch(cfg.get("welcome_channel")),       inline=True)
-        embed.add_field(name="🎫 Ticket Category",   value=_ch(cfg.get("ticket_category")),       inline=True)
+        
+        embed.add_field(name="📋 Log Channel",        value=_ch(cfg.get("log_channel")),         inline=True)
+        embed.add_field(name="👋 Welcome Channel",    value=_ch(cfg.get("welcome_channel")),       inline=True)
+        embed.add_field(name="🎫 Ticket Category",    value=_ch(cfg.get("ticket_category")),       inline=True)
         embed.add_field(name="⭐ Starboard Channel", value=_ch(cfg.get("starboard_channel")),     inline=True)
-        # Roles
-        embed.add_field(name="🤝 Auto-Role",         value=_role(cfg.get("auto_role")),           inline=True)
+        
+        embed.add_field(name="🤝 Auto-Role",          value=_role(cfg.get("auto_role")),           inline=True)
         embed.add_field(name="🎫 Ticket Support",    value=_role(cfg.get("ticket_support_role")), inline=True)
-        # Modules
+        
         modules = {
             "AI":           cfg.get("ai_enabled", True),
             "Moderation":   cfg.get("mod_enabled", True),
@@ -258,13 +250,13 @@ class Admin(commands.Cog):
             f"{'✅' if v else '❌'} {k}" for k, v in modules.items()
         )
         embed.add_field(name="🧩 Module Status", value=mod_str, inline=False)
-        # AI
+        
         embed.add_field(
             name="🤖 Default AI",
             value=AI_LABELS.get(cfg.get("default_ai_model", "auto"), "Auto"),
             inline=True,
         )
-        # Anti-spam
+        
         embed.add_field(
             name="🛡️ Anti-Spam",
             value=(
@@ -277,24 +269,20 @@ class Admin(commands.Cog):
         embed.set_footer(text="Use /admin <section> to modify settings.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /modules  — per-module toggle
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="modules", description="Enable or disable individual bot modules.")
     @app_commands.describe(
         module="Module to toggle.",
         enabled="Turn it on or off.",
     )
     @app_commands.choices(module=[
-        app_commands.Choice(name="AI Chat",       value="ai"),
-        app_commands.Choice(name="Moderation",    value="mod"),
-        app_commands.Choice(name="Leveling",      value="leveling"),
-        app_commands.Choice(name="Welcome/Leave", value="welcome"),
-        app_commands.Choice(name="Sports",        value="sports"),
-        app_commands.Choice(name="Anime/Manga",   value="anime"),
-        app_commands.Choice(name="Miscellaneous", value="misc"),
-        app_commands.Choice(name="Automod",       value="automod"),
+        app_commands.Choice(name="AI Chat",        value="ai"),
+        app_commands.Choice(name="Moderation",     value="mod"),
+        app_commands.Choice(name="Leveling",       value="leveling"),
+        app_commands.Choice(name="Welcome/Leave",  value="welcome"),
+        app_commands.Choice(name="Sports",         value="sports"),
+        app_commands.Choice(name="Anime/Manga",    value="anime"),
+        app_commands.Choice(name="Miscellaneous",  value="misc"),
+        app_commands.Choice(name="Automod",        value="automod"),
     ])
     @app_commands.default_permissions(manage_guild=True)
     async def modules(
@@ -320,10 +308,6 @@ class Admin(commands.Cog):
         await interaction.response.send_message(
             f"{status} the **{module.name}** module for this server.", ephemeral=True
         )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /setlog  — logging channel
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="setlog", description="Set the channel where moderation logs are sent.")
     @app_commands.describe(channel="The text channel to use for logs.", event="Which events to log.")
@@ -351,10 +335,6 @@ class Admin(commands.Cog):
             f"(filter: `{event.value if event else 'all'}`).",
             ephemeral=True,
         )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /setwelcome  — welcome / leave messages
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(
         name="setwelcome",
@@ -391,10 +371,6 @@ class Admin(commands.Cog):
         embed.add_field(name="Leave",      value=f"`{leave_msg}`",   inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /autorole  — assign role on join
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="autorole", description="Assign a role automatically when a member joins.")
     @app_commands.describe(role="Role to give — pass 'none' to disable.", bots="Also apply to bots.")
     @app_commands.default_permissions(manage_guild=True)
@@ -421,10 +397,6 @@ class Admin(commands.Cog):
         await interaction.response.send_message(
             f"✅ New members will automatically receive {role.mention}.", ephemeral=True
         )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /reactionrole  — add / remove reaction-role bindings
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(
         name="reactionrole",
@@ -455,7 +427,6 @@ class Admin(commands.Cog):
 
         gid = interaction.guild.id
 
-        # LIST
         if action.value == "list":
             rr = await self.bot.db.reaction_roles.find({"guild_id": gid}).to_list(50) if hasattr(self.bot, "db") else []
             if not rr:
@@ -477,7 +448,6 @@ class Admin(commands.Cog):
         except ValueError:
             return await interaction.response.send_message("❌ Invalid message ID.", ephemeral=True)
 
-        # ADD
         if action.value == "add":
             if not role:
                 return await interaction.response.send_message("❌ Provide a role.", ephemeral=True)
@@ -491,9 +461,7 @@ class Admin(commands.Cog):
                     {"$set": {"role_id": role.id}},
                     upsert=True,
                 )
-            # Update cache
             self._rr_cache.setdefault(gid, {}).setdefault(mid, {})[emoji] = role.id
-            # Try to add the reaction to the message
             try:
                 msg = await interaction.channel.fetch_message(mid)
                 await msg.add_reaction(emoji)
@@ -503,7 +471,6 @@ class Admin(commands.Cog):
                 f"✅ Reacting {emoji} on message `{mid}` will grant {role.mention}.", ephemeral=True
             )
 
-        # REMOVE
         elif action.value == "remove":
             if hasattr(self.bot, "db"):
                 await self.bot.db.reaction_roles.delete_one(
@@ -514,15 +481,12 @@ class Admin(commands.Cog):
                 f"✅ Reaction-role binding for {emoji} on `{mid}` removed.", ephemeral=True
             )
 
-    # ─── Reaction-role event listeners ────────────────────────────────────────
-
     async def _resolve_rr(self, payload: discord.RawReactionActionEvent) -> discord.Role | None:
-        """Return the role bound to a reaction, or None."""
         if not payload.guild_id or not hasattr(self.bot, "db"):
             return None
         emoji_str = str(payload.emoji)
         gid, mid   = payload.guild_id, payload.message_id
-        # Try cache first
+        
         role_id = self._rr_cache.get(gid, {}).get(mid, {}).get(emoji_str)
         if role_id is None:
             doc = await self.bot.db.reaction_roles.find_one(
@@ -561,10 +525,6 @@ class Admin(commands.Cog):
                 await member.remove_roles(role, reason="Reaction role removed")
             except discord.Forbidden:
                 pass
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /antispam  — configure the auto-moderator
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="antispam", description="Configure the anti-spam / auto-mod system.")
     @app_commands.describe(
@@ -605,14 +565,10 @@ class Admin(commands.Cog):
         embed = discord.Embed(title="🛡️ Anti-Spam Updated", color=C_OK)
         embed.add_field(name="Threshold",     value=f"`{update['antispam_threshold']}` msgs", inline=True)
         embed.add_field(name="Window",        value=f"`{update['antispam_window']}s`",         inline=True)
-        embed.add_field(name="Action",        value=f"`{update['antispam_action']}`",           inline=True)
+        embed.add_field(name="Action",        value=f"`{update['antispam_action']}`",            inline=True)
         if action and action.value == "mute":
             embed.add_field(name="Mute Duration", value=f"`{mute_duration}m`", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /levelconfig  — XP / ranking settings
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="levelconfig", description="Configure the XP leveling system.")
     @app_commands.describe(
@@ -655,10 +611,6 @@ class Admin(commands.Cog):
         embed.add_field(name="Level-up Msg", value=f"`{levelup_message}`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /levelrole  — assign roles at certain levels
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="levelrole", description="Grant a role when a member reaches a level.")
     @app_commands.describe(
         level="Level at which the role is granted.",
@@ -695,10 +647,6 @@ class Admin(commands.Cog):
             f"✅ Members reaching **Level {level}** will receive {role.mention}.", ephemeral=True
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /ticketsetup  — support ticket system
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="ticketsetup", description="Set up the support ticket system.")
     @app_commands.describe(
         category="Category where ticket channels will be created.",
@@ -725,8 +673,7 @@ class Admin(commands.Cog):
             "ticket_log_channel":  log_channel.id,
             "tickets_enabled":     True,
         })
-        # Post the panel in the specified channel
-        from cogs.tickets import TicketPanelView  # lazy import
+        from cogs.tickets import TicketPanelView
         embed = discord.Embed(
             title="🎫 Support Tickets",
             description=panel_message,
@@ -742,10 +689,6 @@ class Admin(commands.Cog):
             f"• Panel posted in {button_channel.mention}",
             ephemeral=True,
         )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /starboard  — starboard setup
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="starboard", description="Configure the starboard.")
     @app_commands.describe(
@@ -774,10 +717,6 @@ class Admin(commands.Cog):
         await interaction.response.send_message(
             f"⭐ Starboard set to {channel.mention} — needs `{threshold}` × {emoji}.", ephemeral=True
         )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /customcommand  — per-server custom text commands
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="customcommand", description="Create, edit or delete a custom text command.")
     @app_commands.describe(
@@ -834,13 +773,10 @@ class Admin(commands.Cog):
             f"✅ Custom command `{name}` saved.", ephemeral=True
         )
 
-    # ─── Custom command listener ──────────────────────────────────────────────
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild or not hasattr(self.bot, "db"):
             return
-        # Strip prefix if present, otherwise treat full content as trigger
         content = message.content.lower().strip().lstrip(",").strip()
         if not content:
             return
@@ -852,7 +788,7 @@ class Admin(commands.Cog):
             await message.channel.send(resp)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # AI Config  (moved from ai.py — admin-only)
+    # AI Config  (Repaired caching logic & updated Groq/Gemini choices)
     # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="aiconfig", description="[Admin] Configure AI settings for this server.")
@@ -860,13 +796,13 @@ class Admin(commands.Cog):
         default_model="Default AI engine for all members who haven't set a preference.",
         ai_enabled="Turn AI chat responses on or off server-wide.",
         automod="Enable the AI-module word-filter automod.",
-        allowed_channel="Restrict AI responses to this channel (leave blank = all channels).",
+        allowed_channel="Add a channel to restrict AI responses to.",
+        clear_channels="Set to True to clear channel restrictions (allow everywhere)."
     )
     @app_commands.choices(default_model=[
         app_commands.Choice(name="Auto (Smart Routing)", value="auto"),
+        app_commands.Choice(name="Groq OSS 120B",       value="groq"),
         app_commands.Choice(name="Gemini 2.5 Flash",    value="gemini"),
-        app_commands.Choice(name="Nexusify GLM-5",      value="nexusify"),
-        app_commands.Choice(name="Sarvam 30B",          value="sarvam"),
     ])
     @app_commands.default_permissions(manage_guild=True)
     async def aiconfig(
@@ -876,6 +812,7 @@ class Admin(commands.Cog):
         ai_enabled: bool | None = None,
         automod: bool | None = None,
         allowed_channel: discord.TextChannel | None = None,
+        clear_channels: bool = False,
     ):
         if not await self._admin_check(interaction):
             return
@@ -886,8 +823,10 @@ class Admin(commands.Cog):
             update["ai_enabled"] = ai_enabled
         if automod is not None:
             update["automod_enabled"] = automod
-        if allowed_channel is not None:
-            # Append to the allowed list, or start a fresh list
+        
+        if clear_channels:
+            update["ai_allowed_channels"] = []
+        elif allowed_channel is not None:
             cfg = await _get_settings(self.bot, interaction.guild.id)
             allowed = cfg.get("ai_allowed_channels", [])
             if allowed_channel.id not in allowed:
@@ -899,7 +838,7 @@ class Admin(commands.Cog):
 
         cfg = await _get_settings(self.bot, interaction.guild.id)
         embed = discord.Embed(title="🤖 AI Configuration", color=C_INFO)
-        embed.add_field(name="AI Enabled",    value="✅" if cfg.get("ai_enabled", True)     else "❌", inline=True)
+        embed.add_field(name="AI Enabled",    value="✅" if cfg.get("ai_enabled", True)      else "❌", inline=True)
         embed.add_field(name="Default Model", value=AI_LABELS.get(cfg.get("default_ai_model", "auto"), "Auto"), inline=True)
         embed.add_field(name="Automod",       value="✅" if cfg.get("automod_enabled", False) else "❌", inline=True)
 
@@ -910,6 +849,9 @@ class Admin(commands.Cog):
                 if (c := interaction.guild.get_channel(cid))
             )
             embed.add_field(name="Allowed Channels", value=ch_mentions or "*All*", inline=False)
+        else:
+            embed.add_field(name="Allowed Channels", value="*All channels enabled*", inline=False)
+            
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="aistats", description="[Admin] View AI usage telemetry for this server.")
@@ -940,10 +882,6 @@ class Admin(commands.Cog):
         else:
             embed.description = "Database not connected."
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # /banned_words  — manage automod word list
-    # ─────────────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="banned_words", description="Add or remove words from the automod blacklist.")
     @app_commands.describe(
@@ -993,10 +931,6 @@ class Admin(commands.Cog):
             await _save_settings(self.bot, interaction.guild.id, {"banned_words": words})
             await interaction.response.send_message(f"✅ `{word}` removed from automod blacklist.", ephemeral=True)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /resetuser  — wipe a user's server data (XP, strikes, warnings)
-    # ─────────────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="resetuser", description="Wipe a specific member's server data (XP / strikes / warnings).")
     @app_commands.describe(
         member="Member whose data to reset.",
@@ -1034,14 +968,9 @@ class Admin(commands.Cog):
             f"✅ Reset **{', '.join(deleted)}** for {member.mention}.", ephemeral=True
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Welcome / Leave  listener  (owned here, not in a separate cog)
-    # ─────────────────────────────────────────────────────────────────────────
-
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         cfg = await _get_settings(self.bot, member.guild.id)
-        # Auto-role
         auto_role_id = cfg.get("auto_role")
         if auto_role_id:
             if not member.bot or cfg.get("auto_role_bots", False):
@@ -1051,7 +980,6 @@ class Admin(commands.Cog):
                         await member.add_roles(role, reason="Auto-role on join")
                     except discord.Forbidden:
                         pass
-        # Welcome message
         if not cfg.get("welcome_enabled", True):
             return
         ch_id = cfg.get("welcome_channel")
@@ -1074,7 +1002,6 @@ class Admin(commands.Cog):
             await channel.send(embed=embed)
         except discord.Forbidden:
             pass
-        # DM
         if cfg.get("welcome_dm"):
             try:
                 await member.send(embed=embed)
@@ -1104,10 +1031,6 @@ class Admin(commands.Cog):
             await channel.send(embed=embed)
         except discord.Forbidden:
             pass
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Message-edit / delete logging
-    # ─────────────────────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
@@ -1198,14 +1121,8 @@ class Admin(commands.Cog):
         except discord.Forbidden:
             pass
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Starboard listener
-    # ─────────────────────────────────────────────────────────────────────────
-
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):  # noqa: F811
-        # We handle BOTH reaction-roles AND starboard in the same event.
-        # Reaction-role part is handled above; here we handle starboard.
         if not payload.guild_id:
             return
         cfg = await _get_settings(self.bot, payload.guild_id)
@@ -1230,7 +1147,6 @@ class Admin(commands.Cog):
         if count < threshold:
             return
 
-        # Check if already posted
         if hasattr(self.bot, "db"):
             existing = await self.bot.db.starboard.find_one(
                 {"guild_id": payload.guild_id, "original_id": message.id}
@@ -1254,14 +1170,13 @@ class Admin(commands.Cog):
 
         try:
             if existing:
-                # Edit the existing starboard post
                 sb_msg = await sb_ch.fetch_message(existing["sb_message_id"])
                 await sb_msg.edit(embed=embed)
             else:
                 sb_msg = await sb_ch.send(embed=embed)
                 if hasattr(self.bot, "db"):
                     await self.bot.db.starboard.insert_one({
-                        "guild_id":     payload.guild_id,
+                        "guild_id":      payload.guild_id,
                         "original_id":  message.id,
                         "sb_message_id": sb_msg.id,
                     })
