@@ -65,7 +65,7 @@ class Moderation(commands.Cog):
         if not await self.hierarchy_check(ctx, member): return
         
         try: await member.send(f"🔨 You have been banned from **{ctx.guild.name}**.\n**Reason:** {reason}")
-        except discord.Forbidden: pass 
+        except discord.HTTPException: pass 
             
         try:
             await member.ban(reason=f"Action by {ctx.author} | {reason}")
@@ -112,7 +112,7 @@ class Moderation(commands.Cog):
         if not await self.hierarchy_check(ctx, member): return
         
         try: await member.send(f"👢 You have been kicked from **{ctx.guild.name}**.\n**Reason:** {reason}")
-        except discord.Forbidden: pass
+        except discord.HTTPException: pass
             
         try:
             await member.kick(reason=f"Action by {ctx.author} | {reason}")
@@ -267,7 +267,7 @@ class Moderation(commands.Cog):
         total_warns = await self.bot.db.warnings.count_documents({"guild_id": ctx.guild.id, "user_id": member.id})
         
         try: await member.send(f"⚠️ You have been formally warned in **{ctx.guild.name}**.\n**Reason:** {reason}\n*You now have {total_warns} total warnings.*")
-        except discord.Forbidden: pass
+        except discord.HTTPException: pass
 
         embed = discord.Embed(title="⚠️ Warning Issued", description=f"{member.mention} has been warned.", color=discord.Color.yellow())
         embed.add_field(name="Reason", value=reason)
@@ -324,8 +324,8 @@ class Moderation(commands.Cog):
         await ctx.defer(ephemeral=True)
         count = 0
         def is_me(m):
-            nonlocal count           
-            if count >= limit: return False               
+            nonlocal count            
+            if count >= limit: return False                
             if m.author == self.bot.user:
                 count += 1
                 return True
@@ -348,7 +348,7 @@ class Moderation(commands.Cog):
         if not await self.hierarchy_check(ctx, member): return
         
         try: await member.send(f"🔨 You have been softbanned from **{ctx.guild.name}** to clear your messages.\n**Reason:** {reason}")
-        except discord.Forbidden: pass
+        except discord.HTTPException: pass
             
         try:
             # Ban with message deletion (7 days is the max standard)
