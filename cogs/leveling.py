@@ -42,15 +42,43 @@ async def create_rank_card(
     member: discord.Member, guild_name: str, 
     t_lvl: int, t_cur: int, t_req: int, 
     v_lvl: int, v_cur: int, v_req: int, 
-    rank_pos: int
+    rank_pos: int, bg_url: str | None = None
 ) -> io.BytesIO:
     width, height = 800, 350
     bg_color = (30, 31, 34) 
-    card = Image.new("RGBA", (width, height), bg_color)
+    
+    if bg_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(bg_url) as resp:
+                    bg_bytes = await resp.read()
+            
+            base_img = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
+            
+            img_ratio = base_img.width / base_img.height
+            target_ratio = width / height
+            
+            if img_ratio > target_ratio:
+                new_w = int(height * img_ratio)
+                base_img = base_img.resize((new_w, height))
+                offset = (new_w - width) // 2
+                base_img = base_img.crop((offset, 0, offset + width, height))
+            else:
+                new_h = int(width / img_ratio)
+                base_img = base_img.resize((width, new_h))
+                offset = (new_h - height) // 2
+                base_img = base_img.crop((0, offset, width, offset + height))
+            
+            overlay = Image.new("RGBA", (width, height), (30, 31, 34, 150))
+            card = Image.alpha_composite(base_img, overlay)
+            
+        except Exception:
+            card = Image.new("RGBA", (width, height), bg_color)
+    else:
+        card = Image.new("RGBA", (width, height), bg_color)
     
     accent_color = member.color.to_rgb() if member.color.value else (88, 101, 242)
 
-    # Ambient Avatar Glow
     glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow_layer)
     glow_draw.ellipse((-20, 20, 280, 320), fill=(accent_color[0], accent_color[1], accent_color[2], 40))
@@ -59,7 +87,6 @@ async def create_rank_card(
 
     draw = ImageDraw.Draw(card)
 
-    # Fetch Avatar
     async with aiohttp.ClientSession() as session:
         async with session.get(member.display_avatar.with_format("png").with_size(256).url) as resp:
             avatar_bytes = await resp.read()
@@ -72,7 +99,6 @@ async def create_rank_card(
     draw.ellipse((37, 82, 223, 268), outline=accent_color, width=4)
     card.paste(avatar, (40, 85), avatar)
 
-    # Typography
     try:
         font_xl    = ImageFont.truetype("font.ttf", 44)
         font_large = ImageFont.truetype("font.ttf", 36)
@@ -81,7 +107,6 @@ async def create_rank_card(
     except IOError:
         font_xl = font_large = font_med = font_small = ImageFont.load_default()
 
-    # Top Header
     draw.text((270, 50), guild_name.upper(), font=font_small, fill=(150, 154, 160))
     draw.text((270, 75), member.display_name, font=font_xl, fill=(255, 255, 255))
     
@@ -89,7 +114,6 @@ async def create_rank_card(
     rank_bbox = draw.textbbox((0, 0), rank_text, font=font_large)
     draw.text((width - 50 - (rank_bbox[2] - rank_bbox[0]), 85), rank_text, font=font_large, fill=(180, 184, 190))
 
-    # Bar Configuration
     bar_x = 300
     bar_w = 450
     bar_h = 24
@@ -102,27 +126,23 @@ async def create_rank_card(
     t_bar_y = 180
     t_center = t_bar_y + (bar_h // 2)
     
-    # Paper Plane Icon (Anchored to exact bar center)
     plane_pts = [
-        (icon_x - 12, t_center - 2),  # Left tip
-        (icon_x + 12, t_center - 8),  # Top right tip
-        (icon_x + 6,  t_center + 10), # Bottom right tip
-        (icon_x - 2,  t_center + 2)   # Inner bottom
+        (icon_x - 12, t_center - 2),
+        (icon_x + 12, t_center - 8),
+        (icon_x + 6,  t_center + 10),
+        (icon_x - 2,  t_center + 2)
     ]
     draw.polygon(plane_pts, fill=icon_c)
     
-    # Text Labels
     draw.text((bar_x, t_bar_y - 30), f"Message Level: {t_lvl}", font=font_med, fill=(240, 242, 245))
     t_xp_text = f"{format_xp(t_cur)} / {format_xp(t_req)} XP"
     t_xp_bbox = draw.textbbox((0, 0), t_xp_text, font=font_small)
     draw.text((bar_x + bar_w - (t_xp_bbox[2] - t_xp_bbox[0]), t_bar_y - 28), t_xp_text, font=font_small, fill=(150, 154, 160))
 
-    # Progress Bar
     draw.rounded_rectangle([bar_x, t_bar_y, bar_x + bar_w, t_bar_y + bar_h], radius=bar_h//2, fill=(43, 45, 49))
     t_prog = max(0, min(1, t_cur / max(1, t_req)))
-    t_fill_w = max(bar_h, int(bar_w * t_prog))  # Minimum width ensures perfect circle at 0%
+    t_fill_w = max(bar_h, int(bar_w * t_prog))
     draw.rounded_rectangle([bar_x, t_bar_y, bar_x + t_fill_w, t_bar_y + bar_h], radius=bar_h//2, fill=accent_color)
-
 
     # ─────────────────────────────────────────────────────────
     # VOICE LEVEL TRACK
@@ -130,22 +150,19 @@ async def create_rank_card(
     v_bar_y = 270
     v_center = v_bar_y + (bar_h // 2)
     
-    # Microphone Icon (Anchored to exact bar center)
     draw.rounded_rectangle([icon_x - 4, v_center - 10, icon_x + 4, v_center + 4], radius=4, fill=icon_c)
     draw.arc([icon_x - 8, v_center - 6, icon_x + 8, v_center + 8], start=0, end=180, fill=icon_c, width=2)
     draw.line([(icon_x, v_center + 8), (icon_x, v_center + 14)], fill=icon_c, width=2)
     draw.line([(icon_x - 6, v_center + 14), (icon_x + 6, v_center + 14)], fill=icon_c, width=2)
 
-    # Text Labels
     draw.text((bar_x, v_bar_y - 30), f"Voice Level: {v_lvl}", font=font_med, fill=(240, 242, 245))
     v_xp_text = f"{format_xp(v_cur)} / {format_xp(v_req)} XP"
     v_xp_bbox = draw.textbbox((0, 0), v_xp_text, font=font_small)
     draw.text((bar_x + bar_w - (v_xp_bbox[2] - v_xp_bbox[0]), v_bar_y - 28), v_xp_text, font=font_small, fill=(150, 154, 160))
 
-    # Progress Bar
     draw.rounded_rectangle([bar_x, v_bar_y, bar_x + bar_w, v_bar_y + bar_h], radius=bar_h//2, fill=(43, 45, 49))
     v_prog = max(0, min(1, v_cur / max(1, v_req)))
-    v_fill_w = max(bar_h, int(bar_w * v_prog))  # Minimum width ensures perfect circle at 0%
+    v_fill_w = max(bar_h, int(bar_w * v_prog))
     draw.rounded_rectangle([bar_x, v_bar_y, bar_x + v_fill_w, v_bar_y + bar_h], radius=bar_h//2, fill=accent_color)
 
     buffer = io.BytesIO()
@@ -208,7 +225,6 @@ class Leveling(commands.Cog):
         if not doc:
             return {"text_xp": 0, "voice_xp": 0, "total_xp": 0}
         
-        # Legacy migration check
         if "xp" in doc and "text_xp" not in doc:
             doc["text_xp"] = doc["xp"]
             doc["voice_xp"] = 0
@@ -371,6 +387,8 @@ class Leveling(commands.Cog):
 
         doc = await self._get_user(interaction.guild.id, target.id)
         
+        bg_url = doc.get("bg_url")
+        
         t_xp = doc.get("text_xp", 0)
         t_lvl, t_cur, t_req = _level_from_xp(t_xp)
         
@@ -388,7 +406,7 @@ class Leveling(commands.Cog):
             target, interaction.guild.name, 
             t_lvl, t_cur, t_req, 
             v_lvl, v_cur, v_req, 
-            rank_pos
+            rank_pos, bg_url
         )
         file = discord.File(fp=image_buffer, filename="rank.png")
         await interaction.followup.send(file=file)
@@ -444,6 +462,52 @@ class Leveling(commands.Cog):
         view.current = start
         view._update()
         await interaction.followup.send(embed=pages[start], view=view)
+
+    @app_commands.command(name="setbg", description="Set a custom background image for a user's rank card (Owner Only).")
+    @app_commands.describe(member="The member to assign the background to.", url="Direct link to a PNG or JPG image.")
+    async def set_background(self, interaction: discord.Interaction, member: discord.Member, url: str):
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+            
+        if not interaction.guild:
+            return await interaction.response.send_message("Server-only.", ephemeral=True)
+            
+        if not hasattr(self.bot, "db"):
+            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return await interaction.response.send_message("Please provide a valid image URL.", ephemeral=True)
+
+        await self.bot.db.levels.update_one(
+            {"guild_id": interaction.guild.id, "user_id": member.id},
+            {"$set": {"bg_url": url}},
+            upsert=True
+        )
+        
+        await interaction.response.send_message(f"🖼️ Rank card background updated successfully for {member.mention}!", ephemeral=True)
+        
+    @app_commands.command(name="resetbg", description="Remove a custom background and revert to default (Owner Only).")
+    @app_commands.describe(member="The member whose background you want to reset.")
+    async def reset_background(self, interaction: discord.Interaction, member: discord.Member):
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+            
+        if not interaction.guild:
+            return await interaction.response.send_message("Server-only.", ephemeral=True)
+            
+        if not hasattr(self.bot, "db"):
+            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+
+        # Unset the bg_url field to trigger the fallback in create_rank_card
+        result = await self.bot.db.levels.update_one(
+            {"guild_id": interaction.guild.id, "user_id": member.id},
+            {"$unset": {"bg_url": ""}}
+        )
+        
+        if result.modified_count > 0:
+            await interaction.response.send_message(f"♻️ Background reset to default for {member.mention}.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"ℹ️ {member.display_name} already has the default background.", ephemeral=True)    
 
 
 async def setup(bot: commands.Bot):
