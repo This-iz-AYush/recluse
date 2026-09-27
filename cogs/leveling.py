@@ -385,9 +385,12 @@ class Leveling(commands.Cog):
 
         await interaction.response.defer()
 
+        # Fetch guild-specific XP stats
         doc = await self._get_user(interaction.guild.id, target.id)
         
-        bg_url = doc.get("bg_url")
+        # Fetch global user settings for the background
+        user_doc = await self.bot.db.users.find_one({"user_id": target.id})
+        bg_url = user_doc.get("bg_url") if user_doc else None
         
         t_xp = doc.get("text_xp", 0)
         t_lvl, t_cur, t_req = _level_from_xp(t_xp)
@@ -463,14 +466,11 @@ class Leveling(commands.Cog):
         view._update()
         await interaction.followup.send(embed=pages[start], view=view)
 
-    @app_commands.command(name="setbg", description="Set a custom background image for a user's rank card (Owner Only).")
+    @app_commands.command(name="setbg", description="Set a custom global background image for a user's rank card (Owner Only).")
     @app_commands.describe(member="The member to assign the background to.", url="Direct link to a PNG or JPG image.")
     async def set_background(self, interaction: discord.Interaction, member: discord.Member, url: str):
         if not await self.bot.is_owner(interaction.user):
             return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
-            
-        if not interaction.guild:
-            return await interaction.response.send_message("Server-only.", ephemeral=True)
             
         if not hasattr(self.bot, "db"):
             return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
@@ -478,37 +478,32 @@ class Leveling(commands.Cog):
         if not (url.startswith("http://") or url.startswith("https://")):
             return await interaction.response.send_message("Please provide a valid image URL.", ephemeral=True)
 
-        await self.bot.db.levels.update_one(
-            {"guild_id": interaction.guild.id, "user_id": member.id},
+        await self.bot.db.users.update_one(
+            {"user_id": member.id},
             {"$set": {"bg_url": url}},
             upsert=True
         )
         
-        await interaction.response.send_message(f"🖼️ Rank card background updated successfully for {member.mention}!", ephemeral=True)
-        
-    @app_commands.command(name="resetbg", description="Remove a custom background and revert to default (Owner Only).")
+        await interaction.response.send_message(f"🖼️ Global rank card background updated successfully for {member.mention}!", ephemeral=True)
+
+    @app_commands.command(name="resetbg", description="Remove a custom background globally and revert to default (Owner Only).")
     @app_commands.describe(member="The member whose background you want to reset.")
     async def reset_background(self, interaction: discord.Interaction, member: discord.Member):
         if not await self.bot.is_owner(interaction.user):
             return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
             
-        if not interaction.guild:
-            return await interaction.response.send_message("Server-only.", ephemeral=True)
-            
         if not hasattr(self.bot, "db"):
             return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
 
-        # Unset the bg_url field to trigger the fallback in create_rank_card
-        result = await self.bot.db.levels.update_one(
-            {"guild_id": interaction.guild.id, "user_id": member.id},
+        result = await self.bot.db.users.update_one(
+            {"user_id": member.id},
             {"$unset": {"bg_url": ""}}
         )
         
         if result.modified_count > 0:
-            await interaction.response.send_message(f"♻️ Background reset to default for {member.mention}.", ephemeral=True)
+            await interaction.response.send_message(f"♻️ Global background reset to default for {member.mention}.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"ℹ️ {member.display_name} already has the default background.", ephemeral=True)    
-
+            await interaction.response.send_message(f"ℹ️ {member.display_name} already has the default background.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Leveling(bot))
