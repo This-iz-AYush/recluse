@@ -123,7 +123,9 @@ class ListPaginator(discord.ui.View):
             ]
 
         # 3. Sort Data
-        if self.active_sort == "genre":
+        if self.active_sort == "default":
+            result.sort(key=lambda item: item.get("list_status", {}).get("updated_at", ""), reverse=True)
+        elif self.active_sort == "genre":
             def get_primary_genre(item):
                 genres = item.get("node", {}).get("genres", [])
                 return genres[0].get("name", "zzzz") if genres else "zzzz"
@@ -306,7 +308,11 @@ class Anime(commands.Cog):
             return await ctx.send("❌ **Configuration Error:** API key is missing. Check your environment variables.")
 
         url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
-        params = {'limit': 1000, 'fields': 'list_status,genres'}
+        params = {
+            'limit': 1000, 
+            'fields': 'list_status,genres',
+            'sort': 'list_updated_at'
+        }
         headers = {
             "X-MAL-CLIENT-ID": client_id.strip(),
             "User-Agent": "Recluse Discord Bot"
