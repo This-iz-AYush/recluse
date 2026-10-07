@@ -3,6 +3,7 @@ leveling.py  —  Recluse Bot  v2.0
 ═══════════════════════════════════════════════════════════════════════
 Dual-Track XP System (Text & Voice) with anti-AFK, quality filters, 
 and highly customized premium Pillow rank cards.
+Now featuring Hybrid Commands (Slash + Prefix) & Global Backgrounds.
 ═══════════════════════════════════════════════════════════════════════
 """
 
@@ -350,6 +351,11 @@ class Leveling(commands.Cog):
         if message.author.bot or not message.guild or not hasattr(self.bot, "db"):
             return
 
+        # Do not process XP if the message is a command
+        ctx = await self.bot.get_context(message)
+        if ctx.valid:
+            return
+
         cfg = await self._get_cfg(message.guild.id)
         if not cfg.get("leveling_enabled", True):
             return
@@ -427,22 +433,22 @@ class Leveling(commands.Cog):
     async def _before_voice(self):
         await self.bot.wait_until_ready()
 
+
     @commands.hybrid_command(name="rank", description="View your Text & Voice XP rank card.")
     @app_commands.describe(member="Member to look up (default: yourself).")
-    async def rank(self, interaction: discord.Interaction, member: discord.Member | None = None):
-        if not interaction.guild:
-            return await interaction.response.send_message("Server-only.", ephemeral=True)
+    async def rank(self, ctx: commands.Context, member: discord.Member | None = None):
+        if not ctx.guild:
+            return await ctx.send("Server-only.", ephemeral=True)
             
-        target = member or interaction.user
+        target = member or ctx.author
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
 
-        await interaction.response.defer()
+        # Tell Discord to expect a delay (avoids 'Interaction Failed' on slow downloads)
+        await ctx.defer()
 
-        # Fetch guild-specific XP stats
-        doc = await self._get_user(interaction.guild.id, target.id)
+        doc = await self._get_user(ctx.guild.id, target.id)
         
-        # Fetch global user settings for the background
         user_doc = await self.bot.db.users.find_one({"user_id": target.id})
         bg_url = user_doc.get("bg_url") if user_doc else None
         
@@ -452,7 +458,7 @@ class Leveling(commands.Cog):
         v_xp = doc.get("voice_xp", 0)
         v_lvl, v_cur, v_req = _level_from_xp(v_xp)
 
-        cursor = self.bot.db.levels.find({"guild_id": interaction.guild.id}).sort("total_xp", -1)
+        cursor = self.bot.db.levels.find({"guild_id": ctx.guild.id}).sort("total_xp", -1)
         rank_pos = 1
         async for entry in cursor:
             if entry["user_id"] == target.id:
@@ -460,31 +466,31 @@ class Leveling(commands.Cog):
             rank_pos += 1
 
         image_buffer = await create_rank_card(
-            target, interaction.guild.name, 
+            target, ctx.guild.name, 
             t_lvl, t_cur, t_req, 
             v_lvl, v_cur, v_req, 
             rank_pos, bg_url
         )
         file = discord.File(fp=image_buffer, filename="rank.png")
-        await interaction.followup.send(file=file)
+        await ctx.send(file=file)
 
     @commands.hybrid_command(name="leaderboard", description="View the global XP leaderboard.")
     @app_commands.describe(page="Page number to jump to.")
-    async def leaderboard(self, interaction: discord.Interaction, page: int = 1):
-        if not interaction.guild:
-            return await interaction.response.send_message("Server-only.", ephemeral=True)
+    async def leaderboard(self, ctx: commands.Context, page: int = 1):
+        if not ctx.guild:
+            return await ctx.send("Server-only.", ephemeral=True)
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
 
-        await interaction.response.defer()
+        await ctx.defer()
         PAGE_SIZE = 10
 
         entries = await self.bot.db.levels.find(
-            {"guild_id": interaction.guild.id}
+            {"guild_id": ctx.guild.id}
         ).sort("total_xp", -1).to_list(200)
 
         if not entries:
-            return await interaction.followup.send("No XP data recorded yet.")
+            return await ctx.send("No XP data recorded yet.")
 
         pages: list[discord.Embed] = []
         medal = ["🥇", "🥈", "🥉"]
@@ -492,7 +498,7 @@ class Leveling(commands.Cog):
         for i in range(0, len(entries), PAGE_SIZE):
             chunk = entries[i : i + PAGE_SIZE]
             embed = discord.Embed(
-                title=f"📊 Global Leaderboard — {interaction.guild.name}",
+                title=f"📊 Global Leaderboard — {ctx.guild.name}",
                 color=discord.Color(0x5865F2),
                 timestamp=datetime.datetime.utcnow(),
             )
@@ -503,7 +509,7 @@ class Leveling(commands.Cog):
                 v_xp = entry.get("voice_xp", 0)
                 tot  = entry.get("total_xp", t_xp + v_xp)
                 m    = medal[rank - 1] if rank <= 3 else f"`#{rank}`"
-                member = interaction.guild.get_member(uid)
+                member = ctx.guild.get_member(uid)
                 name   = member.display_name if member else f"User {uid}"
                 lines.append(f"{m} **{name}** — `{format_xp(tot)}` Total XP (💬 {format_xp(t_xp)} | 🎙️ {format_xp(v_xp)})")
             
@@ -512,83 +518,81 @@ class Leveling(commands.Cog):
             pages.append(embed)
 
         if not pages:
-            return await interaction.followup.send("No data.")
+            return await ctx.send("No data.")
 
         start = max(0, min(page - 1, len(pages) - 1))
-        view  = LeaderboardView(pages, interaction.user.id)
+        view  = LeaderboardView(pages, ctx.author.id)
         view.current = start
         view._update()
-        await interaction.followup.send(embed=pages[start], view=view)
+        await ctx.send(embed=pages[start], view=view)
 
     # =======================================================
     # BACKGROUND MANAGEMENT COMMANDS
     # =======================================================
 
-    @commands.hybrid_command(name="addbackground", description="Add a new background to the public gallery (Owner Only).")
+    @commands.hybrid_command(name="addbg", description="Add a new background to the public gallery (Owner Only).")
     @app_commands.describe(name="Name for the background", url="Permanent direct image link (e.g., Imgur)")
-    async def add_background(self, interaction: discord.Interaction, name: str, url: str):
-        if not await self.bot.is_owner(interaction.user):
-            return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+    async def add_background(self, ctx: commands.Context, name: str, url: str):
+        if not await self.bot.is_owner(ctx.author):
+            return await ctx.send("❌ This command is restricted to the bot owner.", ephemeral=True)
             
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
             
         if not (url.startswith("http://") or url.startswith("https://")):
-            return await interaction.response.send_message("Please provide a valid image URL.", ephemeral=True)
+            return await ctx.send("Please provide a valid image URL.", ephemeral=True)
 
         await self.bot.db.backgrounds.update_one(
             {"name": name},
             {"$set": {"url": url}},
             upsert=True
         )
-        await interaction.response.send_message(f"✅ Background **{name}** added to the public gallery!", ephemeral=True)
+        await ctx.send(f"✅ Background **{name}** added to the public gallery!", ephemeral=True)
 
     @commands.hybrid_command(name="removebg", description="Remove a background from the public gallery (Owner Only).")
-    async def remove_background(self, interaction: discord.Interaction, name: str):
-        if not await self.bot.is_owner(interaction.user):
-            return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+    async def remove_background(self, ctx: commands.Context, name: str):
+        if not await self.bot.is_owner(ctx.author):
+            return await ctx.send("❌ This command is restricted to the bot owner.", ephemeral=True)
             
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
             
         result = await self.bot.db.backgrounds.delete_one({"name": name})
         
         if result.deleted_count > 0:
-            await interaction.response.send_message(f"🗑️ Background **{name}** has been removed.", ephemeral=True)
+            await ctx.send(f"🗑️ Background **{name}** has been removed.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"⚠️ Could not find a background named **{name}**.", ephemeral=True)
+            await ctx.send(f"⚠️ Could not find a background named **{name}**.", ephemeral=True)
 
     @commands.hybrid_command(name="setbg", description="Choose a custom background for your rank card from the gallery.")
-    async def set_background(self, interaction: discord.Interaction):
+    async def set_background(self, ctx: commands.Context):
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
 
-        # Fetch available backgrounds
         backgrounds = await self.bot.db.backgrounds.find().to_list(100)
         
         if not backgrounds:
-            return await interaction.response.send_message("No custom backgrounds are currently available in the gallery.", ephemeral=True)
+            return await ctx.send("No custom backgrounds are currently available in the gallery.", ephemeral=True)
             
-        view = BackgroundSelector(backgrounds, interaction.user.id, self.bot.db)
+        view = BackgroundSelector(backgrounds, ctx.author.id, self.bot.db)
         embed = await view.get_current_embed()
         
-        # Send interactive preview
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await ctx.send(embed=embed, view=view, ephemeral=True)
 
     @commands.hybrid_command(name="resetbg", description="Remove your custom background and revert to the default theme.")
-    async def reset_background(self, interaction: discord.Interaction):
+    async def reset_background(self, ctx: commands.Context):
         if not hasattr(self.bot, "db"):
-            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            return await ctx.send("❌ Database not connected.", ephemeral=True)
 
         result = await self.bot.db.users.update_one(
-            {"user_id": interaction.user.id},
+            {"user_id": ctx.author.id},
             {"$unset": {"bg_url": ""}}
         )
         
         if result.modified_count > 0:
-            await interaction.response.send_message("♻️ Your background has been reset to the default theme.", ephemeral=True)
+            await ctx.send("♻️ Your background has been reset to the default theme.", ephemeral=True)
         else:
-            await interaction.response.send_message("ℹ️ You already have the default background.", ephemeral=True)
+            await ctx.send("ℹ️ You already have the default background.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Leveling(bot))
