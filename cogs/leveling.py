@@ -51,6 +51,7 @@ async def create_rank_card(
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(bg_url) as resp:
+                    resp.raise_for_status()
                     bg_bytes = await resp.read()
             
             base_img = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
@@ -202,6 +203,59 @@ class LeaderboardView(discord.ui.View):
     async def next_btn(self, interaction: discord.Interaction, _btn):
         self.current += 1
         await self._show(interaction)
+
+
+class BackgroundSelector(discord.ui.View):
+    def __init__(self, backgrounds: list[dict], author_id: int, db):
+        super().__init__(timeout=180)
+        self.backgrounds = backgrounds
+        self.author_id = author_id
+        self.db = db
+        self.current = 0
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.current == 0
+        self.next_btn.disabled = self.current >= len(self.backgrounds) - 1
+
+    async def get_current_embed(self) -> discord.Embed:
+        bg = self.backgrounds[self.current]
+        embed = discord.Embed(
+            title=f"Background Preview ({self.current + 1} / {len(self.backgrounds)})",
+            description=f"**Name:** {bg['name']}",
+            color=discord.Color(0x5865F2)
+        )
+        embed.set_image(url=bg['url'])
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Not your menu.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+
+    @discord.ui.button(label="Select This Background", style=discord.ButtonStyle.primary)
+    async def select_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bg = self.backgrounds[self.current]
+        
+        await self.db.users.update_one(
+            {"user_id": self.author_id},
+            {"$set": {"bg_url": bg["url"]}},
+            upsert=True
+        )
+        await interaction.response.edit_message(content=f"✅ Your rank background has been set to **{bg['name']}**!", embed=None, view=None)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
 
 
 class Leveling(commands.Cog):
@@ -373,7 +427,7 @@ class Leveling(commands.Cog):
     async def _before_voice(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="rank", description="View your Text & Voice XP rank card.")
+    @commands.hybrid_command(name="rank", description="View your Text & Voice XP rank card.")
     @app_commands.describe(member="Member to look up (default: yourself).")
     async def rank(self, interaction: discord.Interaction, member: discord.Member | None = None):
         if not interaction.guild:
@@ -414,7 +468,7 @@ class Leveling(commands.Cog):
         file = discord.File(fp=image_buffer, filename="rank.png")
         await interaction.followup.send(file=file)
 
-    @app_commands.command(name="leaderboard", description="View the global XP leaderboard.")
+    @commands.hybrid_command(name="leaderboard", description="View the global XP leaderboard.")
     @app_commands.describe(page="Page number to jump to.")
     async def leaderboard(self, interaction: discord.Interaction, page: int = 1):
         if not interaction.guild:
@@ -466,9 +520,13 @@ class Leveling(commands.Cog):
         view._update()
         await interaction.followup.send(embed=pages[start], view=view)
 
-    @app_commands.command(name="setbg", description="Set a custom global background image for a user's rank card (Owner Only).")
-    @app_commands.describe(member="The member to assign the background to.", url="Direct link to a PNG or JPG image.")
-    async def set_background(self, interaction: discord.Interaction, member: discord.Member, url: str):
+    # =======================================================
+    # BACKGROUND MANAGEMENT COMMANDS
+    # =======================================================
+
+    @commands.hybrid_command(name="addbackground", description="Add a new background to the public gallery (Owner Only).")
+    @app_commands.describe(name="Name for the background", url="Permanent direct image link (e.g., Imgur)")
+    async def add_background(self, interaction: discord.Interaction, name: str, url: str):
         if not await self.bot.is_owner(interaction.user):
             return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
             
@@ -478,32 +536,59 @@ class Leveling(commands.Cog):
         if not (url.startswith("http://") or url.startswith("https://")):
             return await interaction.response.send_message("Please provide a valid image URL.", ephemeral=True)
 
-        await self.bot.db.users.update_one(
-            {"user_id": member.id},
-            {"$set": {"bg_url": url}},
+        await self.bot.db.backgrounds.update_one(
+            {"name": name},
+            {"$set": {"url": url}},
             upsert=True
         )
-        
-        await interaction.response.send_message(f"🖼️ Global rank card background updated successfully for {member.mention}!", ephemeral=True)
+        await interaction.response.send_message(f"✅ Background **{name}** added to the public gallery!", ephemeral=True)
 
-    @app_commands.command(name="resetbg", description="Remove a custom background globally and revert to default (Owner Only).")
-    @app_commands.describe(member="The member whose background you want to reset.")
-    async def reset_background(self, interaction: discord.Interaction, member: discord.Member):
+    @commands.hybrid_command(name="removebg", description="Remove a background from the public gallery (Owner Only).")
+    async def remove_background(self, interaction: discord.Interaction, name: str):
         if not await self.bot.is_owner(interaction.user):
             return await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
             
         if not hasattr(self.bot, "db"):
             return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+            
+        result = await self.bot.db.backgrounds.delete_one({"name": name})
+        
+        if result.deleted_count > 0:
+            await interaction.response.send_message(f"🗑️ Background **{name}** has been removed.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ Could not find a background named **{name}**.", ephemeral=True)
+
+    @commands.hybrid_command(name="setbg", description="Choose a custom background for your rank card from the gallery.")
+    async def set_background(self, interaction: discord.Interaction):
+        if not hasattr(self.bot, "db"):
+            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
+
+        # Fetch available backgrounds
+        backgrounds = await self.bot.db.backgrounds.find().to_list(100)
+        
+        if not backgrounds:
+            return await interaction.response.send_message("No custom backgrounds are currently available in the gallery.", ephemeral=True)
+            
+        view = BackgroundSelector(backgrounds, interaction.user.id, self.bot.db)
+        embed = await view.get_current_embed()
+        
+        # Send interactive preview
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @commands.hybrid_command(name="resetbg", description="Remove your custom background and revert to the default theme.")
+    async def reset_background(self, interaction: discord.Interaction):
+        if not hasattr(self.bot, "db"):
+            return await interaction.response.send_message("❌ Database not connected.", ephemeral=True)
 
         result = await self.bot.db.users.update_one(
-            {"user_id": member.id},
+            {"user_id": interaction.user.id},
             {"$unset": {"bg_url": ""}}
         )
         
         if result.modified_count > 0:
-            await interaction.response.send_message(f"♻️ Global background reset to default for {member.mention}.", ephemeral=True)
+            await interaction.response.send_message("♻️ Your background has been reset to the default theme.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"ℹ️ {member.display_name} already has the default background.", ephemeral=True)
+            await interaction.response.send_message("ℹ️ You already have the default background.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Leveling(bot))
