@@ -50,8 +50,13 @@ async def create_rank_card(
     
     if bg_url:
         try:
+            # Add a browser User-Agent to bypass hotlink protection (403 Forbidden)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+            }
+            
             async with aiohttp.ClientSession() as session:
-                async with session.get(bg_url) as resp:
+                async with session.get(bg_url, headers=headers) as resp:
                     resp.raise_for_status()
                     bg_bytes = await resp.read()
             
@@ -74,7 +79,9 @@ async def create_rank_card(
             overlay = Image.new("RGBA", (width, height), (30, 31, 34, 150))
             card = Image.alpha_composite(base_img, overlay)
             
-        except Exception:
+        except Exception as e:
+            # Print the error to your console so you know exactly why it failed
+            print(f"Failed to load background ({bg_url}): {e}")
             card = Image.new("RGBA", (width, height), bg_color)
     else:
         card = Image.new("RGBA", (width, height), bg_color)
