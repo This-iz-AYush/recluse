@@ -8,7 +8,7 @@ Features:
   • /birthday list        — Upcoming birthdays in the server
   • /birthday remove      — Delete your birthday
   • /birthdaysetup        — Admin: set the birthday announcement channel + role
-  • Auto-celebration task — Posts embed + assigns role at midnight UTC on birthday
+  • Auto-celebration task — Posts embed + assigns role at midnight IST on birthday
   • Age calculation (optional — only if user opts in)
   • Timezone-aware (uses server's configured timezone if set)
 """
@@ -42,18 +42,22 @@ class Birthdays(commands.Cog):
         self.birthday_task.cancel()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Daily birthday check (runs every hour, fires at midnight UTC)
+    # Daily birthday check (runs every hour, fires at midnight IST)
     # ─────────────────────────────────────────────────────────────────────────
 
     @tasks.loop(hours=1)
     async def birthday_task(self):
         if not hasattr(self.bot, "db"):
             return
-        now   = datetime.datetime.utcnow()
+        
+        # Set timezone to IST (UTC +5:30)
+        ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        now = datetime.datetime.now(ist)
+        
         month = now.month
         day   = now.day
 
-        # Only fire in the first hour of the day (0:00–1:00 UTC)
+        # Only fire in the first hour of the day (0:00–1:00 IST)
         if now.hour != 0:
             return
 
