@@ -61,7 +61,30 @@ class Birthdays(commands.Cog):
         if now.hour != 0:
             return
 
-        # Find all birthdays matching today (month and day)
+        # ==========================================
+        # 1. CLEANUP PHASE: Remove yesterday's roles
+        # ==========================================
+        settings = await self.bot.db.guild_settings.find({"birthday_role": {"$exists": True, "$ne": None}}).to_list(None)
+        
+        for s in settings:
+            guild = self.bot.get_guild(s.get("guild_id"))
+            if not guild:
+                continue
+                
+            role = guild.get_role(s.get("birthday_role"))
+            if not role:
+                continue
+                
+            # Remove the role from anyone who still has it from yesterday
+            for member in role.members:
+                try:
+                    await member.remove_roles(role, reason="Birthday ended (daily cleanup).")
+                except discord.Forbidden:
+                    pass
+
+        # ==========================================
+        # 2. ASSIGNMENT PHASE: Give to today's birthdays
+        # ==========================================
         docs = await self.bot.db.birthdays.find(
             {"month": month, "day": day}
         ).to_list(None)
@@ -112,20 +135,12 @@ class Birthdays(commands.Cog):
                     except discord.Forbidden:
                         pass
 
-            # Assign birthday role (remove after 24 hours)
+            # Assign birthday role (It will be removed automatically tomorrow at midnight!)
             if role_id:
                 role = guild.get_role(role_id)
                 if role:
                     try:
                         await member.add_roles(role, reason="Birthday!")
-                        # Schedule removal after 24 hours
-                        async def _remove_role(m=member, r=role):
-                            await asyncio.sleep(86400)
-                            try:
-                                await m.remove_roles(r, reason="Birthday role expired")
-                            except Exception:
-                                pass
-                        asyncio.ensure_future(_remove_role())
                     except discord.Forbidden:
                         pass
 
