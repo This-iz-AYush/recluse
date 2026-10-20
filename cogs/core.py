@@ -702,14 +702,25 @@ class Core(commands.Cog):
         self.status_cycle = cycle(self.STATUS_MESSAGES)
         self.cycle_bot_status.start()
         self.uptime_heartbeat.start()
+        
+        # Hook the global slash command checker
+        self._original_interaction_check = self.bot.tree.interaction_check
+        self.bot.tree.interaction_check = self.global_slash_check
 
     def cog_unload(self):
         self.cycle_bot_status.cancel()
         self.uptime_heartbeat.cancel()
+        # Restore the original check to prevent hook stacking on cog reloads
+        self.bot.tree.interaction_check = self._original_interaction_check
 
-    # ─── blacklist guard ──────────────────────────────────────────────────────
+    # ─── global access and dashboard granular permission guards ───────────────
 
-    async def cog_check(self, ctx: commands.Context) -> bool:
+    async def bot_check(self, ctx: commands.Context) -> bool:
+        """
+        Global check applied to EVERY prefix and hybrid command executed in the bot.
+        Handles global user blacklisting AND dashboard granular permissions.
+        """
+        # 1. Global User Blacklist
         if hasattr(self.bot, "db"):
             bl = await self.bot.db.global_blacklist.find_one(
                 {"target_id": ctx.author.id, "type": "user"}
@@ -720,6 +731,105 @@ class Core(commands.Cog):
                 except Exception:
                     pass
                 return False
+
+        # 2. Granular Dashboard Permissions (Only inside guilds)
+        if ctx.guild and ctx.command and hasattr(self.bot, 'db'):
+            cmd_name = ctx.command.root_parent.name if ctx.command.root_parent else ctx.command.name
+            sub_name = ctx.command.name if ctx.command.parent else None
+            cog_name = ctx.command.cog_name
+
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": ctx.guild.id})
+            if settings:
+                
+                # A. Module Level Lock (Blocks Everyone)
+                if cog_name and cog_name in settings.get("disabled_cogs", []):
+                    raise commands.CheckFailure(f"❌ The `{cog_name}` module is currently disabled in this server.")
+
+                # B. Granular Command Settings
+                cmd_settings = settings.get("command_settings", {}).get(cmd_name)
+                if cmd_settings:
+                    
+                    # Subcommand Check
+                    if sub_name and sub_name in cmd_settings.get("disabled_subcommands", []):
+                        raise commands.CheckFailure(f"❌ The `{cmd_name} {sub_name}` command has been disabled by server admins.")
+
+                    # Bypass Channel & Role restrictions for Server Administrators
+                    if not ctx.author.guild_permissions.administrator:
+                        ch_id = str(ctx.channel.id)
+                        roles = [str(r.id) for r in ctx.author.roles]
+
+                        allow_ch = cmd_settings.get("allowed_channels", [])
+                        ign_ch = cmd_settings.get("ignored_channels", [])
+                        allow_role = cmd_settings.get("allowed_roles", [])
+                        ign_role = cmd_settings.get("ignored_roles", [])
+
+                        # Channel Routing
+                        if allow_ch and ch_id not in allow_ch:
+                            raise commands.CheckFailure("❌ This command cannot be used in this channel.")
+                        if ign_ch and ch_id in ign_ch:
+                            raise commands.CheckFailure("❌ This command is disabled in this channel.")
+                        
+                        # Role Routing
+                        if allow_role and not any(r in allow_role for r in roles):
+                            raise commands.CheckFailure("❌ You do not have the required roles to use this command.")
+                        if ign_role and any(r in ign_role for r in roles):
+                            raise commands.CheckFailure("❌ Your role is blacklisted from using this command.")
+
+        return True
+
+    async def global_slash_check(self, interaction: discord.Interaction) -> bool:
+        """
+        Global check applied to EVERY pure app_command (Slash Command) executed.
+        Replicates the exact same granular rules as bot_check.
+        """
+        # 1. Global User Blacklist
+        if hasattr(self.bot, "db"):
+            bl = await self.bot.db.global_blacklist.find_one(
+                {"target_id": interaction.user.id, "type": "user"}
+            )
+            if bl:
+                await interaction.response.send_message("❌ **Access Denied:** You are globally blacklisted.", ephemeral=True)
+                return False
+
+        # 2. Granular Dashboard Permissions
+        if interaction.guild and interaction.command and hasattr(self.bot, 'db'):
+            cmd = interaction.command
+            cmd_name = cmd.root_parent.name if getattr(cmd, 'root_parent', None) else cmd.name
+            sub_name = cmd.name if getattr(cmd, 'parent', None) else None
+            cog_name = cmd.binding.__cog_name__ if hasattr(cmd, 'binding') and hasattr(cmd.binding, '__cog_name__') else None
+            
+            settings = await self.bot.db.guild_settings.find_one({"guild_id": interaction.guild.id})
+            if settings:
+                if cog_name and cog_name in settings.get("disabled_cogs", []):
+                    raise app_commands.CheckFailure(f"❌ The `{cog_name}` module is currently disabled in this server.")
+
+                cmd_settings = settings.get("command_settings", {}).get(cmd_name)
+                if cmd_settings:
+                    if sub_name and sub_name in cmd_settings.get("disabled_subcommands", []):
+                        raise app_commands.CheckFailure(f"❌ The `{cmd_name} {sub_name}` command has been disabled by server admins.")
+
+                    if isinstance(interaction.user, discord.Member) and not interaction.user.guild_permissions.administrator:
+                        ch_id = str(interaction.channel_id)
+                        roles = [str(r.id) for r in interaction.user.roles]
+
+                        allow_ch = cmd_settings.get("allowed_channels", [])
+                        ign_ch = cmd_settings.get("ignored_channels", [])
+                        allow_role = cmd_settings.get("allowed_roles", [])
+                        ign_role = cmd_settings.get("ignored_roles", [])
+
+                        if allow_ch and ch_id not in allow_ch:
+                            raise app_commands.CheckFailure("❌ This command cannot be used in this channel.")
+                        if ign_ch and ch_id in ign_ch:
+                            raise app_commands.CheckFailure("❌ This command is disabled in this channel.")
+
+                        if allow_role and not any(r in allow_role for r in roles):
+                            raise app_commands.CheckFailure("❌ You do not have the required roles to use this command.")
+                        if ign_role and any(r in ign_role for r in roles):
+                            raise app_commands.CheckFailure("❌ Your role is blacklisted from using this command.")
+
+        # Chain to existing check if one was present
+        if self._original_interaction_check:
+            return await self._original_interaction_check(interaction)
         return True
 
     # ─── command autocomplete ─────────────────────────────────────────────────
