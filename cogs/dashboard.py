@@ -6,6 +6,7 @@ import os
 import uuid
 import datetime
 import urllib.parse
+import json
 import aiohttp
 from aiohttp import web
 import discord
@@ -49,12 +50,13 @@ class Dashboard(commands.Cog):
         return "https://cdn.discordapp.com/embed/avatars/0.png"
 
     def _get_ambient_bg(self):
-        # Global animated mesh gradient for the Glassmorphism aesthetic
+        # Global animated mesh gradient for the deeper Glassmorphism aesthetic
         return """
-        <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505]">
-            <div class="absolute top-[-15%] left-[-10%] w-[500px] h-[500px] bg-purple-600/20 rounded-full mix-blend-screen filter blur-[120px] opacity-60 animate-pulse"></div>
-            <div class="absolute top-[20%] right-[-10%] w-[400px] h-[400px] bg-blue-600/20 rounded-full mix-blend-screen filter blur-[120px] opacity-60 animate-pulse" style="animation-delay: 2s;"></div>
-            <div class="absolute bottom-[-20%] left-[20%] w-[600px] h-[600px] bg-indigo-600/20 rounded-full mix-blend-screen filter blur-[120px] opacity-50 animate-pulse" style="animation-delay: 4s;"></div>
+        <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#0a0a0c]">
+            <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-purple-600/30 rounded-full mix-blend-screen filter blur-[150px] opacity-80 animate-pulse"></div>
+            <div class="absolute top-[20%] right-[-10%] w-[500px] h-[500px] bg-blue-600/30 rounded-full mix-blend-screen filter blur-[140px] opacity-80 animate-pulse" style="animation-delay: 2s;"></div>
+            <div class="absolute bottom-[-20%] left-[20%] w-[700px] h-[700px] bg-indigo-600/30 rounded-full mix-blend-screen filter blur-[140px] opacity-70 animate-pulse" style="animation-delay: 4s;"></div>
+            <div class="absolute top-[40%] left-[40%] w-[400px] h-[400px] bg-teal-500/20 rounded-full mix-blend-screen filter blur-[120px] opacity-60 animate-pulse" style="animation-delay: 1s;"></div>
         </div>
         """
 
@@ -101,12 +103,12 @@ class Dashboard(commands.Cog):
                     </head>
                     <body class="bg-transparent text-zinc-100 min-h-screen flex items-center justify-center p-6 relative">
                         {self._get_ambient_bg()}
-                        <div class="z-10 max-w-md w-full bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 text-center shadow-[0_8px_32px_0_rgba(0,0,0,0.3)]">
-                            <div class="w-16 h-16 mx-auto rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mb-6">
-                                <i class="fa-solid fa-screwdriver-wrench text-amber-400 text-2xl"></i>
+                        <div class="z-10 max-w-md w-full bg-white/10 backdrop-blur-2xl border border-white/20 rounded-3xl p-10 text-center shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                            <div class="w-20 h-20 mx-auto rounded-3xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mb-6 shadow-lg shadow-amber-500/10">
+                                <i class="fa-solid fa-screwdriver-wrench text-amber-400 text-3xl"></i>
                             </div>
-                            <h1 class="text-2xl font-bold text-white mb-2">Web Maintenance</h1>
-                            <p class="text-zinc-400 text-sm mb-6 leading-relaxed">
+                            <h1 class="text-3xl font-bold text-white mb-3">Web Maintenance</h1>
+                            <p class="text-zinc-300 text-sm mb-6 leading-relaxed">
                                 The management console is currently undergoing maintenance. Discord bot functions and commands remain fully active.
                             </p>
                         </div>
@@ -133,7 +135,7 @@ class Dashboard(commands.Cog):
                 <style>
                     .spinner {{
                         border: 2px solid rgba(255,255,255,0.1);
-                        width: 22px; height: 22px;
+                        width: 24px; height: 24px;
                         border-radius: 50%;
                         border-left-color: #3b82f6;
                         animation: spin 0.8s linear infinite;
@@ -144,21 +146,21 @@ class Dashboard(commands.Cog):
             <body class="bg-transparent text-zinc-100 min-h-screen flex flex-col justify-between p-8 relative">
                 {self._get_ambient_bg()}
                 <div class="max-w-xl mx-auto my-auto w-full z-10">
-                    <div class="flex items-center gap-3 mb-6">
-                        <img src="{bot_avatar}" class="w-10 h-10 rounded-xl border border-white/10 shadow-lg" alt="Recluse">
+                    <div class="flex items-center gap-4 mb-8">
+                        <img src="{bot_avatar}" class="w-12 h-12 rounded-xl border border-white/20 shadow-[0_4px_15px_rgba(0,0,0,0.3)]" alt="Recluse">
                         <div>
-                            <h1 class="font-bold text-lg text-white">Recluse Security Gateway</h1>
-                            <p class="text-xs text-zinc-400 font-mono">DDoS &amp; Bot Protection</p>
+                            <h1 class="font-bold text-xl text-white drop-shadow-md">Recluse Security Gateway</h1>
+                            <p class="text-sm text-zinc-300 font-mono">DDoS &amp; Bot Protection</p>
                         </div>
                     </div>
-                    <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl p-6 mb-4 flex items-center justify-between shadow-[0_8px_32px_0_rgba(0,0,0,0.3)]">
-                        <div class="flex items-center gap-4">
+                    <div class="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-2xl p-6 mb-4 flex items-center justify-between shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                        <div class="flex items-center gap-5">
                             <div class="spinner"></div>
                             <div>
-                                <div class="text-sm font-semibold text-white">Verifying browser connection...</div>
+                                <div class="text-base font-semibold text-white">Verifying browser connection...</div>
                             </div>
                         </div>
-                        <span class="text-xs font-mono text-zinc-500">ID: {ray_id}</span>
+                        <span class="text-xs font-mono text-zinc-400 bg-black/30 px-2 py-1 rounded">ID: {ray_id}</span>
                     </div>
                 </div>
                 <script>
@@ -222,28 +224,28 @@ class Dashboard(commands.Cog):
         links_html = ""
         for key, href, icon, title in tabs:
             is_active = key == active_tab
-            active_classes = "bg-white/10 text-white border-white/20 shadow-[0_4px_12px_rgba(0,0,0,0.1)] font-medium" if is_active else "text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border-transparent"
+            active_classes = "bg-white/15 text-white border-white/30 shadow-[0_4px_15px_rgba(0,0,0,0.2)] font-medium" if is_active else "text-zinc-400 hover:text-white hover:bg-white/10 border-transparent transition-all"
             links_html += f"""
-            <a href="{href}" class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-sm transition {active_classes}">
-                <i class="fa-solid {icon} w-4 text-center"></i>
+            <a href="{href}" class="flex items-center gap-3 px-4 py-3 rounded-xl border text-sm transition {active_classes}">
+                <i class="fa-solid {icon} w-5 text-center text-lg"></i>
                 <span>{title}</span>
             </a>
             """
 
         return f"""
-        <aside class="w-64 bg-black/20 backdrop-blur-xl border-r border-white/10 flex flex-col flex-shrink-0 z-20">
-            <div class="p-4 border-b border-white/10 flex items-center gap-3">
-                <img src="{guild_icon}" class="w-10 h-10 rounded-xl object-cover border border-white/20" alt="{guild_name}">
+        <aside class="w-72 bg-black/30 backdrop-blur-3xl border-r border-white/10 flex flex-col flex-shrink-0 z-20 shadow-[4px_0_24px_rgba(0,0,0,0.2)]">
+            <div class="p-6 border-b border-white/10 flex items-center gap-4">
+                <img src="{guild_icon}" class="w-12 h-12 rounded-xl object-cover border border-white/30 shadow-md" alt="{guild_name}">
                 <div class="overflow-hidden">
-                    <h2 class="font-bold text-sm text-white truncate">{guild_name}</h2>
-                    <p class="text-[11px] font-mono text-zinc-400">{guild_id}</p>
+                    <h2 class="font-bold text-base text-white truncate drop-shadow-sm">{guild_name}</h2>
+                    <p class="text-xs font-mono text-zinc-400 mt-0.5">{guild_id}</p>
                 </div>
             </div>
-            <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+            <nav class="flex-1 p-4 space-y-1.5 overflow-y-auto">
                 {links_html}
             </nav>
-            <div class="p-3 border-t border-white/10">
-                <a href="/" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white rounded-lg hover:bg-white/5 transition">
+            <div class="p-4 border-t border-white/10">
+                <a href="/" class="flex items-center gap-3 px-4 py-3 text-sm font-medium text-zinc-400 hover:text-white rounded-xl hover:bg-white/10 transition shadow-sm border border-transparent hover:border-white/20">
                     <i class="fa-solid fa-arrow-left"></i>
                     <span>Switch Server</span>
                 </a>
@@ -332,25 +334,59 @@ class Dashboard(commands.Cog):
                 <title>Recluse | Discord Moderation</title>
                 <link rel="icon" type="image/png" href="{bot_avatar}">
                 <script src="https://cdn.tailwindcss.com"></script>
+                <style>
+                    /* Typewriter Animation */
+                    @keyframes typing {{
+                        from {{ width: 0 }}
+                        to {{ width: 100% }}
+                    }}
+                    @keyframes blink-caret {{
+                        from, to {{ border-color: transparent }}
+                        50% {{ border-color: rgba(255, 255, 255, 0.8); }}
+                    }}
+                    .typewriter-text {{
+                        display: inline-block;
+                        overflow: hidden;
+                        border-right: 4px solid rgba(255, 255, 255, 0.8);
+                        white-space: nowrap;
+                        margin: 0 auto;
+                        animation: typing 2.5s steps(30, end), blink-caret .75s step-end infinite;
+                        max-width: 100%;
+                    }}
+                    
+                    /* Fade-in up Animation */
+                    @keyframes fadeInUp {{
+                        from {{ opacity: 0; transform: translateY(30px); }}
+                        to {{ opacity: 1; transform: translateY(0); }}
+                    }}
+                    .fade-in-up {{
+                        animation: fadeInUp 1s ease-out forwards;
+                        opacity: 0;
+                    }}
+                    .delay-1 {{ animation-delay: 0.8s; }}
+                    .delay-2 {{ animation-delay: 1.2s; }}
+                </style>
             </head>
             <body class="bg-transparent text-zinc-100 min-h-screen flex flex-col font-sans relative">
                 {self._get_ambient_bg()}
-                <header class="border-b border-white/10 bg-black/20 backdrop-blur-md px-8 py-5 flex items-center justify-between z-10 w-full">
+                <header class="border-b border-white/10 bg-black/30 backdrop-blur-2xl px-8 py-5 flex items-center justify-between z-10 w-full shadow-lg">
                     <div class="flex items-center gap-3 font-bold text-lg max-w-7xl mx-auto w-full justify-between">
-                        <div class="flex items-center gap-3">
-                            <img src="{bot_avatar}" class="w-8 h-8 rounded-xl border border-white/20 shadow-lg" alt="Recluse">
-                            <span>Recluse</span>
+                        <div class="flex items-center gap-4">
+                            <img src="{bot_avatar}" class="w-10 h-10 rounded-xl border border-white/20 shadow-lg" alt="Recluse">
+                            <span class="text-xl tracking-wide">Recluse</span>
                         </div>
-                        <a href="/login" class="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600/90 hover:bg-blue-500 backdrop-blur-md text-white transition shadow-[0_4px_14px_0_rgba(37,99,235,0.39)]">Log In with Discord</a>
+                        <a href="/login" class="px-5 py-2.5 text-sm font-semibold rounded-xl bg-blue-600/90 hover:bg-blue-500 backdrop-blur-md text-white transition shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50">Log In with Discord</a>
                     </div>
                 </header>
 
-                <main class="flex-1 max-w-7xl mx-auto w-full px-8 flex flex-col items-center justify-center text-center py-20 z-10">
-                    <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight text-white max-w-3xl mb-6 drop-shadow-xl">Complete server governance.</h1>
-                    <p class="text-zinc-300 max-w-xl text-base sm:text-lg mb-10 leading-relaxed drop-shadow-md">Control modules, enforce granular command restrictions, automate raid lockdowns, and integrate generative models from a unified dashboard.</p>
-                    <div class="flex flex-wrap gap-4 justify-center">
-                        <a href="/login" class="px-6 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-sm transition shadow-[0_4px_20px_rgba(37,99,235,0.5)]">Open Management Console</a>
-                        <a href="{invite_link}" target="_blank" class="px-6 py-3.5 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/10 font-semibold text-sm transition shadow-[0_4px_20px_rgba(0,0,0,0.2)]">Add to Server</a>
+                <main class="flex-1 max-w-7xl mx-auto w-full px-8 flex flex-col items-center justify-center text-center py-20 z-10 overflow-hidden">
+                    <div class="inline-block max-w-full">
+                        <h1 class="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white mb-6 drop-shadow-2xl typewriter-text pr-2">Complete server governance.</h1>
+                    </div>
+                    <p class="text-zinc-300 max-w-2xl text-lg sm:text-xl mb-12 leading-relaxed drop-shadow-md fade-in-up delay-1">Control modules, enforce granular command restrictions, automate raid lockdowns, and integrate generative models from a unified dashboard.</p>
+                    <div class="flex flex-wrap gap-5 justify-center fade-in-up delay-2">
+                        <a href="/login" class="px-8 py-4 rounded-xl bg-blue-600/90 hover:bg-blue-500 font-bold text-base transition shadow-[0_8px_30px_rgba(37,99,235,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50">Open Management Console</a>
+                        <a href="{invite_link}" target="_blank" class="px-8 py-4 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 font-bold text-base transition shadow-[0_8px_30px_rgba(0,0,0,0.3),inset_0_1px_1px_rgba(255,255,255,0.1)] text-white">Add to Server</a>
                     </div>
                 </main>
             </body>
@@ -363,7 +399,7 @@ class Dashboard(commands.Cog):
 
         app_info = await self.bot.application_info()
         is_owner = int(user_session['discord_id']) == app_info.owner.id
-        owner_badge = '<a href="/owner_panel" class="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/30 backdrop-blur-md text-red-300 text-xs font-semibold hover:bg-red-500/30 transition"><i class="fa-solid fa-terminal mr-1.5"></i>Developer System</a>' if is_owner else ""
+        owner_badge = '<a href="/owner_panel" class="px-3 py-1.5 rounded-xl bg-red-500/20 border border-red-500/40 backdrop-blur-xl shadow-lg text-red-300 text-xs font-bold hover:bg-red-500/30 transition"><i class="fa-solid fa-terminal mr-2"></i>Developer System</a>' if is_owner else ""
 
         user_guilds = []
         access_token = user_session.get("access_token")
@@ -381,19 +417,19 @@ class Dashboard(commands.Cog):
             in_server = int(g['id']) in bot_guild_ids
             icon_url = f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png" if g.get('icon') else f"https://ui-avatars.com/api/?name={urllib.parse.quote(g['name'])}&background=18181b&color=fff"
             target_url = f"/manage/{g['id']}" if in_server else invite_link
-            btn_text = "Configure" if in_server else "Setup Bot"
-            btn_class = "bg-blue-600/90 hover:bg-blue-500 text-white shadow-lg border border-blue-500/50" if in_server else "bg-white/10 hover:bg-white/20 text-zinc-200 border border-white/10"
+            btn_text = "Configure Settings" if in_server else "Setup Bot"
+            btn_class = "bg-blue-600/90 hover:bg-blue-500 text-white shadow-lg border border-blue-500/50" if in_server else "bg-white/10 hover:bg-white/20 text-zinc-100 border border-white/20"
 
             cards_html += f"""
-            <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-5 flex flex-col justify-between hover:border-white/20 transition shadow-[0_8px_32px_0_rgba(0,0,0,0.2)]">
-                <div class="flex items-center gap-4 mb-5">
-                    <img src="{icon_url}" class="w-14 h-14 rounded-2xl object-cover border border-white/20 shadow-md" alt="{g['name']}">
+            <div class="bg-white/10 backdrop-blur-3xl border border-white/20 rounded-3xl p-6 flex flex-col justify-between hover:border-white/30 transition-all shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] group hover:-translate-y-1">
+                <div class="flex items-center gap-5 mb-6">
+                    <img src="{icon_url}" class="w-16 h-16 rounded-2xl object-cover border border-white/30 shadow-xl group-hover:scale-105 transition-transform" alt="{g['name']}">
                     <div class="overflow-hidden">
-                        <h3 class="font-bold text-white text-base truncate drop-shadow-sm">{g['name']}</h3>
-                        <span class="text-xs font-mono text-zinc-400">{g['id']}</span>
+                        <h3 class="font-bold text-white text-lg truncate drop-shadow-md">{g['name']}</h3>
+                        <span class="text-xs font-mono text-zinc-300 bg-black/30 px-2 py-0.5 rounded-md mt-1 inline-block">{g['id']}</span>
                     </div>
                 </div>
-                <a href="{target_url}" class="w-full py-2.5 rounded-xl {btn_class} backdrop-blur-md font-semibold text-xs text-center transition">{btn_text}</a>
+                <a href="{target_url}" class="w-full py-3 rounded-xl {btn_class} backdrop-blur-md font-bold text-sm text-center transition">{btn_text}</a>
             </div>
             """
 
@@ -406,29 +442,39 @@ class Dashboard(commands.Cog):
             <link rel="icon" type="image/png" href="{bot_avatar}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            <style>
+                .fade-in-up {{
+                    animation: fadeInUp 0.8s ease-out forwards;
+                    opacity: 0;
+                    transform: translateY(20px);
+                }}
+                @keyframes fadeInUp {{
+                    to {{ opacity: 1; transform: translateY(0); }}
+                }}
+            </style>
         </head>
         <body class="bg-transparent text-zinc-100 min-h-screen flex flex-col relative">
             {self._get_ambient_bg()}
-            <header class="bg-black/20 backdrop-blur-md border-b border-white/10 px-8 py-4 flex items-center justify-between z-10 shadow-lg">
-                <div class="flex items-center gap-3 font-bold text-lg">
-                    <img src="{bot_avatar}" class="w-8 h-8 rounded-xl border border-white/20 shadow-md" alt="Recluse">
-                    <span>Recluse Console</span>
+            <header class="bg-black/30 backdrop-blur-2xl border-b border-white/10 px-8 py-4 flex items-center justify-between z-10 shadow-xl">
+                <div class="flex items-center gap-4 font-bold text-xl">
+                    <img src="{bot_avatar}" class="w-10 h-10 rounded-xl border border-white/20 shadow-md" alt="Recluse">
+                    <span class="drop-shadow-md">Recluse Console</span>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-5">
                     {owner_badge}
-                    <div class="flex items-center gap-3 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl backdrop-blur-md">
-                        <img src="{user_avatar}" class="w-6 h-6 rounded-lg object-cover shadow-sm" alt="{user_name}">
-                        <span class="text-xs font-semibold text-white">{user_name}</span>
+                    <div class="flex items-center gap-3 bg-white/10 border border-white/20 px-4 py-2 rounded-xl backdrop-blur-xl shadow-inner">
+                        <img src="{user_avatar}" class="w-7 h-7 rounded-lg object-cover shadow-sm" alt="{user_name}">
+                        <span class="text-sm font-bold text-white drop-shadow-sm">{user_name}</span>
                     </div>
-                    <a href="/logout" class="text-zinc-400 hover:text-white text-sm transition drop-shadow"><i class="fa-solid fa-right-from-bracket"></i></a>
+                    <a href="/logout" class="text-zinc-300 hover:text-white text-lg transition drop-shadow hover:bg-white/10 p-2 rounded-xl"><i class="fa-solid fa-right-from-bracket"></i></a>
                 </div>
             </header>
-            <main class="flex-1 max-w-6xl w-full mx-auto p-8 z-10">
-                <div class="mb-8">
-                    <h1 class="text-3xl font-bold text-white mb-2 drop-shadow-md">Select a Server</h1>
-                    <p class="text-sm text-zinc-300 drop-shadow-sm">Choose a community to manage modules, automod, and permissions.</p>
+            <main class="flex-1 max-w-7xl w-full mx-auto p-10 z-10 fade-in-up">
+                <div class="mb-10 text-center">
+                    <h1 class="text-4xl font-extrabold text-white mb-3 drop-shadow-xl tracking-tight">Select a Server</h1>
+                    <p class="text-base text-zinc-300 drop-shadow-sm">Choose a community to manage modules, automod, and permissions.</p>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {cards_html}
                 </div>
             </main>
@@ -438,7 +484,7 @@ class Dashboard(commands.Cog):
         return web.Response(text=selector_html, content_type='text/html')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # MODULES & COMMANDS (Granular Dropdowns)
+    # MODULES & COMMANDS (Lazy Loaded Granular Dropdowns)
     # ─────────────────────────────────────────────────────────────────────────
 
     async def manage_modules(self, request):
@@ -458,8 +504,13 @@ class Dashboard(commands.Cog):
         disabled_cogs = settings.get("disabled_cogs", [])
         command_settings = settings.get("command_settings", {})
 
-        roles = [r for r in guild.roles if r.name != "@everyone"]
-        channels = guild.text_channels
+        # Prepare JSON payloads for the frontend to prevent massive DOM lag[cite: 1]
+        channels_data = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
+        roles_data = [{"id": str(r.id), "name": r.name} for r in guild.roles if r.name != "@everyone"]
+        
+        channels_json = json.dumps(channels_data)
+        roles_json = json.dumps(roles_data)
+        cmd_settings_json = json.dumps(command_settings)
 
         modules_html = ""
         for cog_name, cog in self.bot.cogs.items():
@@ -467,11 +518,10 @@ class Dashboard(commands.Cog):
                 continue
 
             cog_checked = "" if cog_name in disabled_cogs else "checked"
-            cog_opacity = "opacity-70" if cog_name in disabled_cogs else ""
+            cog_opacity = "opacity-60 grayscale-[30%]" if cog_name in disabled_cogs else ""
 
             # Hierarchical Command parsing
             cmds_dict = {}
-            
             if hasattr(cog, 'get_commands'):
                 for cmd in cog.get_commands():
                     if cmd.name not in cmds_dict:
@@ -491,109 +541,83 @@ class Dashboard(commands.Cog):
             commands_list_html = ""
             for cmd_name, cmd_data in cmds_dict.items():
                 db_data = command_settings.get(cmd_name, {})
-                allow_ch = db_data.get("allowed_channels", [])
-                ign_ch = db_data.get("ignored_channels", [])
-                allow_role = db_data.get("allowed_roles", [])
-                ign_role = db_data.get("ignored_roles", [])
                 dis_subs = db_data.get("disabled_subcommands", [])
 
-                def generate_options(items, selected_ids, is_role=False):
-                    opts = ""
-                    for item in items:
-                        is_sel = "checked" if str(item.id) in selected_ids else ""
-                        icon = "fa-at" if is_role else "fa-hashtag"
-                        opts += f"""
-                        <label class="flex items-center gap-3 p-2 hover:bg-white/10 rounded-xl cursor-pointer transition">
-                            <input type="checkbox" value="{item.id}" class="chk-input chk_{cmd_name}_{'role' if is_role else 'ch'} form-checkbox h-4 w-4 text-blue-500 rounded border-white/20 bg-black/30" {is_sel} onchange="updateLabel('{cmd_name}')">
-                            <span class="text-xs text-zinc-300"><i class="fa-solid {icon} text-zinc-500 mr-1.5"></i>{item.name}</span>
-                        </label>
-                        """
-                    return opts if opts else "<div class='p-2 text-xs text-zinc-500'>None available</div>"
-
-                allow_ch_opts = generate_options(channels, allow_ch)
-                ign_ch_opts = generate_options(channels, ign_ch)
-                allow_role_opts = generate_options(roles, allow_role, True)
-                ign_role_opts = generate_options(roles, ign_role, True)
-
+                # Subcommands remain hardcoded since there are very few of them
                 subs_html = ""
                 if cmd_data["subs"]:
                     subs_list = ""
                     for sub in cmd_data["subs"]:
                         sub_checked = "" if sub in dis_subs else "checked"
                         subs_list += f"""
-                        <label class="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-xl cursor-pointer hover:bg-white/10 transition">
-                            <span class="text-xs font-bold text-zinc-200">{cmd_name} {sub}</span>
-                            <div class="relative inline-block w-8 align-middle select-none">
-                                <input type="checkbox" value="{sub}" class="subchk_{cmd_name} absolute block w-4 h-4 rounded-full bg-white border-2 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none" {sub_checked} style="right: {'0' if sub_checked else 'auto'}; left: {'auto' if sub_checked else '0'}; border-color: {'#10b981' if sub_checked else '#52525b'};">
-                                <div class="block overflow-hidden h-4 rounded-full cursor-pointer transition-colors duration-300" style="background-color: {'#10b981' if sub_checked else '#3f3f46'};"></div>
+                        <label class="flex items-center justify-between p-3.5 bg-black/30 border border-white/10 rounded-xl cursor-pointer hover:bg-white/10 transition shadow-inner">
+                            <span class="text-sm font-bold text-zinc-200 drop-shadow-sm">{cmd_name} {sub}</span>
+                            <div class="relative inline-block w-10 align-middle select-none">
+                                <input type="checkbox" value="{sub}" class="subchk_{cmd_name} absolute block w-5 h-5 rounded-full bg-white border-2 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none" {sub_checked} style="right: {'0' if sub_checked else 'auto'}; left: {'auto' if sub_checked else '0'}; border-color: {'#3b82f6' if sub_checked else '#52525b'};">
+                                <div class="block overflow-hidden h-5 rounded-full cursor-pointer transition-colors duration-300" style="background-color: {'rgba(59,130,246,0.8)' if sub_checked else '#3f3f46'};"></div>
                             </div>
                         </label>
                         """
                     subs_html = f"""
-                    <div class="mt-4 pt-4 border-t border-white/10">
-                        <h4 class="text-sm font-bold text-white mb-3">Sub Commands:</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">{subs_list}</div>
+                    <div class="mt-5 pt-5 border-t border-white/10">
+                        <h4 class="text-sm font-extrabold text-white mb-3 tracking-wide">Sub Commands:</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">{subs_list}</div>
                     </div>
                     """
 
+                # Lazy-loaded Dropdown Blocks
                 commands_list_html += f"""
-                <div class="cmd-block mb-3 border border-white/10 bg-black/20 rounded-xl overflow-visible" data-cmd="{cmd_name}">
-                    <div class="p-4 flex items-center justify-between cursor-pointer hover:bg-white/5 transition rounded-xl" onclick="toggleCmdSettings('{cmd_name}')">
+                <div class="cmd-block mb-4 border border-white/10 bg-white/5 shadow-[0_4px_15px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-2xl overflow-visible transition-all" data-cmd="{cmd_name}">
+                    <div class="p-5 flex items-center justify-between cursor-pointer hover:bg-white/10 transition rounded-2xl" onclick="toggleCmdSettings('{cmd_name}')">
                         <div>
-                            <span class="text-sm font-bold text-white">/{cmd_name}</span>
-                            <p class="text-xs text-zinc-400 mt-0.5 truncate max-w-md">{cmd_data['desc']}</p>
+                            <span class="text-base font-extrabold text-white tracking-wide">/{cmd_name}</span>
+                            <p class="text-sm text-zinc-400 mt-1 truncate max-w-lg leading-relaxed">{cmd_data['desc']}</p>
                         </div>
-                        <i class="fa-solid fa-chevron-down text-zinc-500 text-xs transition transform" id="arr_{cmd_name}"></i>
+                        <i class="fa-solid fa-chevron-down text-zinc-400 text-sm transition transform" id="arr_{cmd_name}"></i>
                     </div>
-                    <div id="settings_{cmd_name}" class="hidden p-5 border-t border-white/10 bg-white/5 rounded-b-xl">
-                        <h4 class="text-sm font-bold text-white mb-4">Additional Permissions ({cmd_name})</h4>
+                    
+                    <div id="settings_{cmd_name}" class="hidden p-6 border-t border-white/10 bg-black/40 rounded-b-2xl backdrop-blur-xl">
+                        <h4 class="text-sm font-extrabold text-white mb-4 tracking-wide">Additional Permissions ({cmd_name})</h4>
                         <div class="space-y-4">
+                            
                             <!-- Allowed Channels -->
                             <div class="relative z-40 custom-dropdown">
-                                <label class="text-xs font-bold text-zinc-300 mb-1.5 block">Allowed Channels</label>
-                                <div class="bg-black/40 backdrop-blur-md border border-white/10 p-2.5 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 transition" onclick="toggleDrop('{cmd_name}_allow_ch', event)">
-                                    <span class="text-xs text-zinc-400 select-none truncate" id="lbl_{cmd_name}_allow_ch">Select Channel</span>
-                                    <i class="fa-solid fa-caret-down text-zinc-500 text-xs"></i>
+                                <label class="text-xs font-bold text-zinc-300 mb-2 block uppercase tracking-wider">Allowed Channels</label>
+                                <div class="bg-white/5 border border-white/10 p-3 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 hover:bg-white/10 transition shadow-inner" onclick="toggleDrop('{cmd_name}', 'allowed_channels', event)">
+                                    <span class="text-sm text-zinc-400 select-none truncate font-medium" id="lbl_{cmd_name}_allowed_channels">Select Channel</span>
+                                    <i class="fa-solid fa-caret-down text-zinc-500 text-sm"></i>
                                 </div>
-                                <div id="drop_{cmd_name}_allow_ch" class="hidden absolute top-full left-0 w-full mt-1.5 bg-[#1a1a1f]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto p-1.5">
-                                    <div class="cmd-data-allow-ch">{allow_ch_opts}</div>
-                                </div>
+                                <div id="drop_{cmd_name}_allowed_channels" class="hidden absolute top-full left-0 w-full mt-2 bg-[#121215]/95 backdrop-blur-3xl border border-white/20 rounded-xl shadow-[0_15px_40px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.1)] z-50 max-h-56 overflow-y-auto p-2 custom-scrollbar"></div>
                             </div>
 
                             <!-- Ignored Channels -->
                             <div class="relative z-30 custom-dropdown">
-                                <label class="text-xs font-bold text-zinc-300 mb-1.5 block">Ignored Channels</label>
-                                <div class="bg-black/40 backdrop-blur-md border border-white/10 p-2.5 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 transition" onclick="toggleDrop('{cmd_name}_ign_ch', event)">
-                                    <span class="text-xs text-zinc-400 select-none truncate" id="lbl_{cmd_name}_ign_ch">Select Channel</span>
-                                    <i class="fa-solid fa-caret-down text-zinc-500 text-xs"></i>
+                                <label class="text-xs font-bold text-zinc-300 mb-2 block uppercase tracking-wider">Ignored Channels</label>
+                                <div class="bg-white/5 border border-white/10 p-3 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 hover:bg-white/10 transition shadow-inner" onclick="toggleDrop('{cmd_name}', 'ignored_channels', event)">
+                                    <span class="text-sm text-zinc-400 select-none truncate font-medium" id="lbl_{cmd_name}_ignored_channels">Select Channel</span>
+                                    <i class="fa-solid fa-caret-down text-zinc-500 text-sm"></i>
                                 </div>
-                                <div id="drop_{cmd_name}_ign_ch" class="hidden absolute top-full left-0 w-full mt-1.5 bg-[#1a1a1f]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto p-1.5">
-                                    <div class="cmd-data-ign-ch">{ign_ch_opts}</div>
-                                </div>
+                                <div id="drop_{cmd_name}_ignored_channels" class="hidden absolute top-full left-0 w-full mt-2 bg-[#121215]/95 backdrop-blur-3xl border border-white/20 rounded-xl shadow-[0_15px_40px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.1)] z-50 max-h-56 overflow-y-auto p-2 custom-scrollbar"></div>
                             </div>
 
                             <!-- Allowed Roles -->
                             <div class="relative z-20 custom-dropdown">
-                                <label class="text-xs font-bold text-zinc-300 mb-1.5 block">Allowed Roles</label>
-                                <div class="bg-black/40 backdrop-blur-md border border-white/10 p-2.5 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 transition" onclick="toggleDrop('{cmd_name}_allow_role', event)">
-                                    <span class="text-xs text-zinc-400 select-none truncate" id="lbl_{cmd_name}_allow_role">Select Role</span>
-                                    <i class="fa-solid fa-caret-down text-zinc-500 text-xs"></i>
+                                <label class="text-xs font-bold text-zinc-300 mb-2 block uppercase tracking-wider">Allowed Roles</label>
+                                <div class="bg-white/5 border border-white/10 p-3 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 hover:bg-white/10 transition shadow-inner" onclick="toggleDrop('{cmd_name}', 'allowed_roles', event)">
+                                    <span class="text-sm text-zinc-400 select-none truncate font-medium" id="lbl_{cmd_name}_allowed_roles">Select Role</span>
+                                    <i class="fa-solid fa-caret-down text-zinc-500 text-sm"></i>
                                 </div>
-                                <div id="drop_{cmd_name}_allow_role" class="hidden absolute top-full left-0 w-full mt-1.5 bg-[#1a1a1f]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto p-1.5">
-                                    <div class="cmd-data-allow-role">{allow_role_opts}</div>
-                                </div>
+                                <div id="drop_{cmd_name}_allowed_roles" class="hidden absolute top-full left-0 w-full mt-2 bg-[#121215]/95 backdrop-blur-3xl border border-white/20 rounded-xl shadow-[0_15px_40px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.1)] z-50 max-h-56 overflow-y-auto p-2 custom-scrollbar"></div>
                             </div>
 
                             <!-- Ignored Roles -->
                             <div class="relative z-10 custom-dropdown">
-                                <label class="text-xs font-bold text-zinc-300 mb-1.5 block">Ignored Roles</label>
-                                <div class="bg-black/40 backdrop-blur-md border border-white/10 p-2.5 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 transition" onclick="toggleDrop('{cmd_name}_ign_role', event)">
-                                    <span class="text-xs text-zinc-400 select-none truncate" id="lbl_{cmd_name}_ign_role">Select Role</span>
-                                    <i class="fa-solid fa-caret-down text-zinc-500 text-xs"></i>
+                                <label class="text-xs font-bold text-zinc-300 mb-2 block uppercase tracking-wider">Ignored Roles</label>
+                                <div class="bg-white/5 border border-white/10 p-3 rounded-xl flex justify-between items-center cursor-pointer hover:border-blue-500/50 hover:bg-white/10 transition shadow-inner" onclick="toggleDrop('{cmd_name}', 'ignored_roles', event)">
+                                    <span class="text-sm text-zinc-400 select-none truncate font-medium" id="lbl_{cmd_name}_ignored_roles">Select Role</span>
+                                    <i class="fa-solid fa-caret-down text-zinc-500 text-sm"></i>
                                 </div>
-                                <div id="drop_{cmd_name}_ign_role" class="hidden absolute top-full left-0 w-full mt-1.5 bg-[#1a1a1f]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto p-1.5">
-                                    <div class="cmd-data-ign-role">{ign_role_opts}</div>
-                                </div>
+                                <div id="drop_{cmd_name}_ignored_roles" class="hidden absolute top-full left-0 w-full mt-2 bg-[#121215]/95 backdrop-blur-3xl border border-white/20 rounded-xl shadow-[0_15px_40px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.1)] z-50 max-h-56 overflow-y-auto p-2 custom-scrollbar"></div>
                             </div>
                         </div>
                         {subs_html}
@@ -602,27 +626,29 @@ class Dashboard(commands.Cog):
                 """
 
             if not commands_list_html:
-                commands_list_html = "<div class='py-3 text-xs text-zinc-500 italic'>No registered command endpoints in this module.</div>"
+                commands_list_html = "<div class='py-4 text-sm text-zinc-500 italic text-center bg-black/20 rounded-xl border border-white/5'>No registered command endpoints in this module.</div>"
 
             modules_html += f"""
-            <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-2xl overflow-visible mb-6 transition {cog_opacity}" id="cog-card-{cog_name}">
-                <div class="p-5 flex items-center justify-between bg-black/20 cursor-pointer rounded-t-2xl hover:bg-black/30 transition" onclick="toggleAccordion('{cog_name}')">
-                    <div class="flex items-center gap-4">
-                        <i class="fa-solid fa-chevron-right text-zinc-400 text-sm transition transform" id="arrow-{cog_name}"></i>
+            <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl overflow-visible mb-8 transition-all {cog_opacity}" id="cog-card-{cog_name}">
+                <div class="p-6 flex items-center justify-between bg-black/30 cursor-pointer rounded-t-3xl hover:bg-black/40 transition-colors" onclick="toggleAccordion('{cog_name}')">
+                    <div class="flex items-center gap-5">
+                        <div class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/20 shadow-inner">
+                            <i class="fa-solid fa-chevron-right text-white text-sm transition-transform transform" id="arrow-{cog_name}"></i>
+                        </div>
                         <div>
-                            <h3 class="font-bold text-white text-base tracking-wide drop-shadow-md">{cog_name} Module</h3>
-                            <p class="text-xs text-zinc-400">Configure commands and granular permissions for {cog_name}</p>
+                            <h3 class="font-extrabold text-white text-lg tracking-wide drop-shadow-md">{cog_name} Module</h3>
+                            <p class="text-sm text-zinc-300 mt-1">Configure commands and granular permissions for {cog_name}</p>
                         </div>
                     </div>
-                    <div class="flex items-center gap-3" onclick="event.stopPropagation()">
-                        <span class="text-xs text-zinc-400 font-mono">Module Status</span>
+                    <div class="flex items-center gap-4 bg-black/40 px-4 py-2 rounded-xl border border-white/10 shadow-inner" onclick="event.stopPropagation()">
+                        <span class="text-xs text-white font-bold uppercase tracking-wider">Status</span>
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" value="{cog_name}" class="sr-only peer cog-toggle" id="cog-toggle-{cog_name}" {cog_checked}>
-                            <div class="w-10 h-5 bg-black/50 border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600/80 peer-checked:border-blue-400"></div>
+                            <div class="w-12 h-6 bg-black/60 border border-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600/90 peer-checked:border-blue-400"></div>
                         </label>
                     </div>
                 </div>
-                <div class="p-6 bg-black/10 border-t border-white/10 hidden rounded-b-2xl" id="body-{cog_name}">
+                <div class="p-8 bg-black/20 border-t border-white/20 hidden rounded-b-3xl" id="body-{cog_name}">
                     {commands_list_html}
                 </div>
             </div>
@@ -641,32 +667,32 @@ class Dashboard(commands.Cog):
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
             <style>
-                ::-webkit-scrollbar {{ width: 6px; }} 
-                ::-webkit-scrollbar-track {{ background: transparent; }} 
-                ::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 3px; }}
-                ::-webkit-scrollbar-thumb:hover {{ background: rgba(255,255,255,0.2); }}
+                .custom-scrollbar::-webkit-scrollbar {{ width: 8px; }} 
+                .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }} 
+                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.15); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }}
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {{ background: rgba(255,255,255,0.25); }}
             </style>
         </head>
         <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
                     <div>
-                        <h1 class="font-bold text-sm text-white drop-shadow-sm">Module & Command Controller</h1>
-                        <p class="text-xs text-zinc-400">Granular permissions with sub-command access</p>
+                        <h1 class="font-extrabold text-lg text-white drop-shadow-md">Module & Command Controller</h1>
+                        <p class="text-sm text-zinc-300 mt-0.5">Granular permissions with sub-command access</p>
                     </div>
-                    <button onclick="saveModuleConfiguration()" id="saveBtn" class="px-5 py-2 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-semibold text-xs transition shadow-[0_4px_14px_0_rgba(37,99,235,0.39)] border border-blue-500/50 flex items-center gap-2">
-                        <i class="fa-solid fa-cloud-arrow-up"></i><span>Save Configuration</span>
+                    <button onclick="saveModuleConfiguration()" id="saveBtn" class="px-6 py-3 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-sm transition shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50 flex items-center gap-3">
+                        <i class="fa-solid fa-cloud-arrow-up text-lg"></i><span>Save Configuration</span>
                     </button>
                 </header>
 
-                <div class="flex-1 overflow-y-auto p-8" onclick="closeAllDrops()">
-                    <div class="max-w-4xl mx-auto">
-                        <div class="mb-6 p-4 rounded-xl bg-blue-900/20 backdrop-blur-md border border-blue-500/30 flex items-start gap-3 shadow-lg">
-                            <i class="fa-solid fa-circle-info text-blue-400 mt-0.5 text-sm"></i>
-                            <p class="text-xs text-zinc-300 leading-relaxed">
-                                Click on any command to open its <b>Additional Permissions</b> panel. You can explicitly allow or deny execution per channel or role, and toggle specific sub-commands on or off.
+                <div class="flex-1 overflow-y-auto p-10 custom-scrollbar" onclick="closeAllDrops()">
+                    <div class="max-w-5xl mx-auto">
+                        <div class="mb-8 p-5 rounded-2xl bg-blue-900/30 backdrop-blur-xl border border-blue-500/40 flex items-start gap-4 shadow-[0_8px_32px_0_rgba(0,0,0,0.3),inset_0_1px_1px_rgba(255,255,255,0.1)]">
+                            <i class="fa-solid fa-circle-info text-blue-400 mt-1 text-xl drop-shadow-md"></i>
+                            <p class="text-sm text-zinc-200 leading-relaxed">
+                                Click on any command to open its <b>Additional Permissions</b> panel. You can explicitly allow or deny execution per channel or role, and toggle specific sub-commands on or off. The dashboard is now highly optimized for speed!
                             </p>
                         </div>
                         {modules_html}
@@ -675,6 +701,29 @@ class Dashboard(commands.Cog):
             </main>
 
             <script>
+                // Load payload locally in JS to prevent DOM rendering lag 
+                window.guildChannels = {channels_json};
+                window.guildRoles = {roles_json};
+                window.commandSettings = {cmd_settings_json};
+
+                // Initialize Labels on Load to show pre-saved states instantly
+                document.addEventListener('DOMContentLoaded', () => {{
+                    for (const cmd in window.commandSettings) {{
+                        const settings = window.commandSettings[cmd];
+                        ['allowed_channels', 'ignored_channels', 'allowed_roles', 'ignored_roles'].forEach(type => {{
+                            const lbl = document.getElementById(`lbl_${{cmd}}_${{type}}`);
+                            if (lbl && settings[type]) {{
+                                const count = settings[type].length;
+                                if (count > 0) {{
+                                    lbl.innerText = count === 1 ? '1 item selected' : `${{count}} items selected`;
+                                    lbl.classList.add('text-blue-400', 'font-bold');
+                                    lbl.classList.remove('text-zinc-400', 'font-medium');
+                                }}
+                            }}
+                        }});
+                    }}
+                }});
+
                 function toggleAccordion(cogName) {{
                     const body = document.getElementById('body-' + cogName);
                     const arrow = document.getElementById('arrow-' + cogName);
@@ -696,14 +745,68 @@ class Dashboard(commands.Cog):
                 }}
 
                 let activeDrop = null;
-                function toggleDrop(id, event) {{
+                
+                // Lazy-Render Dropdown on Click to eradicate UI Lag
+                function toggleDrop(cmdName, type, event) {{
                     event.stopPropagation();
-                    const drop = document.getElementById('drop_' + id);
-                    if(activeDrop && activeDrop !== drop) activeDrop.classList.add('hidden');
-                    if(drop.classList.contains('hidden')) {{
-                        drop.classList.remove('hidden'); activeDrop = drop;
+                    const dropId = `drop_${{cmdName}}_${{type}}`;
+                    const drop = document.getElementById(dropId);
+                    
+                    if (activeDrop && activeDrop !== drop) activeDrop.classList.add('hidden');
+                    
+                    if (drop.classList.contains('hidden')) {{
+                        if (drop.innerHTML.trim() === "") {{
+                            renderDropdown(cmdName, type, drop);
+                        }}
+                        drop.classList.remove('hidden');
+                        activeDrop = drop;
                     }} else {{
-                        drop.classList.add('hidden'); activeDrop = null;
+                        drop.classList.add('hidden');
+                        activeDrop = null;
+                    }}
+                }}
+
+                function renderDropdown(cmdName, type, dropContainer) {{
+                    const isChannel = type.includes('channels');
+                    const items = isChannel ? window.guildChannels : window.guildRoles;
+                    const selected = (window.commandSettings[cmdName] && window.commandSettings[cmdName][type]) ? window.commandSettings[cmdName][type] : [];
+                    
+                    let html = "";
+                    items.forEach(item => {{
+                        const isSel = selected.includes(item.id) ? "checked" : "";
+                        const icon = isChannel ? "fa-hashtag" : "fa-at";
+                        html += `
+                            <label class="flex items-center gap-4 p-3 hover:bg-white/10 rounded-xl cursor-pointer transition border border-transparent hover:border-white/10">
+                                <input type="checkbox" value="${{item.id}}" class="form-checkbox h-5 w-5 text-blue-500 rounded border-white/30 bg-black/50 shadow-inner focus:ring-0 focus:ring-offset-0" ${{isSel}} onchange="handleCheckbox('${{cmdName}}', '${{type}}', '${{item.id}}', this.checked)">
+                                <span class="text-sm font-bold text-zinc-200"><i class="fa-solid ${{icon}} text-zinc-400 mr-2"></i>${{item.name}}</span>
+                            </label>
+                        `;
+                    }});
+                    
+                    dropContainer.innerHTML = `<div class="flex flex-col gap-1">${{html || "<div class='p-4 text-sm text-zinc-500 text-center italic bg-black/20 rounded-lg border border-white/5'>None available</div>"}}</div>`;
+                }}
+
+                function handleCheckbox(cmdName, type, val, isChecked) {{
+                    if (!window.commandSettings[cmdName]) window.commandSettings[cmdName] = {{ allowed_channels: [], ignored_channels: [], allowed_roles: [], ignored_roles: [], disabled_subcommands: [] }};
+                    if (!window.commandSettings[cmdName][type]) window.commandSettings[cmdName][type] = [];
+                    
+                    const arr = window.commandSettings[cmdName][type];
+                    if (isChecked) {{
+                        if (!arr.includes(val)) arr.push(val);
+                    }} else {{
+                        window.commandSettings[cmdName][type] = arr.filter(id => id !== val);
+                    }}
+                    
+                    const lbl = document.getElementById(`lbl_${{cmdName}}_${{type}}`);
+                    const count = window.commandSettings[cmdName][type].length;
+                    if (count === 0) {{
+                        lbl.innerText = type.includes('channels') ? 'Select Channel' : 'Select Role';
+                        lbl.classList.remove('text-blue-400', 'font-bold');
+                        lbl.classList.add('text-zinc-400', 'font-medium');
+                    }} else {{
+                        lbl.innerText = count === 1 ? '1 item selected' : `${{count}} items selected`;
+                        lbl.classList.add('text-blue-400', 'font-bold');
+                        lbl.classList.remove('text-zinc-400', 'font-medium');
                     }}
                 }}
 
@@ -711,31 +814,12 @@ class Dashboard(commands.Cog):
                     if(activeDrop) {{ activeDrop.classList.add('hidden'); activeDrop = null; }}
                 }}
 
-                function updateLabel(cmdName) {{
-                    const types = ['allow_ch', 'ign_ch', 'allow_role', 'ign_role'];
-                    types.forEach(t => {{
-                        const checkboxes = document.querySelectorAll(`.chk_${{cmdName}}_${{t.split('_')[1]}}`);
-                        const container = document.getElementById(`drop_${{cmdName}}_${{t}}`);
-                        if(container) {{
-                            const checked = Array.from(container.querySelectorAll('input:checked'));
-                            const lbl = document.getElementById(`lbl_${{cmdName}}_${{t}}`);
-                            if(checked.length === 0) lbl.innerText = t.includes('ch') ? 'Select Channel' : 'Select Role';
-                            else if(checked.length === 1) lbl.innerText = checked[0].nextElementSibling.innerText;
-                            else lbl.innerText = checked.length + ' items selected';
-                        }}
-                    }});
-                }}
-
-                // Run update label on load
-                document.querySelectorAll('.cmd-block').forEach(b => updateLabel(b.dataset.cmd));
-
-                // Toggle animation logic
                 document.querySelectorAll('input[type="checkbox"]').forEach(chk => {{
                     if(chk.className.includes('subchk')) {{
                         chk.addEventListener('change', function() {{
                             if(this.checked) {{
-                                this.style.right = '0'; this.style.left = 'auto'; this.style.borderColor = '#10b981';
-                                this.nextElementSibling.style.backgroundColor = '#10b981';
+                                this.style.right = '0'; this.style.left = 'auto'; this.style.borderColor = '#3b82f6';
+                                this.nextElementSibling.style.backgroundColor = 'rgba(59,130,246,0.8)';
                             }} else {{
                                 this.style.left = '0'; this.style.right = 'auto'; this.style.borderColor = '#52525b';
                                 this.nextElementSibling.style.backgroundColor = '#3f3f46';
@@ -748,42 +832,36 @@ class Dashboard(commands.Cog):
                     cogToggle.addEventListener('change', function() {{
                         const cogName = this.value;
                         const card = document.getElementById('cog-card-' + cogName);
-                        if (this.checked) card.classList.remove('opacity-70');
-                        else card.classList.add('opacity-70');
+                        if (this.checked) card.classList.remove('opacity-60', 'grayscale-[30%]');
+                        else card.classList.add('opacity-60', 'grayscale-[30%]');
                     }});
                 }});
 
                 async function saveModuleConfiguration() {{
                     const btn = document.getElementById('saveBtn');
                     const originalHtml = btn.innerHTML;
-                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Saving...</span>';
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin text-lg"></i><span>Saving...</span>';
                     btn.disabled = true;
 
                     const disabledCogs = [];
                     document.querySelectorAll('.cog-toggle:not(:checked)').forEach(t => disabledCogs.push(t.value));
                     
-                    const cmdSettings = {{}};
+                    // Subcommands are still managed via DOM state because there are so few
                     document.querySelectorAll('.cmd-block').forEach(block => {{
                         const cmdName = block.dataset.cmd;
-                        const getVals = (selector) => Array.from(block.querySelectorAll(selector + ':checked')).map(e => e.value);
                         const getDisSubs = () => Array.from(block.querySelectorAll(`.subchk_${{cmdName}}:not(:checked)`)).map(e => e.value);
                         
-                        cmdSettings[cmdName] = {{
-                            allowed_channels: getVals(`.chk_${{cmdName}}_ch`).filter(v => document.getElementById(`drop_${{cmdName}}_allow_ch`).contains(block.querySelector(`input[value="${{v}}"]`))),
-                            ignored_channels: getVals(`.chk_${{cmdName}}_ch`).filter(v => document.getElementById(`drop_${{cmdName}}_ign_ch`).contains(block.querySelector(`input[value="${{v}}"]`))),
-                            allowed_roles: getVals(`.chk_${{cmdName}}_role`).filter(v => document.getElementById(`drop_${{cmdName}}_allow_role`).contains(block.querySelector(`input[value="${{v}}"]`))),
-                            ignored_roles: getVals(`.chk_${{cmdName}}_role`).filter(v => document.getElementById(`drop_${{cmdName}}_ign_role`).contains(block.querySelector(`input[value="${{v}}"]`))),
-                            disabled_subcommands: getDisSubs()
-                        }};
+                        if (!window.commandSettings[cmdName]) window.commandSettings[cmdName] = {{}};
+                        window.commandSettings[cmdName].disabled_subcommands = getDisSubs();
                     }});
 
                     try {{
                         const res = await fetch('/api/modules/{guild_id}', {{
                             method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ disabled_cogs: disabledCogs, command_settings: cmdSettings }})
+                            body: JSON.stringify({{ disabled_cogs: disabledCogs, command_settings: window.commandSettings }})
                         }});
                         if (res.ok) {{
-                            btn.innerHTML = '<i class="fa-solid fa-check"></i><span>Saved Successfully</span>';
+                            btn.innerHTML = '<i class="fa-solid fa-check text-lg"></i><span>Saved Successfully</span>';
                             btn.classList.remove('bg-blue-600/90', 'hover:bg-blue-500', 'border-blue-500/50');
                             btn.classList.add('bg-emerald-600/90', 'border-emerald-500/50');
                             setTimeout(() => {{
@@ -858,40 +936,40 @@ class Dashboard(commands.Cog):
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Server Overview</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-md tracking-wide">Server Overview</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8">
-                    <div class="max-w-4xl mx-auto space-y-6">
-                        <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-2xl p-6">
-                            <div class="flex items-center gap-5">
-                                <img src="{guild_icon}" class="w-20 h-20 rounded-2xl border border-white/20 shadow-md" alt="{guild.name}">
+                <div class="flex-1 overflow-y-auto p-10">
+                    <div class="max-w-4xl mx-auto space-y-8">
+                        <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-8">
+                            <div class="flex items-center gap-6">
+                                <img src="{guild_icon}" class="w-24 h-24 rounded-2xl border border-white/30 shadow-xl" alt="{guild.name}">
                                 <div>
-                                    <h1 class="text-2xl font-bold text-white mb-1 drop-shadow-md">{guild.name}</h1>
-                                    <p class="text-xs font-mono text-zinc-400 mb-3">{guild.id}</p>
-                                    <div class="flex items-center gap-3">
-                                        <span class="px-3 py-1.5 rounded-xl bg-black/30 border border-white/10 backdrop-blur-md text-xs font-mono text-zinc-200">
-                                            <i class="fa-solid fa-users mr-1.5 text-blue-400"></i> {guild.member_count:,} Members
+                                    <h1 class="text-3xl font-extrabold text-white mb-2 drop-shadow-md">{guild.name}</h1>
+                                    <p class="text-sm font-mono text-zinc-300 mb-4 bg-black/30 px-3 py-1 rounded-lg inline-block shadow-inner">{guild.id}</p>
+                                    <div class="flex items-center gap-4">
+                                        <span class="px-4 py-2 rounded-xl bg-black/40 border border-white/10 backdrop-blur-md text-sm font-bold text-zinc-100 shadow-inner">
+                                            <i class="fa-solid fa-users mr-2 text-blue-400"></i> {guild.member_count:,} Members
                                         </span>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                            <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-lg rounded-2xl p-5 hover:bg-white/10 transition">
-                                <div class="text-[10px] font-mono text-zinc-400 uppercase mb-2 tracking-wider">Automod Status</div>
-                                <div class="text-xl font-bold text-white">{"Active" if settings.get("automod_enabled", True) else "Disabled"}</div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                <div class="text-[11px] font-bold text-zinc-300 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-shield-halved text-blue-400"></i> Automod Status</div>
+                                <div class="text-2xl font-extrabold text-white">{"Active" if settings.get("automod_enabled", True) else "Disabled"}</div>
                             </div>
-                            <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-lg rounded-2xl p-5 hover:bg-white/10 transition">
-                                <div class="text-[10px] font-mono text-zinc-400 uppercase mb-2 tracking-wider">Lockdown</div>
-                                <div class="text-xl font-bold {"text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]" if settings.get("lockdown_active", False) else "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]"}">
+                            <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                <div class="text-[11px] font-bold text-zinc-300 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-lock text-emerald-400"></i> Lockdown</div>
+                                <div class="text-2xl font-extrabold {"text-red-400 drop-shadow-[0_0_15px_rgba(248,113,113,0.5)]" if settings.get("lockdown_active", False) else "text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]"}">
                                     {"ENGAGED" if settings.get("lockdown_active", False) else "SECURE"}
                                 </div>
                             </div>
-                            <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-lg rounded-2xl p-5 hover:bg-white/10 transition">
-                                <div class="text-[10px] font-mono text-zinc-400 uppercase mb-2 tracking-wider">Default AI Core</div>
-                                <div class="text-xl font-bold text-white capitalize">{settings.get("default_ai_model", "nexusify")}</div>
+                            <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                <div class="text-[11px] font-bold text-zinc-300 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-network-wired text-purple-400"></i> Default AI Core</div>
+                                <div class="text-2xl font-extrabold text-white capitalize">{settings.get("default_ai_model", "nexusify")}</div>
                             </div>
                         </div>
                     </div>
@@ -915,7 +993,7 @@ class Dashboard(commands.Cog):
         banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase"])
         words_string = ", ".join(banned_words)
 
-        pills = "".join(f'<span class="px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/20 backdrop-blur-md text-xs font-mono text-red-300 shadow-sm">{w}</span>' for w in banned_words if w.strip())
+        pills = "".join(f'<span class="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 backdrop-blur-md text-sm font-bold text-red-200 shadow-sm">{w}</span>' for w in banned_words if w.strip())
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
         sidebar_html = self._render_sidebar(guild_id, "automod", guild.name, guild_icon)
 
@@ -933,22 +1011,22 @@ class Dashboard(commands.Cog):
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Automated Content Filtration</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-md tracking-wide">Automated Content Filtration</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8">
-                    <div class="max-w-4xl mx-auto space-y-6">
-                        <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-2xl p-6">
-                            <h2 class="font-bold text-white text-base mb-2 drop-shadow-sm">Banned Lexicon</h2>
-                            <p class="text-xs text-zinc-400 mb-4">Enter exact words or phrases to filter automatically. Separate items with commas.</p>
-                            <textarea id="bannedWords" rows="4" class="w-full bg-black/30 border border-white/10 backdrop-blur-md rounded-xl p-4 text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500/50 focus:bg-black/50 transition shadow-inner">{words_string}</textarea>
-                            <div class="mt-4 flex justify-end">
-                                <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-5 py-2.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-semibold text-xs transition border border-blue-500/50 shadow-[0_4px_14px_0_rgba(37,99,235,0.39)]">Update Filters</button>
+                <div class="flex-1 overflow-y-auto p-10">
+                    <div class="max-w-4xl mx-auto space-y-8">
+                        <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-8">
+                            <h2 class="font-extrabold text-white text-lg mb-2 drop-shadow-sm flex items-center gap-3"><i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon</h2>
+                            <p class="text-sm text-zinc-300 mb-6">Enter exact words or phrases to filter automatically. Separate items with commas.</p>
+                            <textarea id="bannedWords" rows="5" class="w-full bg-black/40 border border-white/20 backdrop-blur-xl rounded-2xl p-5 text-sm font-mono text-zinc-100 focus:outline-none focus:border-blue-500/70 focus:bg-black/60 transition shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] leading-relaxed">{words_string}</textarea>
+                            <div class="mt-6 flex justify-end">
+                                <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-6 py-3 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-sm transition border border-blue-500/50 shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]">Update Filters</button>
                             </div>
                         </div>
-                        <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-2xl p-6">
-                            <h3 class="font-bold text-white text-sm mb-4">Active Filters Loaded</h3>
-                            <div class="flex flex-wrap gap-2">{pills if pills else '<span class="text-xs text-zinc-500 italic">No active word restrictions.</span>'}</div>
+                        <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-8">
+                            <h3 class="font-extrabold text-white text-base mb-5 tracking-wide">Active Filters Loaded</h3>
+                            <div class="flex flex-wrap gap-3">{pills if pills else '<span class="text-sm text-zinc-400 italic bg-black/30 px-4 py-2 rounded-xl border border-white/10">No active word restrictions.</span>'}</div>
                         </div>
                     </div>
                 </div>
@@ -998,19 +1076,19 @@ class Dashboard(commands.Cog):
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Emergency Protocols</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-sm tracking-wide">Emergency Protocols</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8 flex items-center justify-center">
-                    <div class="max-w-md w-full bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-10 text-center shadow-[0_8px_40px_0_rgba(0,0,0,0.3)]">
-                        <div class="w-20 h-20 mx-auto rounded-2xl {'bg-red-500/20 border border-red-500/30 text-red-400 drop-shadow-[0_0_15px_rgba(248,113,113,0.5)]' if is_locked else 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]'} flex items-center justify-center mb-6 text-3xl shadow-lg">
+                <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
+                    <div class="max-w-lg w-full bg-white/10 backdrop-blur-3xl border border-white/20 rounded-[2rem] p-12 text-center shadow-[0_15px_50px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                        <div class="w-24 h-24 mx-auto rounded-3xl {'bg-red-500/20 border border-red-500/30 text-red-400 drop-shadow-[0_0_20px_rgba(248,113,113,0.6)] shadow-[inset_0_2px_10px_rgba(248,113,113,0.2)]' if is_locked else 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.6)] shadow-[inset_0_2px_10px_rgba(52,211,153,0.2)]'} flex items-center justify-center mb-8 text-4xl shadow-xl">
                             <i class="fa-solid {'fa-lock' if is_locked else 'fa-lock-open'}"></i>
                         </div>
-                        <h2 class="text-2xl font-bold text-white mb-2">Emergency Lockdown</h2>
-                        <p class="text-xs text-zinc-300 mb-8 leading-relaxed">
-                            Severing send permissions from the <code class="bg-black/30 px-1 py-0.5 rounded text-white border border-white/10">@everyone</code> role freezes conversation channels instantaneously to curb raids.
+                        <h2 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Emergency Lockdown</h2>
+                        <p class="text-sm text-zinc-300 mb-10 leading-relaxed px-4">
+                            Severing send permissions from the <code class="bg-black/50 px-2 py-1 rounded-lg text-white border border-white/10 shadow-inner font-bold">@everyone</code> role freezes conversation channels instantaneously to curb active raids.
                         </p>
-                        <button onclick="toggleLockdown({str(not is_locked).lower()})" id="lockBtn" class="w-full py-3.5 rounded-xl font-bold text-sm text-white transition border shadow-lg {'bg-emerald-600/80 hover:bg-emerald-500 border-emerald-500/50 shadow-emerald-600/30' if is_locked else 'bg-red-600/80 hover:bg-red-500 border-red-500/50 shadow-red-600/30'}">
+                        <button onclick="toggleLockdown({str(not is_locked).lower()})" id="lockBtn" class="w-full py-4 rounded-xl font-extrabold text-base text-white transition-all border shadow-xl {'bg-emerald-600/90 hover:bg-emerald-500 border-emerald-500/50 shadow-[0_8px_30px_rgba(52,211,153,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]' if is_locked else 'bg-red-600/90 hover:bg-red-500 border-red-500/50 shadow-[0_8px_30px_rgba(239,68,68,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]'}">
                             {"Lift Server Lockdown" if is_locked else "Engage Server Lockdown"}
                         </button>
                     </div>
@@ -1019,7 +1097,7 @@ class Dashboard(commands.Cog):
             <script>
                 async function toggleLockdown(targetState) {{
                     if (targetState && !confirm("ENGAGE LOCKDOWN: This revokes Send Messages from @everyone. Proceed?")) return;
-                    const btn = document.getElementById('lockBtn'); btn.innerText = 'Processing...';
+                    const btn = document.getElementById('lockBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Processing...';
                     const res = await fetch('/api/settings/{guild_id}', {{
                         method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{ action: 'toggle_lockdown', state: targetState }})
@@ -1048,16 +1126,16 @@ class Dashboard(commands.Cog):
             async for log in cursor:
                 ts = datetime.datetime.fromtimestamp(log.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M')
                 rows_html += f"""
-                <tr class="border-b border-white/5 hover:bg-white/5 transition text-xs text-zinc-300">
-                    <td class="py-3 px-4 font-mono text-zinc-400">{ts}</td>
-                    <td class="py-3 px-4 font-semibold text-white drop-shadow-sm">{log.get('action')}</td>
-                    <td class="py-3 px-4 font-mono text-zinc-400">{log.get('user_id')}</td>
-                    <td class="py-3 px-4 truncate max-w-xs">{log.get('content', '')}</td>
+                <tr class="border-b border-white/10 hover:bg-white/10 transition-colors text-sm text-zinc-200">
+                    <td class="py-4 px-6 font-mono text-zinc-400">{ts}</td>
+                    <td class="py-4 px-6 font-bold text-white drop-shadow-sm">{log.get('action')}</td>
+                    <td class="py-4 px-6 font-mono text-blue-300 bg-blue-500/5 px-2 rounded">{log.get('user_id')}</td>
+                    <td class="py-4 px-6 truncate max-w-md">{log.get('content', '')}</td>
                 </tr>
                 """
 
         if not rows_html:
-            rows_html = '<tr><td colspan="4" class="py-8 text-center text-xs text-zinc-500 italic">No telemetry logged yet.</td></tr>'
+            rows_html = '<tr><td colspan="4" class="py-12 text-center text-sm text-zinc-400 italic bg-black/20">No telemetry logged yet.</td></tr>'
 
         guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
         sidebar_html = self._render_sidebar(guild_id, "logs", guild.name, guild_icon)
@@ -1071,27 +1149,34 @@ class Dashboard(commands.Cog):
             <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            <style>
+                .custom-scrollbar::-webkit-scrollbar {{ width: 8px; height: 8px; }} 
+                .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }} 
+                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.15); border-radius: 4px; }}
+            </style>
         </head>
         <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Automated Security Audits</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-sm tracking-wide">Automated Security Audits</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8">
-                    <div class="max-w-5xl mx-auto bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-2xl overflow-hidden">
-                        <table class="w-full text-left">
-                            <thead class="bg-black/30 border-b border-white/10 text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                                <tr>
-                                    <th class="py-4 px-4">Timestamp</th>
-                                    <th class="py-4 px-4">Action</th>
-                                    <th class="py-4 px-4">Subject</th>
-                                    <th class="py-4 px-4">Payload</th>
-                                </tr>
-                            </thead>
-                            <tbody>{rows_html}</tbody>
-                        </table>
+                <div class="flex-1 overflow-y-auto p-10 custom-scrollbar">
+                    <div class="max-w-6xl mx-auto bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl overflow-hidden">
+                        <div class="overflow-x-auto custom-scrollbar">
+                            <table class="w-full text-left whitespace-nowrap">
+                                <thead class="bg-black/40 border-b border-white/20 text-xs font-bold text-zinc-300 uppercase tracking-widest shadow-inner">
+                                    <tr>
+                                        <th class="py-5 px-6">Timestamp</th>
+                                        <th class="py-5 px-6">Action</th>
+                                        <th class="py-5 px-6">Subject</th>
+                                        <th class="py-5 px-6">Payload</th>
+                                    </tr>
+                                </thead>
+                                <tbody>{rows_html}</tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </main>
@@ -1137,64 +1222,75 @@ class Dashboard(commands.Cog):
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
             <style>
-                input:checked + div {{ border-color: #3b82f6; background-color: rgba(255,255,255,0.1); box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }}
+                input:checked + div {{ border-color: rgba(59, 130, 246, 0.8); background-color: rgba(255,255,255,0.15); box-shadow: 0 8px 30px rgba(59, 130, 246, 0.3), inset 0 1px 1px rgba(255,255,255,0.2); transform: translateY(-2px); }}
             </style>
         </head>
         <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Setup Wizard</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-md tracking-wide">Setup Wizard</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8 flex items-center justify-center">
-                    <div class="max-w-2xl w-full bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-[0_8px_40px_0_rgba(0,0,0,0.3)]">
-                        <div class="mb-8 border-b border-white/10 pb-4">
-                            <h2 class="text-xl font-bold text-white drop-shadow-md">Select Default AI Core</h2>
-                            <p class="text-xs text-zinc-400 mt-1">Choose the primary generative model for chat interactions in this server.</p>
+                <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
+                    <div class="max-w-3xl w-full bg-white/10 backdrop-blur-3xl border border-white/20 rounded-[2.5rem] p-10 shadow-[0_15px_50px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                        <div class="mb-10 border-b border-white/10 pb-6 flex items-center gap-4">
+                            <div class="p-3 bg-blue-500/20 rounded-xl border border-blue-500/30 text-blue-400 text-xl shadow-inner"><i class="fa-solid fa-microchip"></i></div>
+                            <div>
+                                <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
+                                <p class="text-sm text-zinc-300 mt-1">Choose the primary generative model for chat interactions in this server.</p>
+                            </div>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                             <label class="relative cursor-pointer group">
                                 <input type="radio" name="ai_model" value="nexusify" class="peer sr-only" {nexusify_checked}>
-                                <div class="flex flex-col p-5 rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md transition-all duration-300 peer-checked:border-blue-500 hover:border-white/30">
-                                    <i class="fa-solid fa-network-wired text-2xl text-blue-400 mb-3 drop-shadow-[0_0_8px_rgba(96,165,250,0.5)]"></i>
-                                    <span class="text-white font-bold text-sm">Nexusify</span>
-                                    <span class="text-zinc-400 text-[10px] mt-1">Grok-3 architecture</span>
+                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md transition-all duration-300 peer-checked:border-blue-500 hover:border-white/30 hover:bg-white/5">
+                                    <i class="fa-solid fa-network-wired text-3xl text-blue-400 mb-4 drop-shadow-[0_0_15px_rgba(96,165,250,0.6)]"></i>
+                                    <span class="text-white font-extrabold text-base tracking-wide">Nexusify</span>
+                                    <span class="text-zinc-300 font-medium text-xs mt-1.5 bg-black/40 py-1 px-2 rounded-lg inline-block text-center border border-white/5">Grok-3 architecture</span>
                                 </div>
                             </label>
                             <label class="relative cursor-pointer group">
                                 <input type="radio" name="ai_model" value="gemini" class="peer sr-only" {gemini_checked}>
-                                <div class="flex flex-col p-5 rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md transition-all duration-300 peer-checked:border-emerald-500 hover:border-white/30" style="input:checked + div {{ border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }}">
-                                    <i class="fa-brands fa-google text-2xl text-emerald-400 mb-3 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]"></i>
-                                    <span class="text-white font-bold text-sm">Gemini</span>
-                                    <span class="text-zinc-400 text-[10px] mt-1">Flash 2.5 vision</span>
+                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md transition-all duration-300 hover:border-white/30 hover:bg-white/5" style="input:checked + div {{ border-color: rgba(16, 185, 129, 0.8); box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3), inset 0 1px 1px rgba(255,255,255,0.2); }}">
+                                    <i class="fa-brands fa-google text-3xl text-emerald-400 mb-4 drop-shadow-[0_0_15px_rgba(52,211,153,0.6)]"></i>
+                                    <span class="text-white font-extrabold text-base tracking-wide">Gemini</span>
+                                    <span class="text-zinc-300 font-medium text-xs mt-1.5 bg-black/40 py-1 px-2 rounded-lg inline-block text-center border border-white/5">Flash 2.5 vision</span>
                                 </div>
                             </label>
                             <label class="relative cursor-pointer group">
                                 <input type="radio" name="ai_model" value="sarvam" class="peer sr-only" {sarvam_checked}>
-                                <div class="flex flex-col p-5 rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md transition-all duration-300 peer-checked:border-orange-500 hover:border-white/30" style="input:checked + div {{ border-color: #f97316; box-shadow: 0 0 15px rgba(249, 115, 22, 0.3); }}">
-                                    <i class="fa-solid fa-language text-2xl text-orange-400 mb-3 drop-shadow-[0_0_8px_rgba(251,146,60,0.5)]"></i>
-                                    <span class="text-white font-bold text-sm">Sarvam</span>
-                                    <span class="text-zinc-400 text-[10px] mt-1">Multilingual text</span>
+                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md transition-all duration-300 hover:border-white/30 hover:bg-white/5" style="input:checked + div {{ border-color: rgba(249, 115, 22, 0.8); box-shadow: 0 8px 30px rgba(249, 115, 22, 0.3), inset 0 1px 1px rgba(255,255,255,0.2); }}">
+                                    <i class="fa-solid fa-language text-3xl text-orange-400 mb-4 drop-shadow-[0_0_15px_rgba(251,146,60,0.6)]"></i>
+                                    <span class="text-white font-extrabold text-base tracking-wide">Sarvam</span>
+                                    <span class="text-zinc-300 font-medium text-xs mt-1.5 bg-black/40 py-1 px-2 rounded-lg inline-block text-center border border-white/5">Multilingual text</span>
                                 </div>
                             </label>
                         </div>
                         <div class="flex justify-end">
-                            <button onclick="saveSetup()" id="saveBtn" class="px-6 py-2.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-xs transition border border-blue-500/50 shadow-[0_4px_14px_0_rgba(37,99,235,0.39)]">Save Configuration</button>
+                            <button onclick="saveSetup()" id="saveBtn" class="px-8 py-3.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-sm transition shadow-[0_4px_20px_0_rgba(37,99,235,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50 flex items-center gap-2">
+                                <i class="fa-solid fa-check"></i> Save Configuration
+                            </button>
                         </div>
                     </div>
                 </div>
             </main>
             <script>
                 async function saveSetup() {{
-                    const btn = document.getElementById('saveBtn'); btn.innerText = 'Saving...';
+                    const btn = document.getElementById('saveBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
                     const model = document.querySelector('input[name="ai_model"]:checked').value;
                     await fetch('/api/settings/{guild_id}', {{
                         method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{ action: 'update_ai_model', model: model }})
                     }});
-                    btn.innerText = 'Saved!';
-                    setTimeout(() => {{ btn.innerText = 'Save Configuration'; }}, 2000);
+                    btn.innerHTML = '<i class="fa-solid fa-check-double"></i> Saved!';
+                    btn.classList.replace('bg-blue-600/90', 'bg-emerald-600/90');
+                    btn.classList.replace('border-blue-500/50', 'border-emerald-500/50');
+                    setTimeout(() => {{ 
+                        btn.innerHTML = '<i class="fa-solid fa-check"></i> Save Configuration'; 
+                        btn.classList.replace('bg-emerald-600/90', 'bg-blue-600/90');
+                        btn.classList.replace('border-emerald-500/50', 'border-blue-500/50');
+                    }}, 2500);
                 }}
             </script>
         </body>
@@ -1231,27 +1327,32 @@ class Dashboard(commands.Cog):
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
             <style>
-                .toggle-checkbox:checked {{ right: 0; border-color: #3b82f6; }}
-                .toggle-checkbox:checked + .toggle-label {{ background-color: rgba(59,130,246,0.8); }}
+                .toggle-checkbox:checked {{ right: 0; border-color: rgba(59, 130, 246, 0.9); }}
+                .toggle-checkbox:checked + .toggle-label {{ background-color: rgba(59,130,246,0.8); box-shadow: 0 0 15px rgba(59,130,246,0.5); }}
             </style>
         </head>
         <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
             {self._get_ambient_bg()}
             {sidebar_html}
             <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-8 flex items-center justify-between shrink-0 shadow-md">
-                    <span class="font-bold text-sm text-white drop-shadow-sm">Miscellaneous Utilities</span>
+                <header class="h-20 border-b border-white/10 bg-black/30 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl">
+                    <span class="font-extrabold text-lg text-white drop-shadow-sm tracking-wide">Miscellaneous Utilities</span>
                 </header>
-                <div class="flex-1 overflow-y-auto p-8">
-                    <div class="max-w-3xl mx-auto bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-3xl p-8">
-                        <div class="flex justify-between items-center pb-4">
-                            <div>
-                                <h3 class="text-white font-bold text-base drop-shadow-sm">Dynamic AFK & Information Tools</h3>
-                                <p class="text-xs text-zinc-400 mt-1">Enables <code class="bg-black/30 px-1 py-0.5 rounded text-white border border-white/10">/afk</code>, <code class="bg-black/30 px-1 py-0.5 rounded text-white border border-white/10">/whois</code>, and <code class="bg-black/30 px-1 py-0.5 rounded text-white border border-white/10">/serverinfo</code>.</p>
+                <div class="flex-1 overflow-y-auto p-10">
+                    <div class="max-w-4xl mx-auto bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_8px_40px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-3xl p-10">
+                        <div class="flex justify-between items-center pb-2">
+                            <div class="flex gap-5 items-center">
+                                <div class="w-14 h-14 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 text-2xl shadow-inner">
+                                    <i class="fa-solid fa-sliders"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-white font-extrabold text-xl drop-shadow-md tracking-tight">Dynamic AFK & Information Tools</h3>
+                                    <p class="text-sm text-zinc-300 mt-2">Enables <code class="bg-black/50 px-2 py-1 rounded-md text-white border border-white/10 font-bold shadow-inner">/afk</code>, <code class="bg-black/50 px-2 py-1 rounded-md text-white border border-white/10 font-bold shadow-inner">/whois</code>, and <code class="bg-black/50 px-2 py-1 rounded-md text-white border border-white/10 font-bold shadow-inner">/serverinfo</code>.</p>
+                                </div>
                             </div>
-                            <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in ml-4">
-                                <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none"/>
-                                <label class="toggle-label block overflow-hidden h-6 rounded-full bg-black/50 border border-white/10 cursor-pointer transition-colors duration-300"></label>
+                            <div class="relative inline-block w-14 align-middle select-none transition duration-200 ease-in ml-6">
+                                <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-7 h-7 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none"/>
+                                <label class="toggle-label block overflow-hidden h-7 rounded-full bg-black/60 border border-white/20 cursor-pointer transition-all duration-300 shadow-inner"></label>
                             </div>
                         </div>
                     </div>
@@ -1262,10 +1363,12 @@ class Dashboard(commands.Cog):
                     const label = this.nextElementSibling;
                     if(this.checked) {{
                         this.style.left = 'auto'; this.style.right = '0';
-                        this.style.borderColor = '#3b82f6'; label.style.backgroundColor = 'rgba(59,130,246,0.8)';
+                        this.style.borderColor = 'rgba(59, 130, 246, 0.9)'; label.style.backgroundColor = 'rgba(59,130,246,0.8)';
+                        label.style.boxShadow = '0 0 15px rgba(59,130,246,0.5)';
                     }} else {{
                         this.style.right = 'auto'; this.style.left = '0';
-                        this.style.borderColor = '#52525b'; label.style.backgroundColor = 'rgba(0,0,0,0.5)';
+                        this.style.borderColor = '#52525b'; label.style.backgroundColor = 'rgba(0,0,0,0.6)';
+                        label.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.5)';
                     }}
                     await fetch('/api/settings/{guild_id}', {{
                         method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
@@ -1279,7 +1382,7 @@ class Dashboard(commands.Cog):
         return web.Response(text=html, content_type='text/html')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # OWNER PANEL & IP FIREWALL (Restored Discord User Mappings)
+    # OWNER PANEL & IP FIREWALL
     # ─────────────────────────────────────────────────────────────────────────
 
     async def owner_panel(self, request):
@@ -1295,9 +1398,9 @@ class Dashboard(commands.Cog):
         for ext in list(self.bot.extensions.keys()):
             clean = ext.replace("cogs.", "")
             cogs_html += f"""
-            <div class="flex items-center justify-between py-2.5 border-b border-white/5 hover:bg-white/5 transition px-2 rounded-lg text-xs">
-                <span class="font-mono text-zinc-300">{ext}</span>
-                <button onclick="reloadModule('{clean}')" class="px-2.5 py-1 rounded-lg bg-black/30 border border-white/10 hover:bg-white/10 hover:text-white text-zinc-300 transition font-mono">
+            <div class="flex items-center justify-between py-3.5 border-b border-white/10 hover:bg-white/10 transition-colors px-4 rounded-xl text-sm font-medium">
+                <span class="font-mono text-zinc-200">{ext}</span>
+                <button onclick="reloadModule('{clean}')" class="px-4 py-1.5 rounded-lg bg-black/40 border border-white/20 hover:bg-white/20 hover:text-white text-zinc-300 transition-all font-bold shadow-inner">
                     Reload
                 </button>
             </div>
@@ -1307,16 +1410,16 @@ class Dashboard(commands.Cog):
         if hasattr(self.bot, 'db'):
             async for v in self.bot.db.visit_logs.find().sort("last_visit", -1).limit(30):
                 last_user = v.get('last_user', 'Guest')
-                user_badge_color = "bg-violet-500/20 text-violet-300 border-violet-500/30" if last_user != 'Guest' else "bg-white/5 text-zinc-400 border-white/10"
+                user_badge_color = "bg-violet-500/30 text-violet-200 border-violet-500/50 shadow-[0_0_10px_rgba(139,92,246,0.3)]" if last_user != 'Guest' else "bg-black/50 text-zinc-300 border-white/10 shadow-inner"
                 ip_rows += f"""
-                <div class="flex items-center justify-between py-3 border-b border-white/5 hover:bg-white/5 transition px-2 rounded-lg text-xs filter-row">
+                <div class="flex items-center justify-between py-4 border-b border-white/10 hover:bg-white/10 transition-colors px-4 rounded-xl text-sm filter-row">
                     <div>
-                        <span class="font-mono text-zinc-200 ip-text">{v.get('ip')}</span>
-                        <span class="ml-2 text-[10px] px-2 py-0.5 rounded border {user_badge_color} user-text backdrop-blur-md">{last_user}</span>
-                        <div class="text-[10px] text-zinc-500 mt-1">Hits: {v.get('hits', 1)}</div>
+                        <span class="font-mono font-bold text-white ip-text drop-shadow-sm">{v.get('ip')}</span>
+                        <span class="ml-3 text-xs px-2.5 py-1 rounded-md border {user_badge_color} user-text backdrop-blur-md font-semibold tracking-wide">{last_user}</span>
+                        <div class="text-xs text-zinc-400 mt-2 font-medium bg-black/30 inline-block px-2 py-0.5 rounded border border-white/5">Hits: {v.get('hits', 1)}</div>
                     </div>
-                    <button onclick="ipAction('ban', '{v.get('ip')}')" class="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-600 hover:text-white border border-red-500/30 transition font-semibold shadow-sm">
-                        Ban
+                    <button onclick="ipAction('ban', '{v.get('ip')}')" class="px-4 py-2 rounded-xl bg-red-600/20 text-red-300 hover:bg-red-600 hover:text-white border border-red-500/40 transition-all font-bold shadow-sm">
+                        Ban IP
                     </button>
                 </div>
                 """
@@ -1333,28 +1436,33 @@ class Dashboard(commands.Cog):
         </head>
         <body class="bg-transparent text-zinc-100 min-h-screen p-8 relative">
             {self._get_ambient_bg()}
-            <div class="max-w-6xl mx-auto space-y-6 z-10 relative">
-                <div class="flex items-center justify-between border-b border-white/10 pb-5 mb-8">
-                    <div>
-                        <h1 class="text-2xl font-bold text-white drop-shadow-md">System Override Console</h1>
-                        <p class="text-xs text-zinc-400 font-mono mt-1">Guilds: {len(self.bot.guilds)} | Cogs: {len(self.bot.cogs)}</p>
+            <div class="max-w-7xl mx-auto space-y-8 z-10 relative">
+                <div class="flex items-center justify-between border-b border-white/20 pb-6 mb-10 bg-black/20 backdrop-blur-xl p-6 rounded-3xl shadow-lg">
+                    <div class="flex items-center gap-5">
+                        <div class="w-14 h-14 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 text-2xl shadow-[inset_0_2px_10px_rgba(248,113,113,0.3)]">
+                            <i class="fa-solid fa-terminal"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-3xl font-extrabold text-white drop-shadow-lg tracking-tight">System Override Console</h1>
+                            <p class="text-sm text-zinc-300 font-mono mt-2 bg-black/40 px-3 py-1 rounded-lg inline-block border border-white/10 shadow-inner">Guilds: {len(self.bot.guilds)} | Cogs: {len(self.bot.cogs)}</p>
+                        </div>
                     </div>
-                    <a href="/" class="text-xs px-4 py-2 rounded-xl bg-white/5 border border-white/10 backdrop-blur-md text-zinc-300 hover:text-white hover:bg-white/10 transition">Exit to Home</a>
+                    <a href="/" class="text-sm font-bold px-5 py-2.5 rounded-xl bg-white/10 border border-white/20 backdrop-blur-xl text-zinc-200 hover:text-white hover:bg-white/20 transition shadow-sm">Exit to Home</a>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-3xl p-6">
-                        <h2 class="font-bold text-white text-sm mb-4 drop-shadow-sm">Hot-Reload Cogs</h2>
-                        <div class="overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-[2rem] p-8">
+                        <h2 class="font-extrabold text-white text-lg mb-6 drop-shadow-md flex items-center gap-3"><i class="fa-solid fa-rotate text-blue-400"></i> Hot-Reload Cogs</h2>
+                        <div class="overflow-y-auto max-h-[600px] pr-4 custom-scrollbar">
                             {cogs_html}
                         </div>
                     </div>
 
-                    <div class="bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] rounded-3xl p-6 flex flex-col h-[580px]">
-                        <h2 class="font-bold text-white text-sm mb-3 drop-shadow-sm">Ingress Telemetry</h2>
-                        <input type="text" id="ipSearch" placeholder="Search IP or Discord Username..." class="w-full bg-black/30 border border-white/10 backdrop-blur-md rounded-xl p-3 text-xs text-white mb-4 focus:outline-none focus:border-blue-500/50 focus:bg-black/50 transition shadow-inner">
-                        <div class="overflow-y-auto flex-1 pr-2 custom-scrollbar" id="ipContainer">
-                            {ip_rows if ip_rows else '<p class="text-xs text-zinc-500 italic px-2">No logged hits.</p>'}
+                    <div class="bg-white/10 backdrop-blur-3xl border border-white/20 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.15)] rounded-[2rem] p-8 flex flex-col h-[700px]">
+                        <h2 class="font-extrabold text-white text-lg mb-5 drop-shadow-md flex items-center gap-3"><i class="fa-solid fa-radar text-emerald-400"></i> Ingress Telemetry</h2>
+                        <input type="text" id="ipSearch" placeholder="Search IP or Discord Username..." class="w-full bg-black/40 border border-white/20 backdrop-blur-2xl rounded-2xl p-4 text-sm font-medium text-white mb-6 focus:outline-none focus:border-blue-500/70 focus:bg-black/60 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]">
+                        <div class="overflow-y-auto flex-1 pr-4 custom-scrollbar" id="ipContainer">
+                            {ip_rows if ip_rows else '<p class="text-sm text-zinc-400 italic px-4 bg-black/20 py-4 rounded-xl text-center border border-white/5">No logged hits.</p>'}
                         </div>
                     </div>
                 </div>
@@ -1392,10 +1500,10 @@ class Dashboard(commands.Cog):
                 }}
             </script>
             <style>
-                .custom-scrollbar::-webkit-scrollbar {{ width: 6px; }}
+                .custom-scrollbar::-webkit-scrollbar {{ width: 8px; }}
                 .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }}
-                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 3px; }}
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover {{ background: rgba(255,255,255,0.2); }}
+                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.15); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }}
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {{ background: rgba(255,255,255,0.25); }}
             </style>
         </body>
         </html>
