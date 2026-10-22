@@ -884,7 +884,7 @@ class Core(commands.Cog):
 
         embed.add_field(
             name="🌐 Dashboard",
-            value="[Visit Dashboard](https://recluse-1.onrender.com/)",
+            value="[Visit Dashboard](https://dashboard.recluse-app.workers.dev/)",
             inline=True,
         )
         embed.add_field(
