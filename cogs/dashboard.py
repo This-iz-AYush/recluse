@@ -7,11 +7,31 @@ import uuid
 import datetime
 import urllib.parse
 import json
-import html
+import html as html_lib
+import ipaddress
+import logging
 import aiohttp
 from aiohttp import web
 import discord
 from discord.ext import commands
+
+logger = logging.getLogger("recluse.dashboard")
+
+
+def normalize_ip(value: str) -> str:
+    """
+    Validates and normalizes IP addresses.
+    Rejects values containing '%', whitespace, or non-ASCII characters,
+    otherwise returns str(ipaddress.ip_address(value)), or "invalid" on failure.
+    """
+    if not isinstance(value, str):
+        return "invalid"
+    if "%" in value or any(c.isspace() for c in value) or not value.isascii():
+        return "invalid"
+    try:
+        return str(ipaddress.ip_address(value))
+    except Exception:
+        return "invalid"
 
 
 class Dashboard(commands.Cog):
@@ -67,10 +87,14 @@ class Dashboard(commands.Cog):
     @web.middleware
     async def security_middleware(self, request, handler):
         raw_ip = request.headers.get('X-Forwarded-For', request.remote)
-        ip = raw_ip.split(',')[0].strip() if raw_ip else 'Unknown'
+        if raw_ip:
+            candidate = raw_ip.split(',')[0].strip()
+            ip = normalize_ip(candidate)
+        else:
+            ip = "invalid"
         request['visitor_ip'] = ip
 
-        if hasattr(self.bot, 'db') and ip != 'Unknown':
+        if hasattr(self.bot, 'db') and ip not in ('Unknown', 'invalid'):
             is_banned = await self.bot.db.ip_bans.find_one({"ip": ip})
             if is_banned:
                 return web.Response(text="403 Forbidden: Your IP address has been permanently restricted.", status=403)
@@ -211,23 +235,34 @@ class Dashboard(commands.Cog):
         return None
 
     async def _check_guild_perm(self, guild_id: int, user_id: int) -> tuple[discord.Guild | None, bool]:
-        guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return None, False
-        if guild.owner_id == user_id:
-            return guild, True
-        member = guild.get_member(user_id)
-        if member is None:
-            try:
-                member = await guild.fetch_member(user_id)
-            except Exception:
+        try:
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                return None, False
+            if guild.owner_id is not None and guild.owner_id == user_id:
+                return guild, True
+            member = guild.get_member(user_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(user_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException, Exception):
+                    return guild, False
+            if member is None:
                 return guild, False
-        has_perm = bool(member.guild_permissions.administrator or member.guild_permissions.manage_guild)
-        return guild, has_perm
+            perms = getattr(member, 'guild_permissions', None)
+            if perms is None:
+                return guild, False
+            has_perm = bool(getattr(perms, 'administrator', False) or getattr(perms, 'manage_guild', False))
+            return guild, has_perm
+        except Exception:
+            logger.exception(f"Unhandled error in _check_guild_perm for guild_id={guild_id}, user_id={user_id}")
+            return None, False
 
     def _render_sidebar(self, guild_id, active_tab, guild_name, guild_icon):
-        guild_name_esc = html.escape(str(guild_name))
-        guild_icon_esc = html.escape(str(guild_icon))
+        guild_name_str = str(guild_name) if guild_name else "Server"
+        guild_name_esc = html_lib.escape(guild_name_str)
+        guild_icon_str = str(guild_icon) if guild_icon else ""
+        guild_icon_esc = html_lib.escape(guild_icon_str)
         tabs = [
             ("overview", f"/manage/{guild_id}", "fa-chart-pie", "Overview"),
             ("modules", f"/modules/{guild_id}", "fa-layer-group", "Modules & Commands"),
@@ -422,7 +457,7 @@ class Dashboard(commands.Cog):
             return web.Response(text=landing_html, content_type='text/html')
 
         user_name_raw = user_session.get('username', 'Admin')
-        user_name = html.escape(str(user_name_raw))
+        user_name = html_lib.escape(str(user_name_raw))
         user_avatar = f"https://cdn.discordapp.com/avatars/{user_session['discord_id']}/{user_session['avatar']}.png" if user_session.get('avatar') else f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(user_name_raw))}&background=18181b&color=fff"
 
         app_info = await self.bot.application_info()
@@ -444,13 +479,13 @@ class Dashboard(commands.Cog):
         for g in admin_guilds:
             in_server = int(g['id']) in bot_guild_ids
             raw_icon = f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png" if g.get('icon') else f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(g.get('name', '')))}&background=18181b&color=fff"
-            icon_url = html.escape(raw_icon)
+            icon_url = html_lib.escape(raw_icon)
             target_url = f"/manage/{int(g['id'])}" if in_server else invite_link
-            target_url_esc = html.escape(target_url)
+            target_url_esc = html_lib.escape(target_url)
             btn_text = "Configure Settings" if in_server else "Setup Bot"
             btn_class = "bg-blue-600/90 hover:bg-blue-500 text-white shadow-lg border border-blue-500/50" if in_server else "bg-white/10 hover:bg-white/20 text-zinc-100 border border-white/20"
-            g_name = html.escape(str(g.get('name', '')))
-            g_id = html.escape(str(g.get('id', '')))
+            g_name = html_lib.escape(str(g.get('name', '')))
+            g_id = html_lib.escape(str(g.get('id', '')))
 
             cards_html += f"""
             <div class="bg-[#1a1b26]/60 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 flex flex-col justify-between hover:border-white/20 transition-all shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.05)] group hover:-translate-y-1">
@@ -514,26 +549,46 @@ class Dashboard(commands.Cog):
     # ─────────────────────────────────────────────────────────────────────────
 
     async def manage_modules(self, request):
+        try:
+            return await self._manage_modules_impl(request)
+        except Exception:
+            logger.exception("Unexpected error in /modules handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
+
+    async def _manage_modules_impl(self, request):
         user_session = await self.get_user_session(request)
         if not user_session: return web.HTTPFound('/login')
+
+        discord_id_raw = user_session.get('discord_id')
+        if not discord_id_raw: return web.HTTPFound('/login')
+        try:
+            user_id = int(discord_id_raw)
+        except (ValueError, TypeError):
+            return web.HTTPFound('/login')
 
         try:
             guild_id = int(request.match_info.get('guild_id'))
         except (ValueError, TypeError):
             return web.Response(text="Invalid guild ID", status=400)
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
+        guild, has_perm = await self._check_guild_perm(guild_id, user_id)
         if not guild: return web.Response(text="Recluse is not in this server.", status=404)
         if not has_perm: return web.Response(text="Forbidden", status=403)
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
+        settings = {}
+        if hasattr(self.bot, 'db') and self.bot.db is not None:
+            try:
+                db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                if db_settings: settings = db_settings
+            except Exception:
+                logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
+
         disabled_cogs = settings.get("disabled_cogs", [])
         command_settings = settings.get("command_settings", {})
 
         # Prepare JSON payloads for the frontend to eliminate DOM render lag entirely
-        channels_data = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
-        roles_data = [{"id": str(r.id), "name": r.name} for r in guild.roles if r.name != "@everyone"]
+        channels_data = [{"id": str(c.id), "name": str(c.name)} for c in getattr(guild, 'text_channels', [])]
+        roles_data = [{"id": str(r.id), "name": str(r.name)} for r in getattr(guild, 'roles', []) if str(r.name) != "@everyone"]
         
         channels_json = json.dumps(channels_data)
         roles_json = json.dumps(roles_data)
@@ -570,15 +625,15 @@ class Dashboard(commands.Cog):
                 db_data = command_settings.get(cmd_name, {})
                 dis_subs = db_data.get("disabled_subcommands", [])
 
-                cmd_name_esc = html.escape(str(cmd_name))
-                cmd_desc_esc = html.escape(str(cmd_data.get("desc", "")))
+                cmd_name_esc = html_lib.escape(str(cmd_name))
+                cmd_desc_esc = html_lib.escape(str(cmd_data.get("desc", "")))
 
                 subs_html = ""
                 if cmd_data["subs"]:
                     subs_list = ""
                     for sub in cmd_data["subs"]:
                         sub_checked = "" if sub in dis_subs else "checked"
-                        sub_esc = html.escape(str(sub))
+                        sub_esc = html_lib.escape(str(sub))
                         subs_list += f"""
                         <label class="flex items-center justify-between p-3.5 bg-[#14151a] border border-white/5 rounded-xl cursor-pointer hover:border-white/10 transition shadow-inner">
                             <span class="text-sm font-bold text-zinc-200 drop-shadow-sm">{cmd_name_esc} {sub_esc}</span>
@@ -658,7 +713,7 @@ class Dashboard(commands.Cog):
             if not commands_list_html:
                 commands_list_html = "<div class='py-5 text-sm text-zinc-500 italic text-center bg-[#181920] rounded-xl border border-white/5'>No registered command endpoints in this module.</div>"
 
-            cog_name_esc = html.escape(str(cog_name))
+            cog_name_esc = html_lib.escape(str(cog_name))
             modules_html += f"""
             <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_30px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-visible mb-6 transition-all {cog_opacity}" id="cog-card-{cog_name}">
                 <div class="p-6 flex items-center justify-between bg-black/20 cursor-pointer rounded-t-3xl hover:bg-black/40 transition-colors" onclick="toggleAccordion('{cog_name}')">
@@ -685,11 +740,12 @@ class Dashboard(commands.Cog):
             </div>
             """
 
-        guild_name_esc = html.escape(str(guild.name))
-        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
-        sidebar_html = self._render_sidebar(guild_id, "modules", guild.name, guild_icon)
+        guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+        guild_name_esc = html_lib.escape(guild_name_str)
+        raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+        sidebar_html = self._render_sidebar(guild_id, "modules", guild_name_str, raw_icon)
 
-        html = f"""
+        html_page = f"""
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -982,578 +1038,728 @@ class Dashboard(commands.Cog):
         </body>
         </html>
         """
-        return web.Response(text=html, content_type='text/html')
+        return web.Response(text=html_page, content_type='text/html')
 
     async def update_modules(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (ValueError, TypeError):
-            return web.json_response({"error": "Invalid guild ID"}, status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.json_response({"error": "Unauthorized"}, status=401)
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.json_response({"error": "Guild missing"}, status=404)
-        if not has_perm: return web.json_response({"error": "Forbidden: Requires Administrator or Manage Server"}, status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.json_response({"error": "Unauthorized"}, status=401)
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Unauthorized"}, status=401)
 
-        data = await request.json()
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Invalid guild ID"}, status=400)
 
-        if hasattr(self.bot, 'db'):
-            await self.bot.db.guild_settings.update_one(
-                {"guild_id": guild_id},
-                {"$set": {
-                    "disabled_cogs": data.get("disabled_cogs", []), 
-                    "command_settings": data.get("command_settings", {})
-                }},
-                upsert=True
-            )
-        return web.json_response({"success": True})
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.json_response({"error": "Guild missing"}, status=404)
+            if not has_perm: return web.json_response({"error": "Forbidden: Requires Administrator or Manage Server"}, status=403)
+
+            data = await request.json()
+
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                await self.bot.db.guild_settings.update_one(
+                    {"guild_id": guild_id},
+                    {"$set": {
+                        "disabled_cogs": data.get("disabled_cogs", []), 
+                        "command_settings": data.get("command_settings", {})
+                    }},
+                    upsert=True
+                )
+            return web.json_response({"success": True})
+        except Exception:
+            logger.exception("Unexpected error in POST /api/modules handler")
+            return web.json_response({"error": "Internal Server Error"}, status=500)
 
     # ─────────────────────────────────────────────────────────────────────────
     # OVERVIEW, AUTOMOD, LOCKDOWN, LOGS
     # ─────────────────────────────────────────────────────────────────────────
 
     async def manage_server(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (ValueError, TypeError):
-            return web.Response(text="Invalid guild ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session:
+                return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Bot is not in this server.", status=404)
-        if not has_perm: return web.Response(text="Forbidden", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw:
+                return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.HTTPFound('/login')
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (ValueError, TypeError):
+                return web.Response(text="Invalid guild ID", status=400)
 
-        guild_name_esc = html.escape(str(guild.name))
-        raw_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(guild.name))}&background=18181b&color=fff"
-        guild_icon = html.escape(raw_icon)
-        sidebar_html = self._render_sidebar(guild_id, "overview", guild.name, raw_icon)
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild:
+                return web.Response(text="Bot is not in this server.", status=404)
+            if not has_perm:
+                return web.Response(text="Forbidden", status=403)
 
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{guild_name_esc} | Overview</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Server Overview</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10">
-                    <div class="max-w-4xl mx-auto space-y-8">
-                        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
-                            <div class="flex items-center gap-6">
-                                <img src="{guild_icon}" class="w-24 h-24 rounded-2xl border border-white/20 shadow-xl" alt="{guild_name_esc}">
-                                <div>
-                                    <h1 class="text-3xl font-extrabold text-white mb-2 drop-shadow-md">{guild_name_esc}</h1>
-                                    <p class="text-sm font-mono text-zinc-400 mb-4 bg-black/40 border border-white/5 px-3 py-1 rounded-lg inline-block shadow-inner">{guild.id}</p>
-                                    <div class="flex items-center gap-4">
-                                        <span class="px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-sm font-bold text-zinc-200 shadow-inner">
-                                            <i class="fa-solid fa-users mr-2 text-blue-400"></i> {guild.member_count:,} Members
-                                        </span>
+            settings = {}
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                    if db_settings:
+                        settings = db_settings
+                except Exception:
+                    logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
+
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            guild_name_esc = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            guild_icon = html_lib.escape(raw_icon)
+            sidebar_html = self._render_sidebar(guild_id, "overview", guild_name_str, raw_icon)
+
+            member_count_val = guild.member_count if getattr(guild, 'member_count', None) is not None else (len(guild.members) if getattr(guild, 'members', None) else 0)
+            member_count_str = f"{member_count_val:,}"
+
+            automod_status = "Active" if settings.get("automod_enabled", True) else "Disabled"
+            lockdown_active = bool(settings.get("lockdown_active", False))
+            lockdown_color = "text-red-400 drop-shadow-[0_0_15px_rgba(248,113,113,0.5)]" if lockdown_active else "text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]"
+            lockdown_status = "ENGAGED" if lockdown_active else "SECURE"
+            default_ai_model = html_lib.escape(str(settings.get("default_ai_model") or "nexusify"))
+
+            html_page = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{guild_name_esc} | Overview</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Server Overview</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10">
+                        <div class="max-w-4xl mx-auto space-y-8">
+                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+                                <div class="flex items-center gap-6">
+                                    <img src="{guild_icon}" class="w-24 h-24 rounded-2xl border border-white/20 shadow-xl" alt="{guild_name_esc}">
+                                    <div>
+                                        <h1 class="text-3xl font-extrabold text-white mb-2 drop-shadow-md">{guild_name_esc}</h1>
+                                        <p class="text-sm font-mono text-zinc-400 mb-4 bg-black/40 border border-white/5 px-3 py-1 rounded-lg inline-block shadow-inner">{guild.id}</p>
+                                        <div class="flex items-center gap-4">
+                                            <span class="px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-sm font-bold text-zinc-200 shadow-inner">
+                                                <i class="fa-solid fa-users mr-2 text-blue-400"></i> {member_count_str} Members
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
-                                <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-shield-halved text-blue-400"></i> Automod Status</div>
-                                <div class="text-2xl font-extrabold text-white">{"Active" if settings.get("automod_enabled", True) else "Disabled"}</div>
-                            </div>
-                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
-                                <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-lock text-emerald-400"></i> Lockdown</div>
-                                <div class="text-2xl font-extrabold {"text-red-400 drop-shadow-[0_0_15px_rgba(248,113,113,0.5)]" if settings.get("lockdown_active", False) else "text-emerald-400 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]"}">
-                                    {"ENGAGED" if settings.get("lockdown_active", False) else "SECURE"}
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                    <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-shield-halved text-blue-400"></i> Automod Status</div>
+                                    <div class="text-2xl font-extrabold text-white">{automod_status}</div>
+                                </div>
+                                <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                    <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-lock text-emerald-400"></i> Lockdown</div>
+                                    <div class="text-2xl font-extrabold {lockdown_color}">
+                                        {lockdown_status}
+                                    </div>
+                                </div>
+                                <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
+                                    <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-network-wired text-purple-400"></i> Default AI Core</div>
+                                    <div class="text-2xl font-extrabold text-white capitalize">{default_ai_model}</div>
                                 </div>
                             </div>
-                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6 hover:-translate-y-1 transition-transform">
-                                <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2"><i class="fa-solid fa-network-wired text-purple-400"></i> Default AI Core</div>
-                                <div class="text-2xl font-extrabold text-white capitalize">{settings.get("default_ai_model", "nexusify")}</div>
-                            </div>
                         </div>
                     </div>
-                </div>
-            </main>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type='text/html')
+                </main>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_page, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /manage handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     async def auto_mod(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (ValueError, TypeError):
-            return web.Response(text="Invalid guild ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Server not found", status=404)
-        if not has_perm: return web.Response(text="Forbidden", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.HTTPFound('/login')
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
-        banned_words = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase"])
-        words_string = ", ".join(banned_words)
-        words_string_esc = html.escape(words_string)
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (ValueError, TypeError):
+                return web.Response(text="Invalid guild ID", status=400)
 
-        pills = "".join(f'<span class="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-sm font-bold text-red-300 shadow-sm">{html.escape(w)}</span>' for w in banned_words if w.strip())
-        guild_name_esc = html.escape(str(guild.name))
-        raw_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(guild.name))}&background=18181b&color=fff"
-        sidebar_html = self._render_sidebar(guild_id, "automod", guild.name, raw_icon)
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.Response(text="Server not found", status=404)
+            if not has_perm: return web.Response(text="Forbidden", status=403)
 
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{guild_name_esc} | Auto Moderation</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Automated Content Filtration</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10">
-                    <div class="max-w-4xl mx-auto space-y-8">
-                        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
-                            <h2 class="font-extrabold text-white text-xl mb-2 drop-shadow-sm flex items-center gap-3"><i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon</h2>
-                            <p class="text-sm text-zinc-400 mb-6">Enter exact words or phrases to filter automatically. Separate items with commas.</p>
-                            <textarea id="bannedWords" rows="5" class="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-sm font-mono text-zinc-200 focus:outline-none focus:border-blue-500/70 focus:bg-black/70 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] leading-relaxed">{words_string_esc}</textarea>
-                            <div class="mt-6 flex justify-end">
-                                <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-6 py-3 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-sm transition border border-blue-500/50 shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]">Update Filters</button>
+            settings = {}
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                    if db_settings: settings = db_settings
+                except Exception:
+                    logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
+
+            raw_banned = settings.get("banned_words", ["unauthorized_term_1", "prohibited_phrase"])
+            banned_words = [str(w) for w in raw_banned if w] if isinstance(raw_banned, list) else []
+            words_string = ", ".join(banned_words)
+            words_string_esc = html_lib.escape(words_string)
+
+            pills = "".join(f'<span class="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-sm font-bold text-red-300 shadow-sm">{html_lib.escape(w)}</span>' for w in banned_words if w.strip())
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            guild_name_esc = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            sidebar_html = self._render_sidebar(guild_id, "automod", guild_name_str, raw_icon)
+
+            html_page = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{guild_name_esc} | Auto Moderation</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Automated Content Filtration</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10">
+                        <div class="max-w-4xl mx-auto space-y-8">
+                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+                                <h2 class="font-extrabold text-white text-xl mb-2 drop-shadow-sm flex items-center gap-3"><i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon</h2>
+                                <p class="text-sm text-zinc-400 mb-6">Enter exact words or phrases to filter automatically. Separate items with commas.</p>
+                                <textarea id="bannedWords" rows="5" class="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-sm font-mono text-zinc-200 focus:outline-none focus:border-blue-500/70 focus:bg-black/70 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] leading-relaxed">{words_string_esc}</textarea>
+                                <div class="mt-6 flex justify-end">
+                                    <button onclick="saveBannedWords()" id="saveWordsBtn" class="px-6 py-3 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-bold text-sm transition border border-blue-500/50 shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]">Update Filters</button>
+                                </div>
+                            </div>
+                            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+                                <h3 class="font-extrabold text-white text-lg mb-5 tracking-wide">Active Filters Loaded</h3>
+                                <div class="flex flex-wrap gap-3">{pills if pills else '<span class="text-sm text-zinc-500 italic bg-black/30 px-4 py-2 rounded-xl border border-white/5">No active word restrictions.</span>'}</div>
                             </div>
                         </div>
-                        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
-                            <h3 class="font-extrabold text-white text-lg mb-5 tracking-wide">Active Filters Loaded</h3>
-                            <div class="flex flex-wrap gap-3">{pills if pills else '<span class="text-sm text-zinc-500 italic bg-black/30 px-4 py-2 rounded-xl border border-white/5">No active word restrictions.</span>'}</div>
-                        </div>
                     </div>
-                </div>
-            </main>
-            <script>
-                async function saveBannedWords() {{
-                    const words = document.getElementById('bannedWords').value;
-                    const btn = document.getElementById('saveWordsBtn'); btn.innerText = 'Updating...';
-                    await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: 'update_automod', words: words }})
-                    }});
-                    window.location.reload();
-                }}
-            </script>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type='text/html')
+                </main>
+                <script>
+                    async function saveBannedWords() {{
+                        const words = document.getElementById('bannedWords').value;
+                        const btn = document.getElementById('saveWordsBtn'); btn.innerText = 'Updating...';
+                        await fetch('/api/settings/{guild_id}', {{
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'update_automod', words: words }})
+                        }});
+                        window.location.reload();
+                    }}
+                </script>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_page, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /automod handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     async def server_lockdown(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (ValueError, TypeError):
-            return web.Response(text="Invalid guild ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Server not found", status=404)
-        if not has_perm: return web.Response(text="Forbidden", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.HTTPFound('/login')
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
-        is_locked = settings.get("lockdown_active", False)
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (ValueError, TypeError):
+                return web.Response(text="Invalid guild ID", status=400)
 
-        guild_name_esc = html.escape(str(guild.name))
-        raw_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(str(guild.name))}&background=18181b&color=fff"
-        sidebar_html = self._render_sidebar(guild_id, "lockdown", guild.name, raw_icon)
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.Response(text="Server not found", status=404)
+            if not has_perm: return web.Response(text="Forbidden", status=403)
 
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{guild_name_esc} | Lockdown</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-sm tracking-wide">Emergency Protocols</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
-                    <div class="max-w-lg w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2rem] p-12 text-center shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
-                        <div class="w-24 h-24 mx-auto rounded-3xl {'bg-red-500/20 border border-red-500/30 text-red-400 drop-shadow-[0_0_20px_rgba(248,113,113,0.6)] shadow-[inset_0_2px_10px_rgba(248,113,113,0.2)]' if is_locked else 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.6)] shadow-[inset_0_2px_10px_rgba(52,211,153,0.2)]'} flex items-center justify-center mb-8 text-4xl shadow-xl">
-                            <i class="fa-solid {'fa-lock' if is_locked else 'fa-lock-open'}"></i>
+            settings = {}
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                    if db_settings: settings = db_settings
+                except Exception:
+                    logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
+
+            is_locked = bool(settings.get("lockdown_active", False))
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            guild_name_esc = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            sidebar_html = self._render_sidebar(guild_id, "lockdown", guild_name_str, raw_icon)
+
+            icon_box_class = 'bg-red-500/20 border border-red-500/30 text-red-400 drop-shadow-[0_0_20px_rgba(248,113,113,0.6)] shadow-[inset_0_2px_10px_rgba(248,113,113,0.2)]' if is_locked else 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.6)] shadow-[inset_0_2px_10px_rgba(52,211,153,0.2)]'
+            lock_icon = 'fa-lock' if is_locked else 'fa-lock-open'
+            btn_class = 'bg-emerald-600/90 hover:bg-emerald-500 border-emerald-500/50 shadow-[0_8px_30px_rgba(52,211,153,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]' if is_locked else 'bg-red-600/90 hover:bg-red-500 border-red-500/50 shadow-[0_8px_30px_rgba(239,68,68,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]'
+            btn_text = "Lift Server Lockdown" if is_locked else "Engage Server Lockdown"
+            target_state_js = "false" if is_locked else "true"
+
+            html_page = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{guild_name_esc} | Lockdown</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-sm tracking-wide">Emergency Protocols</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
+                        <div class="max-w-lg w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2rem] p-12 text-center shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
+                            <div class="w-24 h-24 mx-auto rounded-3xl {icon_box_class} flex items-center justify-center mb-8 text-4xl shadow-xl">
+                                <i class="fa-solid {lock_icon}"></i>
+                            </div>
+                            <h2 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Emergency Lockdown</h2>
+                            <p class="text-sm text-zinc-300 mb-10 leading-relaxed px-4">
+                                Severing send permissions from the <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 shadow-inner font-bold">@everyone</code> role freezes conversation channels instantaneously to curb active raids.
+                            </p>
+                            <button disabled id="lockBtn" class="w-full py-4 rounded-xl font-extrabold text-base text-zinc-400 bg-white/5 border border-white/10 cursor-not-allowed shadow-none">
+                                Lockdown is being rebuilt and is temporarily disabled
+                            </button>
                         </div>
-                        <h2 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Emergency Lockdown</h2>
-                        <p class="text-sm text-zinc-300 mb-10 leading-relaxed px-4">
-                            Severing send permissions from the <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 shadow-inner font-bold">@everyone</code> role freezes conversation channels instantaneously to curb active raids.
-                        </p>
-                        <button onclick="toggleLockdown({str(not is_locked).lower()})" id="lockBtn" class="w-full py-4 rounded-xl font-extrabold text-base text-white transition-all border shadow-xl {'bg-emerald-600/90 hover:bg-emerald-500 border-emerald-500/50 shadow-[0_8px_30px_rgba(52,211,153,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]' if is_locked else 'bg-red-600/90 hover:bg-red-500 border-red-500/50 shadow-[0_8px_30px_rgba(239,68,68,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)]'}">
-                            {"Lift Server Lockdown" if is_locked else "Engage Server Lockdown"}
-                        </button>
                     </div>
-                </div>
-            </main>
-            <script>
-                async function toggleLockdown(targetState) {{
-                    if (targetState && !confirm("ENGAGE LOCKDOWN: This revokes Send Messages from @everyone. Proceed?")) return;
-                    const btn = document.getElementById('lockBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Processing...';
-                    const res = await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: 'toggle_lockdown', state: targetState }})
-                    }});
-                    const data = await res.json();
-                    if (!res.ok) alert(data.error || "Execution failed");
-                    window.location.reload();
-                }}
-            </script>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type='text/html')
+                </main>
+                <script>
+                    async function toggleLockdown(targetState) {{
+                        if (targetState && !confirm("ENGAGE LOCKDOWN: This revokes Send Messages from @everyone. Proceed?")) return;
+                        const btn = document.getElementById('lockBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Processing...';
+                        const res = await fetch('/api/settings/{guild_id}', {{
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'toggle_lockdown', state: targetState }})
+                        }});
+                        const data = await res.json();
+                        if (!res.ok) alert(data.error || "Execution failed");
+                        window.location.reload();
+                    }}
+                </script>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_page, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /lockdown handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     async def server_logs(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (TypeError, ValueError):
-            return web.Response(text="Invalid server ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Server not found", status=404)
-        if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.HTTPFound('/login')
 
-        rows_html = ""
-        if hasattr(self.bot, 'db'):
-            cursor = self.bot.db.security_logs.find({"guild_id": guild_id}).sort("timestamp", -1).limit(50)
-            async for log in cursor:
-                ts = datetime.datetime.fromtimestamp(log.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M')
-                action_escaped = html.escape(str(log.get('action', '')))
-                user_id_escaped = html.escape(str(log.get('user_id', '')))
-                content_escaped = html.escape(str(log.get('content', '')))
-                rows_html += f"""
-                <tr class="border-b border-white/5 hover:bg-white/5 transition-colors text-sm text-zinc-300">
-                    <td class="py-4 px-6 font-mono text-zinc-500">{ts}</td>
-                    <td class="py-4 px-6 font-bold text-white drop-shadow-sm">{action_escaped}</td>
-                    <td class="py-4 px-6 font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 rounded-md shadow-inner">{user_id_escaped}</td>
-                    <td class="py-4 px-6 truncate max-w-md">{content_escaped}</td>
-                </tr>
-                """
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (TypeError, ValueError):
+                return web.Response(text="Invalid server ID", status=400)
 
-        if not rows_html:
-            rows_html = '<tr><td colspan="4" class="py-12 text-center text-sm text-zinc-500 italic bg-black/20">No telemetry logged yet.</td></tr>'
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.Response(text="Server not found", status=404)
+            if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
 
-        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
-        safe_guild_name = html.escape(guild.name)
-        sidebar_html = self._render_sidebar(guild_id, "logs", guild.name, guild_icon)
+            rows_html = ""
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    cursor = self.bot.db.security_logs.find({"guild_id": guild_id}).sort("timestamp", -1).limit(50)
+                    async for log in cursor:
+                        ts_raw = log.get('timestamp', 0)
+                        try:
+                            ts = datetime.datetime.fromtimestamp(float(ts_raw)).strftime('%Y-%m-%d %H:%M')
+                        except Exception:
+                            ts = "Unknown"
+                        action_escaped = html_lib.escape(str(log.get('action', '')))
+                        user_id_escaped = html_lib.escape(str(log.get('user_id', '')))
+                        content_escaped = html_lib.escape(str(log.get('content', '')))
+                        rows_html += f"""
+                        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors text-sm text-zinc-300">
+                            <td class="py-4 px-6 font-mono text-zinc-500">{ts}</td>
+                            <td class="py-4 px-6 font-bold text-white drop-shadow-sm">{action_escaped}</td>
+                            <td class="py-4 px-6 font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 rounded-md shadow-inner">{user_id_escaped}</td>
+                            <td class="py-4 px-6 truncate max-w-md">{content_escaped}</td>
+                        </tr>
+                        """
+                except Exception:
+                    logger.exception(f"Failed to query security_logs for guild_id={guild_id}")
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{safe_guild_name} | Security Logs</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-            <style>
-                .custom-scrollbar::-webkit-scrollbar {{ width: 8px; height: 8px; }} 
-                .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }} 
-                .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.15); border-radius: 4px; }}
-            </style>
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Automated Security Audits</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10 custom-scrollbar">
-                    <div class="max-w-6xl mx-auto bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-hidden">
-                        <div class="overflow-x-auto custom-scrollbar">
-                            <table class="w-full text-left whitespace-nowrap">
-                                <thead class="bg-black/50 border-b border-white/10 text-xs font-extrabold text-zinc-400 uppercase tracking-widest shadow-inner">
-                                    <tr>
-                                        <th class="py-5 px-6">Timestamp</th>
-                                        <th class="py-5 px-6">Action</th>
-                                        <th class="py-5 px-6">Subject</th>
-                                        <th class="py-5 px-6">Payload</th>
-                                    </tr>
-                                </thead>
-                                <tbody>{rows_html}</tbody>
-                            </table>
+            if not rows_html:
+                rows_html = '<tr><td colspan="4" class="py-12 text-center text-sm text-zinc-500 italic bg-black/20">No telemetry logged yet.</td></tr>'
+
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            safe_guild_name = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            sidebar_html = self._render_sidebar(guild_id, "logs", guild_name_str, raw_icon)
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{safe_guild_name} | Security Logs</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+                <style>
+                    .custom-scrollbar::-webkit-scrollbar {{ width: 8px; height: 8px; }} 
+                    .custom-scrollbar::-webkit-scrollbar-track {{ background: transparent; }} 
+                    .custom-scrollbar::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.15); border-radius: 4px; }}
+                </style>
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Automated Security Audits</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10 custom-scrollbar">
+                        <div class="max-w-6xl mx-auto bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-hidden">
+                            <div class="overflow-x-auto custom-scrollbar">
+                                <table class="w-full text-left whitespace-nowrap">
+                                    <thead class="bg-black/50 border-b border-white/10 text-xs font-extrabold text-zinc-400 uppercase tracking-widest shadow-inner">
+                                        <tr>
+                                            <th class="py-5 px-6">Timestamp</th>
+                                            <th class="py-5 px-6">Action</th>
+                                            <th class="py-5 px-6">Subject</th>
+                                            <th class="py-5 px-6">Payload</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>{rows_html}</tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </main>
-        </body>
-        </html>
-        """
-        return web.Response(text=html_content, content_type='text/html')
+                </main>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_content, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /logs handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     # ─────────────────────────────────────────────────────────────────────────
     # WIZARD & MISC RESTORATION (Updated to SaaS UI)
     # ─────────────────────────────────────────────────────────────────────────
 
     async def wizard_setup(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (TypeError, ValueError):
-            return web.Response(text="Invalid server ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
-        if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (ValueError, TypeError):
+                return web.HTTPFound('/login')
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (TypeError, ValueError):
+                return web.Response(text="Invalid server ID", status=400)
 
-        ai_model = settings.get("default_ai_model", "nexusify")
-        nexusify_checked = "checked" if ai_model == "nexusify" else ""
-        gemini_checked = "checked" if ai_model == "gemini" else ""
-        sarvam_checked = "checked" if ai_model == "sarvam" else ""
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+            if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
 
-        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
-        safe_guild_name = html.escape(guild.name)
-        sidebar_html = self._render_sidebar(guild_id, "wizard", guild.name, guild_icon)
+            settings = {}
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                    if db_settings: settings = db_settings
+                except Exception:
+                    logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{safe_guild_name} | Wizard</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-            <style>
-                input:checked + div {{ border-color: rgba(59, 130, 246, 0.8); background-color: rgba(59,130,246,0.1); box-shadow: 0 8px 30px rgba(59, 130, 246, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); transform: translateY(-3px); }}
-            </style>
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Setup Wizard</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
-                    <div class="max-w-3xl w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-10 shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
-                        <div class="mb-10 border-b border-white/10 pb-6 flex items-center gap-5">
-                            <div class="p-4 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400 text-2xl shadow-inner"><i class="fa-solid fa-microchip"></i></div>
-                            <div>
-                                <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
-                                <p class="text-sm text-zinc-400 mt-1">Choose the primary generative model for chat interactions in this server.</p>
+            ai_model = settings.get("default_ai_model", "nexusify")
+            nexusify_checked = "checked" if ai_model == "nexusify" else ""
+            gemini_checked = "checked" if ai_model == "gemini" else ""
+            sarvam_checked = "checked" if ai_model == "sarvam" else ""
+
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            safe_guild_name = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            sidebar_html = self._render_sidebar(guild_id, "wizard", guild_name_str, raw_icon)
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{safe_guild_name} | Wizard</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+                <style>
+                    input:checked + div {{ border-color: rgba(59, 130, 246, 0.8); background-color: rgba(59,130,246,0.1); box-shadow: 0 8px 30px rgba(59, 130, 246, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); transform: translateY(-3px); }}
+                </style>
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-md tracking-wide">Setup Wizard</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10 flex items-center justify-center">
+                        <div class="max-w-3xl w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-10 shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
+                            <div class="mb-10 border-b border-white/10 pb-6 flex items-center gap-5">
+                                <div class="p-4 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400 text-2xl shadow-inner"><i class="fa-solid fa-microchip"></i></div>
+                                <div>
+                                    <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
+                                    <p class="text-sm text-zinc-400 mt-1">Choose the primary generative model for chat interactions in this server.</p>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                                <label class="relative cursor-pointer group">
+                                    <input type="radio" name="ai_model" value="nexusify" class="peer sr-only" {nexusify_checked}>
+                                    <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 peer-checked:border-blue-500 hover:border-white/30 hover:bg-black/60 shadow-inner">
+                                        <i class="fa-solid fa-network-wired text-4xl text-blue-400 mb-5 drop-shadow-[0_0_15px_rgba(96,165,250,0.6)]"></i>
+                                        <span class="text-white font-extrabold text-lg tracking-wide">Nexusify</span>
+                                        <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Grok-3 architecture</span>
+                                    </div>
+                                </label>
+                                <label class="relative cursor-pointer group">
+                                    <input type="radio" name="ai_model" value="gemini" class="peer sr-only" {gemini_checked}>
+                                    <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 hover:border-white/30 hover:bg-black/60 shadow-inner" style="input:checked + div {{ border-color: rgba(16, 185, 129, 0.8); background-color: rgba(16,185,129,0.1); box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); }}">
+                                        <i class="fa-brands fa-google text-4xl text-emerald-400 mb-5 drop-shadow-[0_0_15px_rgba(52,211,153,0.6)]"></i>
+                                        <span class="text-white font-extrabold text-lg tracking-wide">Gemini</span>
+                                        <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Flash 2.5 vision</span>
+                                    </div>
+                                </label>
+                                <label class="relative cursor-pointer group">
+                                    <input type="radio" name="ai_model" value="sarvam" class="peer sr-only" {sarvam_checked}>
+                                    <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 hover:border-white/30 hover:bg-black/60 shadow-inner" style="input:checked + div {{ border-color: rgba(249, 115, 22, 0.8); background-color: rgba(249,115,22,0.1); box-shadow: 0 8px 30px rgba(249, 115, 22, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); }}">
+                                        <i class="fa-solid fa-language text-4xl text-orange-400 mb-5 drop-shadow-[0_0_15px_rgba(251,146,60,0.6)]"></i>
+                                        <span class="text-white font-extrabold text-lg tracking-wide">Sarvam</span>
+                                        <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Multilingual text</span>
+                                    </div>
+                                </label>
+                            </div>
+                            <div class="flex justify-end">
+                                <button onclick="saveSetup()" id="saveBtn" class="px-8 py-3.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-extrabold text-sm transition shadow-[0_4px_20px_0_rgba(37,99,235,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50 flex items-center gap-3">
+                                    <i class="fa-solid fa-check text-lg"></i> Save Configuration
+                                </button>
                             </div>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-                            <label class="relative cursor-pointer group">
-                                <input type="radio" name="ai_model" value="nexusify" class="peer sr-only" {nexusify_checked}>
-                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 peer-checked:border-blue-500 hover:border-white/30 hover:bg-black/60 shadow-inner">
-                                    <i class="fa-solid fa-network-wired text-4xl text-blue-400 mb-5 drop-shadow-[0_0_15px_rgba(96,165,250,0.6)]"></i>
-                                    <span class="text-white font-extrabold text-lg tracking-wide">Nexusify</span>
-                                    <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Grok-3 architecture</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer group">
-                                <input type="radio" name="ai_model" value="gemini" class="peer sr-only" {gemini_checked}>
-                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 hover:border-white/30 hover:bg-black/60 shadow-inner" style="input:checked + div {{ border-color: rgba(16, 185, 129, 0.8); background-color: rgba(16,185,129,0.1); box-shadow: 0 8px 30px rgba(16, 185, 129, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); }}">
-                                    <i class="fa-brands fa-google text-4xl text-emerald-400 mb-5 drop-shadow-[0_0_15px_rgba(52,211,153,0.6)]"></i>
-                                    <span class="text-white font-extrabold text-lg tracking-wide">Gemini</span>
-                                    <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Flash 2.5 vision</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer group">
-                                <input type="radio" name="ai_model" value="sarvam" class="peer sr-only" {sarvam_checked}>
-                                <div class="flex flex-col p-6 rounded-2xl border border-white/10 bg-black/40 transition-all duration-300 hover:border-white/30 hover:bg-black/60 shadow-inner" style="input:checked + div {{ border-color: rgba(249, 115, 22, 0.8); background-color: rgba(249,115,22,0.1); box-shadow: 0 8px 30px rgba(249, 115, 22, 0.3), inset 0 1px 1px rgba(255,255,255,0.1); }}">
-                                    <i class="fa-solid fa-language text-4xl text-orange-400 mb-5 drop-shadow-[0_0_15px_rgba(251,146,60,0.6)]"></i>
-                                    <span class="text-white font-extrabold text-lg tracking-wide">Sarvam</span>
-                                    <span class="text-zinc-400 font-bold text-xs mt-2 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">Multilingual text</span>
-                                </div>
-                            </label>
-                        </div>
-                        <div class="flex justify-end">
-                            <button onclick="saveSetup()" id="saveBtn" class="px-8 py-3.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white font-extrabold text-sm transition shadow-[0_4px_20px_0_rgba(37,99,235,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50 flex items-center gap-3">
-                                <i class="fa-solid fa-check text-lg"></i> Save Configuration
-                            </button>
-                        </div>
                     </div>
-                </div>
-            </main>
-            <script>
-                async function saveSetup() {{
-                    const btn = document.getElementById('saveBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin text-lg"></i> Saving...';
-                    const model = document.querySelector('input[name="ai_model"]:checked').value;
-                    await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: 'update_ai_model', model: model }})
-                    }});
-                    btn.innerHTML = '<i class="fa-solid fa-check-double text-lg"></i> Saved!';
-                    btn.classList.replace('bg-blue-600/90', 'bg-emerald-600/90');
-                    btn.classList.replace('border-blue-500/50', 'border-emerald-500/50');
-                    setTimeout(() => {{ 
-                        btn.innerHTML = '<i class="fa-solid fa-check text-lg"></i> Save Configuration'; 
-                        btn.classList.replace('bg-emerald-600/90', 'bg-blue-600/90');
-                        btn.classList.replace('border-emerald-500/50', 'border-blue-500/50');
-                    }}, 2500);
-                }}
-            </script>
-        </body>
-        </html>
-        """
-        return web.Response(text=html_content, content_type='text/html')
+                </main>
+                <script>
+                    async function saveSetup() {{
+                        const btn = document.getElementById('saveBtn'); btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin text-lg"></i> Saving...';
+                        const model = document.querySelector('input[name="ai_model"]:checked').value;
+                        await fetch('/api/settings/{guild_id}', {{
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'update_ai_model', model: model }})
+                        }});
+                        btn.innerHTML = '<i class="fa-solid fa-check-double text-lg"></i> Saved!';
+                        btn.classList.replace('bg-blue-600/90', 'bg-emerald-600/90');
+                        btn.classList.replace('border-blue-500/50', 'border-emerald-500/50');
+                        setTimeout(() => {{ 
+                            btn.innerHTML = '<i class="fa-solid fa-check text-lg"></i> Save Configuration'; 
+                            btn.classList.replace('bg-emerald-600/90', 'bg-blue-600/90');
+                            btn.classList.replace('border-emerald-500/50', 'border-blue-500/50');
+                        }}, 2500);
+                    }}
+                </script>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_content, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /wizard handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     async def misc_settings(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session: return web.HTTPFound('/login')
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (TypeError, ValueError):
-            return web.Response(text="Invalid server ID", status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session: return web.HTTPFound('/login')
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.Response(text="Recluse is not in this server.", status=404)
-        if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
+            discord_id_raw = user_session.get('discord_id')
+            if not discord_id_raw: return web.HTTPFound('/login')
+            try:
+                user_id = int(discord_id_raw)
+            except (TypeError, ValueError):
+                return web.HTTPFound('/login')
 
-        settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id}) if hasattr(self.bot, 'db') else {}
-        settings = settings or {}
+            try:
+                guild_id = int(request.match_info.get('guild_id'))
+            except (TypeError, ValueError):
+                return web.Response(text="Invalid server ID", status=400)
 
-        misc_checked = "checked" if settings.get("misc_enabled", True) else ""
-        guild_icon = guild.icon.url if guild.icon else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild.name)}&background=18181b&color=fff"
-        safe_guild_name = html.escape(guild.name)
-        sidebar_html = self._render_sidebar(guild_id, "misc", guild.name, guild_icon)
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id)
+            if not guild: return web.Response(text="Recluse is not in this server.", status=404)
+            if not has_perm: return web.Response(text="Access Denied: Administrator or Manage Server permission required.", status=403)
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{safe_guild_name} | Misc</title>
-            <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
-            <script src="https://cdn.tailwindcss.com"></script>
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-            <style>
-                .toggle-checkbox:checked {{ right: 0; border-color: rgba(59, 130, 246, 0.9); }}
-                .toggle-checkbox:checked + .toggle-label {{ background-color: rgba(59,130,246,0.8); box-shadow: 0 0 15px rgba(59,130,246,0.6); }}
-            </style>
-        </head>
-        <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
-            {self._get_ambient_bg()}
-            {sidebar_html}
-            <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
-                <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
-                    <span class="font-extrabold text-xl text-white drop-shadow-sm tracking-wide">Miscellaneous Utilities</span>
-                </header>
-                <div class="flex-1 overflow-y-auto p-10">
-                    <div class="max-w-4xl mx-auto bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-10">
-                        <div class="flex justify-between items-center pb-2">
-                            <div class="flex gap-6 items-center">
-                                <div class="w-16 h-16 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 text-3xl shadow-[inset_0_2px_10px_rgba(20,184,166,0.3)]">
-                                    <i class="fa-solid fa-sliders"></i>
+            settings = {}
+            if hasattr(self.bot, 'db') and self.bot.db is not None:
+                try:
+                    db_settings = await self.bot.db.guild_settings.find_one({"guild_id": guild_id})
+                    if db_settings: settings = db_settings
+                except Exception:
+                    logger.exception(f"Failed to fetch guild_settings for guild_id={guild_id}")
+
+            misc_checked = "checked" if settings.get("misc_enabled", True) else ""
+            guild_name_str = str(guild.name) if getattr(guild, 'name', None) else "Server"
+            safe_guild_name = html_lib.escape(guild_name_str)
+            raw_icon = str(guild.icon.url) if (getattr(guild, 'icon', None) and getattr(guild.icon, 'url', None)) else f"https://ui-avatars.com/api/?name={urllib.parse.quote(guild_name_str)}&background=18181b&color=fff"
+            sidebar_html = self._render_sidebar(guild_id, "misc", guild_name_str, raw_icon)
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>{safe_guild_name} | Misc</title>
+                <link rel="icon" type="image/png" href="{self.get_bot_avatar()}">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+                <style>
+                    .toggle-checkbox:checked {{ right: 0; border-color: rgba(59, 130, 246, 0.9); }}
+                    .toggle-checkbox:checked + .toggle-label {{ background-color: rgba(59,130,246,0.8); box-shadow: 0 0 15px rgba(59,130,246,0.6); }}
+                </style>
+            </head>
+            <body class="bg-transparent text-zinc-100 h-screen flex overflow-hidden font-sans relative">
+                {self._get_ambient_bg()}
+                {sidebar_html}
+                <main class="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+                    <header class="h-[88px] border-b border-white/10 bg-black/40 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 shadow-xl box-border">
+                        <span class="font-extrabold text-xl text-white drop-shadow-sm tracking-wide">Miscellaneous Utilities</span>
+                    </header>
+                    <div class="flex-1 overflow-y-auto p-10">
+                        <div class="max-w-4xl mx-auto bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-10">
+                            <div class="flex justify-between items-center pb-2">
+                                <div class="flex gap-6 items-center">
+                                    <div class="w-16 h-16 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 text-3xl shadow-[inset_0_2px_10px_rgba(20,184,166,0.3)]">
+                                        <i class="fa-solid fa-sliders"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-white font-extrabold text-2xl drop-shadow-md tracking-tight">Dynamic AFK & Information Tools</h3>
+                                        <p class="text-sm text-zinc-400 mt-2">Enables <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/afk</code>, <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/whois</code>, and <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/serverinfo</code>.</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h3 class="text-white font-extrabold text-2xl drop-shadow-md tracking-tight">Dynamic AFK & Information Tools</h3>
-                                    <p class="text-sm text-zinc-400 mt-2">Enables <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/afk</code>, <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/whois</code>, and <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/serverinfo</code>.</p>
+                                <div class="relative inline-block w-16 align-middle select-none transition duration-200 ease-in ml-8">
+                                    <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-8 h-8 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none"/>
+                                    <label class="toggle-label block overflow-hidden h-8 rounded-full bg-black/70 border border-white/20 cursor-pointer transition-all duration-300 shadow-inner"></label>
                                 </div>
-                            </div>
-                            <div class="relative inline-block w-16 align-middle select-none transition duration-200 ease-in ml-8">
-                                <input type="checkbox" id="toggleMisc" {misc_checked} class="toggle-checkbox absolute block w-8 h-8 rounded-full bg-white border-4 appearance-none cursor-pointer z-10 transition-all duration-300 right-0 border-zinc-600 focus:outline-none"/>
-                                <label class="toggle-label block overflow-hidden h-8 rounded-full bg-black/70 border border-white/20 cursor-pointer transition-all duration-300 shadow-inner"></label>
                             </div>
                         </div>
                     </div>
-                </div>
-            </main>
-            <script>
-                document.getElementById('toggleMisc').addEventListener('change', async function() {{
-                    const label = this.nextElementSibling;
-                    if(this.checked) {{
-                        this.style.left = 'auto'; this.style.right = '0';
-                        this.style.borderColor = 'rgba(59, 130, 246, 0.9)'; label.style.backgroundColor = 'rgba(59,130,246,0.8)';
-                        label.style.boxShadow = '0 0 15px rgba(59,130,246,0.6)';
-                    }} else {{
-                        this.style.right = 'auto'; this.style.left = '0';
-                        this.style.borderColor = '#52525b'; label.style.backgroundColor = 'rgba(0,0,0,0.7)';
-                        label.style.boxShadow = 'inset 0 2px 5px rgba(0,0,0,0.6)';
-                    }}
-                    await fetch('/api/settings/{guild_id}', {{
-                        method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: 'toggle', module: 'toggleMisc', enabled: this.checked }})
+                </main>
+                <script>
+                    document.getElementById('toggleMisc').addEventListener('change', async function() {{
+                        const label = this.nextElementSibling;
+                        if(this.checked) {{
+                            this.style.left = 'auto'; this.style.right = '0';
+                            this.style.borderColor = 'rgba(59, 130, 246, 0.9)'; label.style.backgroundColor = 'rgba(59,130,246,0.8)';
+                            label.style.boxShadow = '0 0 15px rgba(59,130,246,0.6)';
+                        }} else {{
+                            this.style.right = 'auto'; this.style.left = '0';
+                            this.style.borderColor = '#52525b'; label.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                            label.style.boxShadow = 'inset 0 2px 5px rgba(0,0,0,0.6)';
+                        }}
+                        await fetch('/api/settings/{guild_id}', {{
+                            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'toggle', module: 'toggleMisc', enabled: this.checked }})
+                        }});
                     }});
-                }});
-            </script>
-        </body>
-        </html>
-        """
-        return web.Response(text=html_content, content_type='text/html')
+                </script>
+            </body>
+            </html>
+            """
+            return web.Response(text=html_content, content_type='text/html')
+        except Exception:
+            logger.exception("Unexpected error in /misc handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
 
     # ─────────────────────────────────────────────────────────────────────────
     # OWNER PANEL & IP FIREWALL
     # ─────────────────────────────────────────────────────────────────────────
 
     async def owner_panel(self, request):
+        try:
+            return await self._owner_panel_impl(request)
+        except Exception:
+            logger.exception("Unexpected error in owner_panel handler")
+            return web.Response(text="Internal Server Error: 500", status=500, content_type='text/plain')
+
+    async def _owner_panel_impl(self, request):
         user_session = await self.get_user_session(request)
         if not user_session:
             return web.HTTPFound('/login')
 
         app_info = await self.bot.application_info()
-        if int(user_session['discord_id']) != app_info.owner.id:
+        try:
+            user_discord_id = int(user_session.get('discord_id', 0))
+        except (TypeError, ValueError):
+            return web.HTTPFound('/login')
+
+        if user_discord_id != getattr(app_info.owner, 'id', None):
             return web.Response(text="Developer clearance required.", status=403)
 
         cogs_html = ""
         for ext in list(self.bot.extensions.keys()):
             clean = ext.replace("cogs.", "")
-            clean_escaped = html.escape(clean)
-            ext_escaped = html.escape(ext)
+            clean_escaped = html_lib.escape(clean)
+            ext_escaped = html_lib.escape(ext)
             cogs_html += f"""
             <div class="flex items-center justify-between py-3.5 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm font-bold text-zinc-300">
                 <span class="font-mono">{ext_escaped}</span>
-                <button onclick="reloadModule('{clean_escaped}')" class="px-5 py-2 rounded-xl bg-black/50 border border-white/10 hover:bg-white/10 hover:text-white text-zinc-300 transition-all font-bold shadow-inner">
+                <button type="button" data-cog="{clean_escaped}" class="reload-cog-btn px-5 py-2 rounded-xl bg-black/50 border border-white/10 hover:bg-white/10 hover:text-white text-zinc-300 transition-all font-bold shadow-inner">
                     Reload
                 </button>
             </div>
             """
 
         ip_rows = ""
-        if hasattr(self.bot, 'db'):
+        if hasattr(self.bot, 'db') and self.bot.db is not None:
             async for v in self.bot.db.visit_logs.find().sort("last_visit", -1).limit(30):
                 last_user = v.get('last_user', 'Guest')
                 ip_raw = str(v.get('ip', ''))
-                ip_escaped = html.escape(ip_raw)
-                last_user_escaped = html.escape(str(last_user))
+                ip_val = normalize_ip(ip_raw)
+                ip_escaped = html_lib.escape(ip_val)
+                last_user_escaped = html_lib.escape(str(last_user))
                 user_badge_color = "bg-violet-500/20 text-violet-300 border-violet-500/40 shadow-[0_0_10px_rgba(139,92,246,0.3)]" if last_user != 'Guest' else "bg-black/60 text-zinc-400 border-white/10 shadow-inner"
                 ip_rows += f"""
                 <div class="flex items-center justify-between py-4 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm filter-row">
@@ -1562,7 +1768,7 @@ class Dashboard(commands.Cog):
                         <span class="ml-4 text-xs px-3 py-1.5 rounded-lg border {user_badge_color} user-text backdrop-blur-md font-bold tracking-wide">{last_user_escaped}</span>
                         <div class="text-xs text-zinc-400 mt-2 font-bold bg-black/40 inline-block px-3 py-1 rounded-lg border border-white/5 shadow-inner">Hits: {v.get('hits', 1)}</div>
                     </div>
-                    <button onclick="ipAction('ban', '{ip_escaped}')" class="px-5 py-2.5 rounded-xl bg-red-600/30 text-red-200 hover:bg-red-600 hover:text-white border border-red-500/50 transition-all font-bold shadow-sm">
+                    <button type="button" data-action="ban" data-ip="{ip_escaped}" class="ip-action-btn px-5 py-2.5 rounded-xl bg-red-600/30 text-red-200 hover:bg-red-600 hover:text-white border border-red-500/50 transition-all font-bold shadow-sm">
                         Ban IP
                     </button>
                 </div>
@@ -1623,25 +1829,36 @@ class Dashboard(commands.Cog):
                     }});
                 }});
 
-                async function reloadModule(name) {{
-                    const res = await fetch('/api/owner_action', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: 'reload_cog', cog: name }})
-                    }});
-                    if(res.ok) alert(name + " reloaded successfully.");
-                    else alert("Failed to reload " + name);
-                }}
+                document.addEventListener('click', async function(e) {{
+                    const reloadBtn = e.target.closest('.reload-cog-btn');
+                    if (reloadBtn) {{
+                        const name = reloadBtn.getAttribute('data-cog');
+                        if (!name) return;
+                        const res = await fetch('/api/owner_action', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: 'reload_cog', cog: name }})
+                        }});
+                        if (res.ok) alert(name + " reloaded successfully.");
+                        else alert("Failed to reload " + name);
+                        return;
+                    }}
 
-                async function ipAction(act, ip) {{
-                    if(!confirm(`Confirm ${{act}} on IP ${{ip}}?`)) return;
-                    await fetch('/api/ip_action', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ action: act, ip: ip }})
-                    }});
-                    window.location.reload();
-                }}
+                    const ipBtn = e.target.closest('.ip-action-btn');
+                    if (ipBtn) {{
+                        const act = ipBtn.getAttribute('data-action');
+                        const ip = ipBtn.getAttribute('data-ip');
+                        if (!act || !ip) return;
+                        if (!confirm(`Confirm ${{act}} on IP ${{ip}}?`)) return;
+                        await fetch('/api/ip_action', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ action: act, ip: ip }})
+                        }});
+                        window.location.reload();
+                        return;
+                    }}
+                }});
             </script>
             <style>
                 .custom-scrollbar::-webkit-scrollbar {{ width: 8px; }}
@@ -1659,120 +1876,143 @@ class Dashboard(commands.Cog):
     # ─────────────────────────────────────────────────────────────────────────
 
     async def update_settings(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.json_response({"error": "Unauthorized"}, status=401)
-
         try:
-            guild_id = int(request.match_info.get('guild_id'))
-        except (TypeError, ValueError):
-            return web.json_response({"error": "Invalid server ID"}, status=400)
+            user_session = await self.get_user_session(request)
+            if not user_session:
+                return web.json_response({"error": "Unauthorized"}, status=401)
 
-        guild, has_perm = await self._check_guild_perm(guild_id, int(user_session['discord_id']))
-        if not guild: return web.json_response({"error": "Guild missing"}, status=404)
-        if not has_perm: return web.json_response({"error": "Forbidden: Administrator or Manage Server permission required"}, status=403)
-
-        data = await request.json()
-        action = data.get('action')
-
-        if action == 'update_automod':
-            words_string = data.get('words', '')
-            words = [w.strip().lower() for w in words_string.split(',') if w.strip()]
-            if hasattr(self.bot, 'db'):
-                await self.bot.db.guild_settings.update_one(
-                    {"guild_id": guild_id},
-                    {"$set": {"banned_words": words}},
-                    upsert=True
-                )
-            return web.json_response({"success": True})
-
-        elif action == 'update_ai_model':
-            model = data.get('model')
-            if hasattr(self.bot, 'db'):
-                await self.bot.db.guild_settings.update_one(
-                    {"guild_id": guild_id},
-                    {"$set": {"default_ai_model": model}},
-                    upsert=True
-                )
-            return web.json_response({"success": True})
-
-        elif action == 'toggle':
-            module = data.get('module')
-            enabled = data.get('enabled')
-            if module == 'toggleMisc' and hasattr(self.bot, 'db'):
-                await self.bot.db.guild_settings.update_one(
-                    {"guild_id": guild_id},
-                    {"$set": {"misc_enabled": enabled}},
-                    upsert=True
-                )
-            return web.json_response({"success": True})
-
-        elif action == 'toggle_lockdown':
-            state = data.get('state', True)
-            if hasattr(self.bot, 'db'):
-                await self.bot.db.guild_settings.update_one(
-                    {"guild_id": guild_id},
-                    {"$set": {"lockdown_active": state}},
-                    upsert=True
-                )
             try:
-                await guild.default_role.edit(send_messages=not state, reason="Dashboard lockdown toggle")
-                return web.json_response({"success": True})
-            except discord.Forbidden:
-                return web.json_response({"error": "Missing Manage Roles permission in Discord"}, status=403)
+                guild_id = int(request.match_info.get('guild_id', 0))
+            except (TypeError, ValueError):
+                return web.json_response({"error": "Invalid server ID"}, status=400)
 
-        return web.json_response({"error": "Invalid action"}, status=400)
+            user_id = user_session.get('discord_id')
+            if not user_id:
+                return web.json_response({"error": "Unauthorized"}, status=401)
+            try:
+                user_id_int = int(user_id)
+            except (TypeError, ValueError):
+                return web.json_response({"error": "Invalid session"}, status=401)
+
+            guild, has_perm = await self._check_guild_perm(guild_id, user_id_int)
+            if not guild: return web.json_response({"error": "Guild missing"}, status=404)
+            if not has_perm: return web.json_response({"error": "Forbidden: Administrator or Manage Server permission required"}, status=403)
+
+            try:
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+            action = data.get('action')
+
+            if action == 'update_automod':
+                words_string = str(data.get('words', ''))
+                words = [w.strip().lower() for w in words_string.split(',') if w.strip()]
+                if hasattr(self.bot, 'db') and self.bot.db is not None:
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id},
+                        {"$set": {"banned_words": words}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+
+            elif action == 'update_ai_model':
+                model = str(data.get('model', ''))
+                if hasattr(self.bot, 'db') and self.bot.db is not None:
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id},
+                        {"$set": {"default_ai_model": model}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+
+            elif action == 'toggle':
+                module = data.get('module')
+                enabled = bool(data.get('enabled'))
+                if module == 'toggleMisc' and hasattr(self.bot, 'db') and self.bot.db is not None:
+                    await self.bot.db.guild_settings.update_one(
+                        {"guild_id": guild_id},
+                        {"$set": {"misc_enabled": enabled}},
+                        upsert=True
+                    )
+                return web.json_response({"success": True})
+
+            elif action == 'toggle_lockdown':
+                return web.json_response({"error": "Lockdown is being rebuilt and is temporarily disabled"}, status=501)
+
+            return web.json_response({"error": "Invalid action"}, status=400)
+        except Exception:
+            logger.exception("Unexpected error in update_settings for guild_id=%s", request.match_info.get('guild_id'))
+            return web.json_response({"error": "Internal Server Error: 500"}, status=500)
 
     async def handle_owner_action(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.json_response({"error": "Unauthorized"}, status=401)
+        try:
+            user_session = await self.get_user_session(request)
+            if not user_session:
+                return web.json_response({"error": "Unauthorized"}, status=401)
 
-        app_info = await self.bot.application_info()
-        if int(user_session['discord_id']) != app_info.owner.id:
-            return web.json_response({"error": "Forbidden"}, status=403)
+            app_info = await self.bot.application_info()
+            if int(user_session.get('discord_id', 0)) != app_info.owner.id:
+                return web.json_response({"error": "Forbidden"}, status=403)
 
-        data = await request.json()
-        action = data.get('action')
-
-        if action == 'reload_cog':
-            cog_name = data.get('cog')
-            if not cog_name.startswith('cogs.'):
-                cog_name = f"cogs.{cog_name}"
             try:
-                await self.bot.reload_extension(cog_name)
-                return web.json_response({"success": True})
-            except Exception as e:
-                return web.json_response({"error": str(e)}, status=500)
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        return web.json_response({"error": "Unknown action"}, status=400)
+            action = data.get('action')
+
+            if action == 'reload_cog':
+                cog_name = str(data.get('cog', ''))
+                if not cog_name.startswith('cogs.'):
+                    cog_name = f"cogs.{cog_name}"
+                try:
+                    await self.bot.reload_extension(cog_name)
+                    return web.json_response({"success": True})
+                except Exception as e:
+                    logger.exception("Failed to reload cog %s", cog_name)
+                    return web.json_response({"error": str(e)}, status=500)
+
+            return web.json_response({"error": "Unknown action"}, status=400)
+        except Exception:
+            logger.exception("Unexpected error in handle_owner_action")
+            return web.json_response({"error": "Internal Server Error"}, status=500)
 
     async def handle_ip_action(self, request):
-        user_session = await self.get_user_session(request)
-        if not user_session:
-            return web.json_response({"error": "Unauthorized"}, status=401)
+        try:
+            user_session = await self.get_user_session(request)
+            if not user_session:
+                return web.json_response({"error": "Unauthorized"}, status=401)
 
-        app_info = await self.bot.application_info()
-        if int(user_session['discord_id']) != app_info.owner.id:
-            return web.json_response({"error": "Forbidden"}, status=403)
+            app_info = await self.bot.application_info()
+            if int(user_session.get('discord_id', 0)) != app_info.owner.id:
+                return web.json_response({"error": "Forbidden"}, status=403)
 
-        data = await request.json()
-        action = data.get('action')
-        ip = data.get('ip')
+            try:
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        if not ip or not hasattr(self.bot, 'db'):
-            return web.json_response({"error": "Bad payload"}, status=400)
+            action = data.get('action')
+            raw_ip = data.get('ip')
+            ip = normalize_ip(raw_ip) if isinstance(raw_ip, str) else "invalid"
 
-        if action == 'ban':
-            await self.bot.db.ip_bans.update_one(
-                {"ip": ip},
-                {"$set": {"banned_at": datetime.datetime.utcnow().timestamp()}},
-                upsert=True
-            )
-        elif action == 'unban':
-            await self.bot.db.ip_bans.delete_one({"ip": ip})
+            if not ip or ip == "invalid" or not hasattr(self.bot, 'db') or self.bot.db is None:
+                return web.json_response({"error": "Bad payload or DB unavailable"}, status=400)
 
-        return web.json_response({"success": True})
+            if action == 'ban':
+                await self.bot.db.ip_bans.update_one(
+                    {"ip": ip},
+                    {"$set": {"banned_at": datetime.datetime.utcnow().timestamp()}},
+                    upsert=True
+                )
+            elif action == 'unban':
+                await self.bot.db.ip_bans.delete_one({"ip": ip})
+
+            return web.json_response({"success": True})
+        except Exception:
+            logger.exception("Unexpected error in handle_ip_action")
+            return web.json_response({"error": "Internal Server Error"}, status=500)
 
     # ─────────────────────────────────────────────────────────────────────────
     # LIFECYCLE MANAGEMENT
