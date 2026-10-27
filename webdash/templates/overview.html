@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Overview{% endblock %}
+{% block page_heading %}Server Overview{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-8">
+    <!-- Guild Hero Card -->
+    <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-6">
+            <img src="{{ guild_icon }}" class="w-24 h-24 rounded-2xl border border-white/20 shadow-xl object-cover" alt="{{ guild_name }}">
+            <div class="flex-1">
+                <h1 class="text-3xl font-extrabold text-white mb-2 drop-shadow-md">{{ guild_name }}</h1>
+                <p class="text-sm font-mono text-zinc-400 mb-4 bg-black/40 border border-white/5 px-3 py-1 rounded-lg inline-block shadow-inner">{{ guild_id }}</p>
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-sm font-bold text-zinc-200 shadow-inner">
+                        <i class="fa-solid fa-users mr-2 text-blue-400"></i>{{ member_count }} Members
+                    </span>
+                    <span class="px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-sm font-bold text-zinc-200 shadow-inner">
+                        <i class="fa-solid fa-hashtag mr-2 text-indigo-400"></i>{{ channel_count }} Channels
+                    </span>
+                    <span class="px-4 py-2 rounded-xl bg-black/50 border border-white/10 text-sm font-bold text-zinc-200 shadow-inner">
+                        <i class="fa-solid fa-id-badge mr-2 text-purple-400"></i>{{ role_count }} Roles
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Primary Status Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6">
+            <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2">
+                <i class="fa-solid fa-shield-halved text-blue-400"></i> AutoMod Status
+            </div>
+            <div class="text-2xl font-extrabold {% if automod_enabled %}text-emerald-400{% else %}text-zinc-400{% endif %}">
+                {% if automod_enabled %}Active{% else %}Disabled{% endif %}
+            </div>
+            <p class="text-xs text-zinc-400 mt-2">{{ banned_words_count }} filtered words configured</p>
+        </div>
+
+        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6">
+            <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2">
+                <i class="fa-solid fa-lock text-amber-400"></i> Lockdown Status
+            </div>
+            <div class="text-xl font-extrabold text-amber-400">
+                Disabled: being rebuilt
+            </div>
+            <p class="text-xs text-zinc-400 mt-2">Emergency lockdown is disabled until Lockdown v2</p>
+        </div>
+
+        <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-6">
+            <div class="text-[11px] font-bold text-zinc-400 uppercase mb-3 tracking-widest flex items-center gap-2">
+                <i class="fa-solid fa-network-wired text-purple-400"></i> Default AI Core
+            </div>
+            <div class="text-2xl font-extrabold text-white uppercase">{{ default_ai_model }}</div>
+            <p class="text-xs text-zinc-400 mt-2">AI Chat: {% if ai_enabled %}Enabled{% else %}Disabled{% endif %}</p>
+        </div>
+    </div>
+
+    <!-- Active Modules Summary Grid -->
+    <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-8 shadow-[0_8px_32px_0_rgba(0,0,0,0.5)]">
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-xl font-bold text-white">Module Health &amp; Configuration</h2>
+                <p class="text-xs text-zinc-400 mt-1">Live state from guild configuration cache</p>
+            </div>
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1.5 rounded-xl border border-white/10">
+                {{ disabled_cogs_count }} Disabled Cogs · {{ command_overrides_count }} Command Rules
+            </span>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {% for mod in module_cards %}
+            <div class="p-4 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid {{ mod.icon }} text-zinc-300"></i>
+                    <span class="text-sm font-semibold text-zinc-200">{{ mod.label }}</span>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full {% if mod.enabled %}bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]{% else %}bg-zinc-600{% endif %}"
+                      title="{% if mod.enabled %}Enabled{% else %}Disabled{% endif %}"></span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -7,6 +7,7 @@ import datetime
 class Database(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.bot.db_ready = False
         self.bot.loop.create_task(self.init_db())
 
     async def init_db(self):
@@ -16,11 +17,14 @@ class Database(commands.Cog):
             return
 
         try:
-            self.bot.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
+            self.bot.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
+                mongo_uri, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000
+            )
             self.bot.db = self.bot.mongo_client['recluse_db']
             
             # Ping the server to verify connection
             await self.bot.mongo_client.admin.command('ping')
+            self.bot.db_ready = True
             print("✅ Successfully connected to MongoDB!")
             
             # Setup database indexes for high-speed dashboard queries

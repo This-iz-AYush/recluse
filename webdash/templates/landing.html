@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recluse | Discord Server Governance</title>
+    <link rel="icon" type="image/png" href="{{ bot_avatar }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes typing { from { width: 0 } to { width: 100% } }
+        @keyframes blink-blue { 50% { border-color: transparent } }
+        .typewriter-container { display: inline-block; text-align: left; }
+        .typewriter-line-1 {
+            overflow: hidden; white-space: nowrap;
+            border-right: 4px solid #3b82f6;
+            padding-bottom: 0.15em; width: 0;
+            animation: typing 1s steps(20, end) forwards, blink-blue .6s step-end infinite;
+        }
+        .typewriter-line-2 {
+            overflow: hidden; white-space: nowrap;
+            border-right: 4px solid transparent;
+            padding-bottom: 0.15em; width: 0;
+        }
+        .typewriter-container.started .typewriter-line-1 {
+            border-right-color: transparent;
+            animation: typing 1s steps(20, end) forwards;
+        }
+        .typewriter-container.started .typewriter-line-2 {
+            border-right-color: #3b82f6;
+            animation: typing 1.2s steps(20, end) forwards, blink-blue .6s step-end infinite;
+        }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in-up { animation: fadeInUp 1s ease-out forwards; opacity: 0; }
+        .delay-1 { animation-delay: 1.2s; }
+        .delay-2 { animation-delay: 1.6s; }
+    </style>
+</head>
+<body class="bg-[#0b0b10] text-zinc-100 min-h-screen flex flex-col font-sans relative">
+    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#09090e]">
+        <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-purple-600/20 rounded-full mix-blend-screen filter blur-[150px] opacity-70 animate-pulse"></div>
+        <div class="absolute top-[20%] right-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-70 animate-pulse"></div>
+        <div class="absolute bottom-[-20%] left-[20%] w-[700px] h-[700px] bg-indigo-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-60 animate-pulse"></div>
+    </div>
+
+    <header class="border-b border-white/10 bg-black/40 backdrop-blur-2xl px-8 py-5 flex items-center justify-between z-10 w-full shadow-lg h-[88px]">
+        <div class="flex items-center gap-3 font-bold text-lg max-w-7xl mx-auto w-full justify-between">
+            <div class="flex items-center gap-4">
+                <img src="{{ bot_avatar }}" class="w-10 h-10 rounded-xl border border-white/20 shadow-lg" alt="Recluse">
+                <span class="text-xl tracking-wide">Recluse</span>
+            </div>
+            <a href="/login" class="px-5 py-2.5 text-sm font-semibold rounded-xl bg-blue-600/90 hover:bg-blue-500 backdrop-blur-md text-white transition shadow-[0_4px_20px_0_rgba(37,99,235,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50">Log In with Discord</a>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl mx-auto w-full px-8 flex flex-col items-center justify-center text-center py-20 z-10 overflow-hidden">
+        <div class="typewriter-container max-w-full" id="typeContainer">
+            <div class="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white drop-shadow-2xl typewriter-line-1">Complete Server</div>
+            <div class="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white drop-shadow-2xl typewriter-line-2">Governance.</div>
+        </div>
+        <p class="text-zinc-300 max-w-2xl text-lg sm:text-xl mb-12 mt-6 leading-relaxed drop-shadow-md fade-in-up delay-1">
+            Control modules, enforce granular command restrictions, configure AutoMod &amp; Anti-Nuke, and manage AI models from a unified web console.
+        </p>
+        <div class="flex flex-wrap gap-5 justify-center fade-in-up delay-2">
+            <a href="/login" class="px-8 py-4 rounded-xl bg-blue-600/90 hover:bg-blue-500 font-bold text-base transition shadow-[0_8px_30px_rgba(37,99,235,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)] border border-blue-500/50">Open Management Console</a>
+            <a href="{{ invite_link }}" target="_blank" rel="noopener noreferrer" class="px-8 py-4 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 font-bold text-base transition shadow-[0_8px_30px_rgba(0,0,0,0.3),inset_0_1px_1px_rgba(255,255,255,0.1)] text-white">Add to Server</a>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            var tc = document.getElementById("typeContainer");
+            if (tc) {
+                setTimeout(function () {
+                    tc.classList.add("started");
+                }, 1100);
+            }
+        });
+    </script>
+</body>
+</html>

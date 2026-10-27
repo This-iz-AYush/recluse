@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recluse | Select Server</title>
+    <link rel="icon" type="image/png" href="{{ bot_avatar }}">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-[#09090e] text-zinc-100 min-h-screen flex flex-col relative font-sans">
+    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#09090e]">
+        <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-purple-600/20 rounded-full mix-blend-screen filter blur-[150px] opacity-70 animate-pulse"></div>
+        <div class="absolute top-[20%] right-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-70 animate-pulse"></div>
+        <div class="absolute bottom-[-20%] left-[20%] w-[700px] h-[700px] bg-indigo-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-60 animate-pulse"></div>
+    </div>
+
+    <header class="bg-black/40 backdrop-blur-2xl border-b border-white/10 px-8 py-4 flex items-center justify-between z-10 shadow-xl h-[88px]">
+        <div class="flex items-center gap-4 font-bold text-xl">
+            <img src="{{ bot_avatar }}" class="w-10 h-10 rounded-xl border border-white/20 shadow-md" alt="Recluse">
+            <span class="drop-shadow-md tracking-wide">Recluse Console</span>
+        </div>
+        <div class="flex items-center gap-5">
+            {% if is_bot_owner %}
+            <a href="/owner_panel" class="px-3 py-1.5 rounded-xl bg-red-500/20 border border-red-500/40 backdrop-blur-xl shadow-lg text-red-300 text-xs font-bold hover:bg-red-500/30 transition">
+                <i class="fa-solid fa-terminal mr-2"></i>Developer System
+            </a>
+            {% endif %}
+            <div class="flex items-center gap-3 bg-white/5 border border-white/10 px-4 py-2 rounded-xl backdrop-blur-xl shadow-inner">
+                <img src="{{ user_avatar }}" class="w-7 h-7 rounded-lg object-cover shadow-sm" alt="{{ user_name }}">
+                <span class="text-sm font-bold text-white drop-shadow-sm">{{ user_name }}</span>
+            </div>
+            <form method="post" action="/logout" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" title="Log Out" class="text-zinc-300 hover:text-white text-lg transition drop-shadow hover:bg-white/10 p-2.5 rounded-xl">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
+            </form>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-8 md:p-10 z-10">
+        <div class="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+                <h1 class="text-3xl md:text-4xl font-extrabold text-white mb-2 drop-shadow-xl tracking-tight">Select a Server</h1>
+                <p class="text-base text-zinc-300 drop-shadow-sm">Choose a community to manage modules, AutoMod, and granular permissions.</p>
+            </div>
+            <div class="w-full md:w-72">
+                <input type="search" id="serverSearchInput" data-role="server-search" placeholder="Filter servers..."
+                       class="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/15 text-sm text-white placeholder-zinc-400 focus:outline-none focus:border-blue-500">
+            </div>
+        </div>
+
+        {% if guilds %}
+        <div id="serverGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for g in guilds %}
+            <div data-server-card data-server-name="{{ g.name | lower }}"
+                 class="bg-[#1a1b26]/60 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 flex flex-col justify-between hover:border-white/20 transition-all shadow-[0_8px_32px_0_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.05)] group hover:-translate-y-1">
+                <div class="flex items-center gap-5 mb-6">
+                    <img src="{{ g.icon_url }}" class="w-16 h-16 rounded-2xl object-cover border border-white/20 shadow-xl group-hover:scale-105 transition-transform" alt="{{ g.name }}">
+                    <div class="overflow-hidden">
+                        <h3 class="font-bold text-white text-lg truncate drop-shadow-md">{{ g.name }}</h3>
+                        <span class="text-xs font-mono text-zinc-400 bg-black/40 px-2 py-0.5 rounded-md mt-1 inline-block border border-white/5">{{ g.id }}</span>
+                        {% if g.role_badge %}
+                        <span class="text-[11px] font-semibold text-blue-300 bg-blue-500/15 border border-blue-500/30 px-2 py-0.5 rounded-md mt-1 ml-1 inline-block">{{ g.role_badge }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if g.in_server %}
+                <a href="/manage/{{ g.id }}" class="w-full py-3 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white shadow-lg border border-blue-500/50 font-bold text-sm text-center transition">
+                    Configure Settings
+                </a>
+                {% else %}
+                <a href="{{ g.invite_url }}" target="_blank" rel="noopener noreferrer" class="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-100 border border-white/20 font-bold text-sm text-center transition">
+                    Setup Bot
+                </a>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-[#1a1b26]/60 backdrop-blur-3xl border border-white/10 rounded-3xl p-10 text-center max-w-lg mx-auto mt-8">
+            <i class="fa-solid fa-server text-4xl text-zinc-500 mb-4"></i>
+            <h2 class="text-xl font-bold text-white mb-2">No Manageable Servers Found</h2>
+            <p class="text-sm text-zinc-400 mb-6">You need Administrator, Manage Server, or a granted dashboard role in a server to configure it here.</p>
+            <a href="{{ invite_link }}" target="_blank" rel="noopener noreferrer" class="inline-block px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition">
+                Invite Recluse to a Server
+            </a>
+        </div>
+        {% endif %}
+    </main>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            var input = document.getElementById("serverSearchInput");
+            if (!input) return;
+            input.addEventListener("input", function () {
+                var query = (input.value || "").trim().toLowerCase();
+                var cards = document.querySelectorAll("[data-server-card]");
+                cards.forEach(function (card) {
+                    var name = card.getAttribute("data-server-name") || "";
+                    card.style.display = (!query || name.indexOf(query) !== -1) ? "" : "none";
+                });
+            });
+        });
+    </script>
+</body>
+</html>

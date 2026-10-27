@@ -4,6 +4,7 @@ cogs/dashboard.py — Recluse Web Dashboard
 
 import os
 import uuid
+import asyncio
 import datetime
 import urllib.parse
 import json
@@ -14,6 +15,8 @@ import aiohttp
 from aiohttp import web
 import discord
 from discord.ext import commands
+
+from webdash import is_webdash_enabled
 
 logger = logging.getLogger("recluse.dashboard")
 
@@ -38,6 +41,23 @@ class Dashboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.dashboard_maintenance = False
+
+        if is_webdash_enabled():
+            try:
+                from webdash.app import create_webdash_app
+
+                self.app = create_webdash_app(self.bot)
+                self._webdash_enabled = True
+                self.runner = None
+                self.site = None
+                self._index_task = None
+                self.bot.loop.create_task(self.start_server())
+                return
+            except Exception:
+                logger.exception(
+                    "webdash: failed to initialize webdash app (WEBDASH_ENABLED=1); falling back to legacy dashboard"
+                )
+                self._webdash_enabled = False
 
         self.app = web.Application(middlewares=[self.security_middleware])
 
@@ -2018,7 +2038,62 @@ class Dashboard(commands.Cog):
     # LIFECYCLE MANAGEMENT
     # ─────────────────────────────────────────────────────────────────────────
 
+    async def _ensure_webdash_indexes_bg(
+        self,
+        *,
+        poll_interval: float = 2.0,
+        max_wait: float = 120.0,
+    ) -> None:
+        """
+        Poll bot.db_ready every `poll_interval` seconds (default 2s) for up to `max_wait`
+        seconds (default 120s). Once ready, run ensure_indexes() for sessions and audit
+        logs and log the result. Never block HTTP startup or crash on failure.
+        """
+        try:
+            from webdash import get_ready_db
+            from webdash.router import AUDIT_LOGGER_KEY, SESSION_MANAGER_KEY
+
+            elapsed = 0.0
+            while not getattr(self.bot, "db_ready", False):
+                if elapsed >= max_wait:
+                    get_ready_db(self.bot)
+                    return
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            session_mgr = self.app.get(SESSION_MANAGER_KEY)
+            audit_logger = self.app.get(AUDIT_LOGGER_KEY)
+            sess_ok = await session_mgr.ensure_indexes() if session_mgr is not None else False
+            audit_ok = await audit_logger.ensure_indexes() if audit_logger is not None else False
+            logger.info(
+                "webdash: ensure_indexes completed (webdash_sessions=%s, dashboard_audit=%s)",
+                sess_ok,
+                audit_ok,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("webdash: background ensure_indexes task failed (non-fatal)")
+
     async def start_server(self):
+        if getattr(self, "_webdash_enabled", False):
+            port = int(os.getenv("PORT", 8080))
+            self.runner = web.AppRunner(self.app)
+            await self.runner.setup()
+            self.site = web.TCPSite(self.runner, '0.0.0.0', port)
+            try:
+                await self.site.start()
+                print(f"🌐 Dashboard operational on http://0.0.0.0:{port}")
+            except Exception as e:
+                print(f"❌ Failed to bind dashboard port: {e}")
+
+            try:
+                self._index_task = asyncio.create_task(self._ensure_webdash_indexes_bg())
+            except RuntimeError:
+                if hasattr(self.bot, "loop") and self.bot.loop is not None:
+                    self._index_task = self.bot.loop.create_task(self._ensure_webdash_indexes_bg())
+            return
+
         port = int(os.getenv("PORT", 8080))
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -2032,9 +2107,12 @@ class Dashboard(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def cog_unload(self):
+        if getattr(self, "_index_task", None) is not None:
+            self._index_task.cancel()
         if self.runner:
             self.bot.loop.create_task(self.runner.cleanup())
 
 
 async def setup(bot):
     await bot.add_cog(Dashboard(bot))
+

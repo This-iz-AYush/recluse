@@ -9,11 +9,13 @@ motor>=3.3.2
 pymongo>=4.6.0
  
 # Web (Dashboard)
+aiohttp-jinja2>=1.6
+jinja2>=3.1.0
 quart>=0.19.4
 quart-cors>=0.7.0
  
 # AI APIs
-aiohttp>=3.9.0
+aiohttp>=3.11.0
 google-genai
  
 # Search
