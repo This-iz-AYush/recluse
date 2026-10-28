@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Modules &amp; Commands{% endblock %}
+{% block page_heading %}Modules &amp; Granular Command Permissions{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-8 pb-20">
+    <!-- Read-Only Checkpoint 3B Notice -->
+    <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5 flex items-start gap-4">
+        <i class="fa-solid fa-circle-info text-blue-400 text-lg mt-0.5"></i>
+        <div class="text-xs text-zinc-300 leading-relaxed">
+            <span class="font-bold text-white">Read-Only Preview (Checkpoint 3B):</span>
+            Inspect active module states (<code class="font-mono text-blue-300">disabled_cogs</code>) and per-command routing rules (<code class="font-mono text-blue-300">command_settings</code>). Saving changes will be enabled in Checkpoint 3C.
+        </div>
+    </div>
+
+    <!-- Read-Only Legacy disabled_cmds Notice (bot.py:108, 113) -->
+    <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 shadow-lg">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+                <h2 class="text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
+                    <i class="fa-solid fa-ban text-amber-400"></i>
+                    Legacy Disabled Commands (<code class="font-mono text-zinc-300">disabled_cmds</code> — Read-Only)
+                </h2>
+                <p class="text-xs text-zinc-400 mt-1">
+                    Enforced by <code class="font-mono text-zinc-300">bot.py</code> (<code class="font-mono text-zinc-300">_dashboard_module_check</code>). Displayed read-only for visibility.
+                </p>
+            </div>
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10 self-start sm:self-auto">
+                {{ disabled_cmds|length }} command{% if disabled_cmds|length != 1 %}s{% endif %}
+            </span>
+        </div>
+        {% if disabled_cmds %}
+        <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-white/5">
+            {% for cmd_entry in disabled_cmds %}
+            <span class="px-3 py-1 rounded-lg bg-red-500/15 border border-red-500/30 text-xs font-mono font-bold text-red-300">
+                /{{ cmd_entry }}
+            </span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-xs text-zinc-500 italic mt-3">No top-level commands in <code class="font-mono">disabled_cmds</code>.</p>
+        {% endif %}
+    </section>
+
+    <!-- Modules Accordion List -->
+    <div class="space-y-6" id="modulesAccordionRoot">
+        {% if modules %}
+            {% for mod in modules %}
+            <div class="bg-[#14151c]/80 backdrop-blur-3xl border {% if mod.is_protected %}border-amber-500/40{% else %}border-white/10{% endif %} shadow-[0_8px_30px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-hidden transition-all {% if mod.is_disabled %}opacity-75{% endif %}" data-cog-card="{{ mod.name }}">
+                <div class="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-black/20 hover:bg-black/40 transition-colors cursor-pointer" data-action="toggle-cog-drawer" data-cog="{{ mod.name }}">
+                    <div class="flex items-center gap-4">
+                        <div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 shadow-inner shrink-0">
+                            <i class="fa-solid fa-chevron-right text-zinc-300 text-sm transition-transform transform" data-cog-arrow="{{ mod.name }}"></i>
+                        </div>
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2.5">
+                                <h3 class="font-extrabold text-white text-lg tracking-wide drop-shadow-md">{{ mod.name }} Module</h3>
+                                {% if mod.is_protected %}
+                                <span class="px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-extrabold uppercase tracking-wider">
+                                    <i class="fa-solid fa-shield-halved mr-1"></i>Protected (Re-enable Only)
+                                </span>
+                                {% endif %}
+                                {% if mod.is_disabled %}
+                                <span class="px-2.5 py-0.5 rounded-md bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold uppercase tracking-wider">
+                                    Disabled
+                                </span>
+                                {% else %}
+                                <span class="px-2.5 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold uppercase tracking-wider">
+                                    Enabled
+                                </span>
+                                {% endif %}
+                            </div>
+                            {% if mod.is_protected %}
+                            <p class="text-xs text-amber-200/90 mt-1">
+                                System-protected module currently listed in <code class="font-mono">disabled_cogs</code>. Shown here so you can re-enable it.
+                            </p>
+                            {% else %}
+                            <p class="text-sm text-zinc-400 mt-1">Configure commands and granular permissions for {{ mod.name }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4 bg-[#0e0f14] px-4 py-2.5 rounded-xl border border-white/5 shadow-inner self-start sm:self-auto" data-stop-propagation="true">
+                        <span class="text-xs text-zinc-300 font-extrabold uppercase tracking-widest">Status</span>
+                        <label class="relative inline-flex items-center cursor-not-allowed opacity-80">
+                            <input
+                                type="checkbox"
+                                value="{{ mod.name }}"
+                                data-cog-toggle="{{ mod.name }}"
+                                data-protected="{{ 'true' if mod.is_protected else 'false' }}"
+                                class="sr-only peer cog-toggle"
+                                {% if not mod.is_disabled %}checked{% endif %}
+                                disabled
+                            >
+                            <div class="w-12 h-6 bg-black/80 border border-white/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600/90 peer-checked:border-blue-400"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="p-6 sm:p-8 bg-[#0b0c10] border-t border-white/5 hidden space-y-4" data-cog-body="{{ mod.name }}">
+                    {% if mod.commands %}
+                        {% for cmd in mod.commands %}
+                        <div class="cmd-block border border-white/5 bg-[#181920] shadow-md rounded-2xl overflow-hidden transition-all" data-cmd-block="{{ cmd.name }}">
+                            <div class="p-5 flex items-center justify-between cursor-pointer hover:bg-white/5 transition" data-action="toggle-cmd-drawer" data-cmd="{{ cmd.name }}">
+                                <div>
+                                    <span class="text-base font-extrabold text-white tracking-wide">/{{ cmd.name }}</span>
+                                    <p class="text-sm text-zinc-400 mt-1 max-w-xl leading-relaxed">{{ cmd.description }}</p>
+                                </div>
+                                <i class="fa-solid fa-chevron-down text-zinc-500 text-sm transition transform" data-cmd-arrow="{{ cmd.name }}"></i>
+                            </div>
+
+                            <div class="hidden p-6 border-t border-white/5 bg-[#121318] space-y-5" data-cmd-settings="{{ cmd.name }}">
+                                <h4 class="text-sm font-extrabold text-white tracking-wide drop-shadow-sm">
+                                    Additional Permissions (/{{ cmd.name }})
+                                </h4>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Allowed Channels (allowed_channels) -->
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                            Allowed Channels (<code class="font-mono text-zinc-300">allowed_channels</code>)
+                                        </div>
+                                        {% if cmd.allowed_channels %}
+                                        <div class="flex flex-wrap gap-1.5">
+                                            {% for ch in cmd.allowed_channels %}
+                                            <span class="px-2.5 py-1 rounded-md bg-blue-500/15 border border-blue-500/30 text-xs font-mono text-blue-300" data-channel-id="{{ ch.id }}">
+                                                #{{ ch.name }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs text-zinc-500 italic">All channels allowed</span>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Ignored Channels (ignored_channels) -->
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                            Ignored Channels (<code class="font-mono text-zinc-300">ignored_channels</code>)
+                                        </div>
+                                        {% if cmd.ignored_channels %}
+                                        <div class="flex flex-wrap gap-1.5">
+                                            {% for ch in cmd.ignored_channels %}
+                                            <span class="px-2.5 py-1 rounded-md bg-red-500/15 border border-red-500/30 text-xs font-mono text-red-300" data-channel-id="{{ ch.id }}">
+                                                #{{ ch.name }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs text-zinc-500 italic">No channels ignored</span>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Allowed Roles (allowed_roles) -->
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                            Allowed Roles (<code class="font-mono text-zinc-300">allowed_roles</code>)
+                                        </div>
+                                        {% if cmd.allowed_roles %}
+                                        <div class="flex flex-wrap gap-1.5">
+                                            {% for r in cmd.allowed_roles %}
+                                            <span class="px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-xs font-mono text-emerald-300" data-role-id="{{ r.id }}">
+                                                @{{ r.name }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs text-zinc-500 italic">All roles allowed</span>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Ignored Roles (ignored_roles) -->
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                            Ignored Roles (<code class="font-mono text-zinc-300">ignored_roles</code>)
+                                        </div>
+                                        {% if cmd.ignored_roles %}
+                                        <div class="flex flex-wrap gap-1.5">
+                                            {% for r in cmd.ignored_roles %}
+                                            <span class="px-2.5 py-1 rounded-md bg-amber-500/15 border border-amber-500/30 text-xs font-mono text-amber-300" data-role-id="{{ r.id }}">
+                                                @{{ r.name }}
+                                            </span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        <span class="text-xs text-zinc-500 italic">No roles ignored</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <!-- Subcommands (disabled_subcommands) -->
+                                {% if cmd.subcommands %}
+                                <div class="pt-4 border-t border-white/5">
+                                    <h5 class="text-xs font-extrabold text-zinc-400 uppercase tracking-widest mb-3">
+                                        Sub Commands (<code class="font-mono text-zinc-300">disabled_subcommands</code>)
+                                    </h5>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {% for sub in cmd.subcommands %}
+                                        <label class="flex items-center justify-between p-3.5 bg-[#14151a] border border-white/5 rounded-xl cursor-not-allowed opacity-85 shadow-inner">
+                                            <span class="text-sm font-bold text-zinc-200 drop-shadow-sm">/{{ cmd.name }} {{ sub.name }}</span>
+                                            <input
+                                                type="checkbox"
+                                                value="{{ sub.name }}"
+                                                data-cmd="{{ cmd.name }}"
+                                                data-subcommand="{{ sub.name }}"
+                                                class="w-4 h-4 accent-blue-500 rounded"
+                                                {% if not sub.is_disabled %}checked{% endif %}
+                                                disabled
+                                            >
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="py-5 text-sm text-zinc-500 italic text-center bg-[#181920] rounded-xl border border-white/5">
+                            No registered command endpoints in this module.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="bg-[#14151c]/80 border border-white/10 rounded-3xl p-10 text-center text-sm text-zinc-400 italic">
+                No configurable modules found.
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("click", function (event) {
+    const stopEl = event.target.closest("[data-stop-propagation='true']");
+    if (stopEl) {
+        return;
+    }
+
+    const cogHeader = event.target.closest("[data-action='toggle-cog-drawer']");
+    if (cogHeader) {
+        const cogName = cogHeader.getAttribute("data-cog");
+        if (!cogName) return;
+        const root = document.getElementById("modulesAccordionRoot");
+        if (!root) return;
+        root.querySelectorAll("[data-cog-body]").forEach(function (bodyEl) {
+            if (bodyEl.getAttribute("data-cog-body") === cogName) {
+                bodyEl.classList.toggle("hidden");
+            }
+        });
+        root.querySelectorAll("[data-cog-arrow]").forEach(function (arrowEl) {
+            if (arrowEl.getAttribute("data-cog-arrow") === cogName) {
+                arrowEl.classList.toggle("rotate-90");
+            }
+        });
+        return;
+    }
+
+    const cmdHeader = event.target.closest("[data-action='toggle-cmd-drawer']");
+    if (cmdHeader) {
+        const cmdName = cmdHeader.getAttribute("data-cmd");
+        if (!cmdName) return;
+        const blockEl = cmdHeader.closest("[data-cmd-block]");
+        if (!blockEl) return;
+        const settingsEl = blockEl.querySelector("[data-cmd-settings]");
+        const arrowEl = blockEl.querySelector("[data-cmd-arrow]");
+        if (settingsEl) {
+            settingsEl.classList.toggle("hidden");
+        }
+        if (arrowEl) {
+            arrowEl.classList.toggle("rotate-180");
+        }
+    }
+});
+</script>
+{% endblock %}

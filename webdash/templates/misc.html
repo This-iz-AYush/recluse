@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Misc{% endblock %}
+{% block page_heading %}Miscellaneous Utilities{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-10">
+        <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-6">
+            <div class="flex gap-6 items-center">
+                <div class="w-16 h-16 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 text-3xl shadow-[inset_0_2px_10px_rgba(20,184,166,0.3)] shrink-0">
+                    <i class="fa-solid fa-sliders"></i>
+                </div>
+                <div>
+                    <h2 class="text-white font-extrabold text-2xl drop-shadow-md tracking-tight">Dynamic AFK &amp; Information Tools</h2>
+                    <p class="text-sm text-zinc-400 mt-2">
+                        Enables <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/afk</code>, <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/whois</code>, and <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 font-bold shadow-inner">/serverinfo</code>.
+                    </p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 self-end sm:self-center">
+                <span class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border {% if misc_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                    {% if misc_enabled %}Enabled{% else %}Disabled{% endif %}
+                </span>
+                <label class="relative inline-flex items-center cursor-not-allowed opacity-75" title="Read-only in Checkpoint 3B">
+                    <input type="checkbox"
+                           id="toggleMisc"
+                           disabled
+                           {% if misc_enabled %}checked{% endif %}
+                           class="sr-only peer">
+                    <div class="w-14 h-7 bg-black/70 border border-white/20 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600/80 peer-checked:border-blue-400"></div>
+                </label>
+            </div>
+        </div>
+
+        <div class="mt-6 pt-6 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
+            <span>
+                <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Read-only preview in Checkpoint 3B. Live toggling lands in Checkpoint 3C.
+            </span>
+            <span class="font-mono text-zinc-500">misc_enabled</span>
+        </div>
+    </div>
+</div>
+{% endblock %}

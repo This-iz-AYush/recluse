@@ -22,13 +22,13 @@ This document captures the final architecture, verified codebase audit, current 
 | `webdash/auth.py` | **Done (Piece 1 + 2)** | `SessionManager` on `db.webdash_sessions`: SHA-256 `session_id_hash` (`secrets.token_urlsafe(32)` raw cookie `recluse_sid`), timezone-aware UTC `expires_at` (`TTL` index `expireAfterSeconds=0`), `last_seen` write-throttled to `300s`, `verify_oauth_state`, session rotation on login. |
 | `webdash/permissions.py` | **Done (Piece 1)** | `PERMISSION_CATALOG` (35 nodes), `PRESETS` (`Admin`, `ModManager`, `Support`, `Viewer`, `ManageGuildDefault`), `expand_entries` (handles bare strings and skips non-`str` items), deterministic `evaluate_permission` with non-lockable-out Bot Owner, Server Owner, and Discord Administrator (`0x8`). |
 | `webdash/cache.py` | **Done (Piece 1)** | `ShortTTLCache` (`OrderedDict` LRU + TTL) and `GuildConfigCache` (`max_size=200`, `ttl_seconds=120.0`, `db_timeout=2.0s`, fails open on DB error/timeout, invalidates `AI._invalidate_guild_cfg(guild_id)`). |
-| `webdash/audit.py` | **Done (Piece 1)** | `AuditLogger` on `db.dashboard_audit` (`expires_at` 30-day TTL index `expireAfterSeconds=0`, field-level `compute_diff` + `before_snapshot`). |
+| `webdash/audit.py` | **Done (Piece 1)** | `AuditLogger` on `db.dashboard_audit` (`created_at` 30-day TTL index `expireAfterSeconds=2592000`, compound index `[("guild_id", 1), ("created_at", -1)]`, field-level `compute_diff` + `before_snapshot`). |
 | `webdash/app.py` | **Done (Piece 2 + 3A)** | `create_webdash_app(bot, ...)` wiring `aiohttp-jinja2` (`autoescape=True`), middlewares, caches, and routes. |
-| `webdash/router.py` | **Done (Piece 2 + 3A)** | Implemented routes: `GET /health`, `GET /debug/ip` (owner-only when `WEBDASH_DEBUG_IP=1`), `GET /`, `GET /servers`, `GET /login`, `GET /callback`, `POST /logout` (`GET /logout` removed -> `405`), `GET /manage/{guild_id}`, plus `501` authenticated/authorized placeholders for unported routes (`/modules/{guild_id}`, `/automod/{guild_id}`, `/wizard/{guild_id}`, `/lockdown/{guild_id}`, `/misc/{guild_id}`, `/logs/{guild_id}`, `/owner_panel`). |
-| `webdash/templates/` | **Done (Piece 2 + 3A)** | `base.html` (responsive `hidden md:flex` sidebar, `POST /logout` form with CSRF token), `landing.html`, `servers.html`, `overview.html` (`Disabled: being rebuilt` Lockdown card), `error.html`, `not_available.html`. |
+| `webdash/router.py` | **Done (Piece 2 + 3A + 3B Batches 1, 2 & 3)** | Implemented routes: `GET /health`, `GET /debug/ip` (owner-only when `WEBDASH_DEBUG_IP=1`), `GET /`, `GET /servers`, `GET /login`, `GET /callback`, `POST /logout` (`GET /logout` removed -> `405`), `GET /manage/{guild_id}`, `GET /modules/{guild_id}` (protected-cog recovery rule, 5 wired `command_settings` keys, read-only `disabled_cmds`), `GET /automod/{guild_id}` (capped at 500 displayed entries with `+N more` note), `GET /lockdown/{guild_id}`, `GET /misc/{guild_id}`, `GET /wizard/{guild_id}`, `GET /logs/{guild_id}` (`security_logs` truncated at 300 chars with ellipsis for `logging.view`, `dashboard_audit` gated behind `audit.view`, `"Could not load logs (database unavailable)"` shown on query failure/timeout), and `GET /owner_panel` (Bot Owner only; `bot.global_lockdown` and `bot.dashboard_maintenance` shown separately read-only; normalized & escaped IPs with `data-*` attributes only). |
+| `webdash/templates/` | **Done (Piece 2 + 3A + 3B Batches 1, 2 & 3)** | `base.html` (responsive `hidden md:flex` sidebar, `POST /logout` form with CSRF token), `landing.html`, `servers.html`, `overview.html` (`Disabled: being rebuilt` Lockdown card), `modules.html`, `automod.html`, `lockdown.html`, `misc.html`, `wizard.html`, `logs.html`, `owner_panel.html`, `error.html`, `not_available.html`. |
 | `cogs/database.py` | **Done (Applied by User)** | Sets `self.bot.db_ready = False` in `__init__`, configures `serverSelectionTimeoutMS=5000, connectTimeoutMS=5000`, and sets `self.bot.db_ready = True` after `ping`. |
 | `cogs/dashboard.py` | **Done (Checkpoint 3A)** | Lazy `WEBDASH_ENABLED=1` wiring in `Dashboard.__init__` with automatic fallback to legacy on import/init error; `Dashboard.start_server` starts HTTP immediately and polls `bot.db_ready` every `2s` for up to `120s` in a background task to run `ensure_indexes()`. |
-| `tests/` | **Done (50/50 Passing on 3.14.9)** | `tests/test_webdash_core.py`, `tests/test_webdash_routes.py`, and legacy `tests/test_dashboard_routes.py` (50 tests total, all passing on Python 3.14.9). |
+| `tests/` | **Done (Passing on 3.14)** | `tests/test_webdash_core.py`, `tests/test_webdash_routes.py`, and legacy `tests/test_dashboard_routes.py`. |
 
 ---
 
@@ -73,10 +73,10 @@ This document captures the final architecture, verified codebase audit, current 
        "ua_hash": "<16-char sha256 prefix>"
      }
      ```
-2. **`db.dashboard_audit`** (Managed by `webdash/audit.py` `AuditLogger`):
+2. **`db.dashboard_audit`** (Managed by `webdash/audit.py:19, 82-89, 129-139` `AuditLogger`):
    - **Indexes**:
-     - `("guild_id", 1), ("timestamp", -1)`
-     - `("expires_at", 1)` — `expireAfterSeconds=0` (30-day TTL: `2,592,000` seconds)
+     - `[("guild_id", 1), ("created_at", -1)]`
+     - `("created_at", 1)` — `expireAfterSeconds=2592000` (30-day TTL: `30 * 86400` seconds)
    - **Document Schema**:
      ```json
      {
@@ -88,8 +88,7 @@ This document captures the final architecture, verified codebase audit, current 
        "changes": {"automod_enabled": {"old": false, "new": true}},
        "before_snapshot": {"automod_enabled": false},
        "ip_norm": "203.0.113.10",
-       "timestamp": "2026-10-27T00:00:00+00:00 (UTC datetime)",
-       "expires_at": "2026-11-26T00:00:00+00:00 (UTC datetime)"
+       "created_at": "2026-10-27T00:00:00+00:00 (UTC datetime)"
      }
      ```
 3. **`db.lockdown_snapshots`** *(Planned for Phase B Lockdown v2)*:
@@ -101,7 +100,7 @@ This document captures the final architecture, verified codebase audit, current 
 - **`db.auto_responses`**: Auto-responder trigger documents per guild (`{"guild_id": int, "keyword": str, ...}`).
 - **`db.reaction_roles`**: Reaction role mappings (`{"guild_id": int, "message_id": int, "emoji": str, "role_id": int}`).
 - **`db.custom_commands`**: Custom text commands (`{"guild_id": int, "name": str, "response": str, "created_by": int}`).
-- **`db.security_logs`**: Bot/security event logs (`{"guild_id": int, "timestamp": float, "action": str, "user_id": str, "content": str}`).
+- **`db.security_logs`**: Bot/security event logs (`{"guild_id": int, "timestamp": float, "action": str, "user_id": int | str, "content": str}`, written at `bot.py:203-208, 262-267`, `cogs/ai.py:817-828`, indexed at `cogs/database.py:49`).
 - **`db.sessions`, `db.visit_logs`, `db.ip_bans`**: Legacy dashboard collections — **left untouched** for `WEBDASH_ENABLED=0` compatibility.
 
 ---
@@ -189,8 +188,8 @@ class ModuleSchema:
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Welcome & Leave** | `guild_settings` | `welcome_enabled` | `bool` | `True` | Read: `cogs/admin.py:243, 983, 1014`<br>Write: `cogs/admin.py:300, 365` |
 | | `guild_settings` | `welcome_channel` | `channel_select` | `None` | Read: `cogs/admin.py:232, 985, 1016`<br>Write: `cogs/admin.py:143, 361` |
-| | `guild_settings` | `welcome_message` | `textarea` | `"Welcome {mention} to **{server}**!"` | Read: `cogs/admin.py:991`<br>Write: `cogs/admin.py:362` |
-| | `guild_settings` | `leave_message` | `textarea` | `"{user} just left **{server}**."` | Read: `cogs/admin.py:1022`<br>Write: `cogs/admin.py:363` |
+| | `guild_settings` | `welcome_message` | `textarea` | `"👋 Welcome to **{server}**, {user}! You're member #{count}."` | Read: `cogs/admin.py:991-997` (replaces `{user}`, `{server}`, `{count}`, `{name}`)<br>Write: `cogs/admin.py:354, 362` |
+| | `guild_settings` | `leave_message` | `textarea` | `"👋 **{user}** has left the server. Goodbye!"` | Read: `cogs/admin.py:1022-1027` (replaces `{user}`, `{name}`, `{server}`)<br>Write: `cogs/admin.py:355, 363` |
 | | `guild_settings` | `welcome_dm` | `bool` | `False` | Read: `cogs/admin.py:1005`<br>Write: `cogs/admin.py:364` |
 | **Auto-Role & Reaction Roles** | `guild_settings` | `auto_role` | `role_select` | `None` | Read: `cogs/admin.py:236, 974`<br>Write: `cogs/admin.py:386, 394` |
 | | `guild_settings` | `auto_role_bots` | `bool` | `False` | Read: `cogs/admin.py:976`<br>Write: `cogs/admin.py:395` |
@@ -199,7 +198,7 @@ class ModuleSchema:
 | | `guild_settings` | `log_channel` | `channel_select` | `None` | Read: `cogs/admin.py:231, 1040, 1066, 1091, 1109`<br>Write: `cogs/admin.py:118, 329` |
 | | `guild_settings` | `log_event_filter` | `select` (`all\|mod\|messages\|members`) | `"all"` | Read: `cogs/admin.py:1041, 1067, 1092, 1110`<br>Write: `cogs/admin.py:331` |
 | **AutoMod & Anti-Spam** | `guild_settings` | `automod_enabled` | `bool` | `False` | Read: `bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`<br>Write: `cogs/admin.py:304, 556, 825` |
-| | `guild_settings` | `banned_words` | `string_list` | `[]` | Read: `bot.py:191`, `cogs/ai.py:593`, `cogs/admin.py:907`, `cogs/dashboard.py:1232`<br>Write: `cogs/admin.py:917, 927, 931`, `cogs/dashboard.py:1923` |
+| | `guild_settings` | `banned_words` | `string_list` | `[]` | Read: `bot.py:191`, `cogs/ai.py:593`, `cogs/admin.py:907`, `cogs/dashboard.py:1243`<br>Write: `cogs/admin.py:917, 927, 931`, `cogs/dashboard.py:1932-1936` |
 | | `guild_settings` | `antispam_threshold` | `int` (`2..20`) | `5` | Read: `bot.py:219`, `cogs/admin.py:263`<br>Write: `cogs/admin.py:557` |
 | | `guild_settings` | `antispam_window` | `int` (`2..30`) | `5` | Read: `bot.py:220`, `cogs/admin.py:264`<br>Write: `cogs/admin.py:558` |
 | | `guild_settings` | `antispam_action` | `select` (`mute\|kick\|ban\|warn`) | `"mute"` | Read: `bot.py:221`, `cogs/admin.py:265`<br>Write: `cogs/admin.py:559` |
@@ -219,7 +218,7 @@ class ModuleSchema:
 | | `guild_settings` | `levelup_message` | `textarea` | `"🎉 GG {mention}, you reached **Level {level}**!"` | Read: `cogs/leveling.py:336`<br>Write: `cogs/admin.py:600` |
 | | `guild_settings` | `xp_multiplier` | `float` (`0.5..5.0`) | `1.0` | Read: `cogs/leveling.py:388, 431`<br>Write: `cogs/admin.py:601` |
 | **AI Chat** | `guild_settings` | `ai_enabled` | `bool` | `True` | Read: `cogs/ai.py:607`, `cogs/admin.py:240, 841`<br>Write: `cogs/admin.py:297, 823` |
-| | `guild_settings` | `default_ai_model` | `select` (`auto\|deepseek\|groq\|gemini`) | `"auto"` | Read: `cogs/ai.py:77-91, 657, 678-683`, `cogs/admin.py:256, 842`<br>Write: `cogs/admin.py:821` |
+| | `guild_settings` | `default_ai_model` | `select` (`auto\|deepseek\|groq\|gemini`) | `"auto"` | Read: `cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754`, `cogs/admin.py:256, 842`<br>Write: `cogs/admin.py:821`, `cogs/dashboard.py:1942-1946` |
 | | `guild_settings` | `ai_allowed_channels` | `channel_multi_select` | `[]` | Read: `cogs/ai.py:613`, `cogs/admin.py:831, 845`<br>Write: `cogs/admin.py:828, 834` |
 | **Tickets** | `guild_settings` | `ticket_category` | `category_select` | `None` | Read: `cogs/tickets.py:152`, `cogs/admin.py:233`<br>Write: `cogs/admin.py:671` |
 | | `guild_settings` | `ticket_support_role` | `role_select` | `None` | Read: `cogs/tickets.py:47, 66, 153`, `cogs/admin.py:237`<br>Write: `cogs/admin.py:672` |
@@ -229,10 +228,10 @@ class ModuleSchema:
 | | `guild_settings` | `starboard_emoji` | `text` | `"⭐"` | Read: `cogs/admin.py:1131`<br>Write: `cogs/admin.py:715` |
 | **Birthdays** | `guild_settings` | `birthday_channel` | `channel_select` | `None` | Read: `cogs/birthdays.py:110`<br>Write: `cogs/birthdays.py:172` |
 | | `guild_settings` | `birthday_role` | `role_select` | `None` | Read: `cogs/birthdays.py:67, 74, 111`<br>Write: `cogs/birthdays.py:174` |
-| **Modules, Commands & Misc** | `guild_settings` | `disabled_cogs` | `string_list` | `[]` | Read: `bot.py:107`, `cogs/core.py:745, 803`<br>Write: `cogs/dashboard.py:1079` |
-| | `guild_settings` | `command_settings` | `dict` | `{}` | Read: `cogs/core.py:749, 806`<br>Write: `cogs/dashboard.py:1080` |
+| **Modules, Commands & Misc** | `guild_settings` | `disabled_cogs` | `string_list` | `[]` | Read: `bot.py:107`, `cogs/core.py:745, 803`, `cogs/dashboard.py:606`<br>Write: `cogs/dashboard.py:1090` |
+| | `guild_settings` | `command_settings` | `dict` (`disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`) | `{}` | Read: `cogs/core.py:749-777, 806-829`, `cogs/dashboard.py:607`<br>Write: `cogs/dashboard.py:1091` |
 | | `guild_settings` | `disabled_cmds` | `string_list` (read-only) | `[]` | Read: `bot.py:108, 113` |
-| | `guild_settings` | `misc_enabled` | `bool` | `True` | Read: `cogs/misc.py:174, 538`, `cogs/admin.py:246`<br>Write: `cogs/admin.py:303` |
+| | `guild_settings` | `misc_enabled` | `bool` | `True` | Read: `cogs/misc.py:174, 538`, `cogs/admin.py:246`, `cogs/dashboard.py:1663`<br>Write: `cogs/admin.py:303`, `cogs/dashboard.py:1953-1957` |
 | | `guild_settings` | `sports_enabled` | `bool` | `True` | Read: `cogs/sports.py:35`, `cogs/admin.py:244`<br>Write: `cogs/admin.py:301` |
 | | `custom_commands` | `name`, `response`, `created_by` | CRUD docs | — | Read: `cogs/admin.py:748, 783`<br>Write: `cogs/admin.py:761, 767` |
 
@@ -259,57 +258,78 @@ These fields are **not rendered in the UI** until the separate later wire-up pha
    - Unauthenticated requests are keyed by trusted client IP (`ip:<client_ip>`) or `shared:<scope>` in a separate `_anon_buckets` `OrderedDict`, so junk-cookie floods or IP rotation can never evict authenticated users' buckets (`_auth_buckets`).
    - `is_plausible_session_token` (`^[A-Za-z0-9_-]{43}$`) and the `pre_session` rate limit run **before** `session_loader` to bound MongoDB queries under cookie floods.
 3. **Known Leftovers Tracked for Subsequent Checkpoints**:
-   - **Legacy `cogs/dashboard.py` Inline `onclick` / DOM ID XSS**: Legacy `/modules/{guild_id}` (`cogs/dashboard.py:641-738`) interpolates `cog_name`/`cmd_name` into inline `onclick` attributes. Replaced in **Checkpoint 3B** using Jinja2 `autoescape=True` and `data-*` event delegation.
-   - **Legacy `quart` / `quart-cors` in `requirements.txt`**: Kept temporarily during Phase A1; to be removed at the end of Phase A1 after confirming nothing imports them.
+   - **Legacy `cogs/dashboard.py` Inline `onclick` / DOM ID XSS**: Legacy `/modules/{guild_id}` (`cogs/dashboard.py:641-761`) interpolates `cog_name`/`cmd_name` into inline `onclick` attributes. Replaced in **Checkpoint 3B (Batch 3)** using Jinja2 `autoescape=True` and `data-*` event delegation.
+   - **Legacy `quart` / `quart-cors` in `requirements.txt`**: Kept temporarily during Phase A1; to be removed after Checkpoint 3C once `grep` confirms nothing imports them.
    - **`cogs/info.py` Unused `cog_check` (lines 46–55)**: References undefined `interaction` on a slash-only cog; user will delete lines 46–55 in a separate commit.
    - **Duplicate Uncached MongoDB Queries in `bot.py` & `cogs/core.py`**: Consolidated in **Phase A2**.
    - **Lockdown**: Disabled (`501`) until **Phase B** implements `db.lockdown_snapshots` channel overwrite backup and restore.
 
 ---
 
-## 8. Scope for Checkpoints 3B & 3C (and Subsequent Phases)
+## 8. Scope for Checkpoints 3B, 3C, 3D & Subsequent Phases
 
-### 8.1 Checkpoint 3B — Read-Only Port of Existing Guild & Owner Pages onto Jinja2
-Port the read views of the existing dashboard pages from `cogs/dashboard.py` into `webdash/router.py` and `webdash/templates/` (all with `autoescape=True`, zero inline `on*=` event handlers, and live `resolve_guild_access` permission checks), adding each link to `build_sidebar_nav(guild_id, granted)` as its handler and template land:
+### 8.1 Checkpoint 3B — Read-Only Port of Existing Guild & Owner Pages onto Jinja2 (Legacy Parity First)
+Port the read views of the existing dashboard pages from `cogs/dashboard.py` into `webdash/router.py` and `webdash/templates/` (all with `autoescape=True`, zero inline `on*=` event handlers, and live `resolve_guild_access` permission checks), adding each link to `build_sidebar_nav(guild_id, granted)` only as its handler and template land, delivered in three small reviewable batches:
 
-1. **`GET /modules/{guild_id}` (`modules.html`, requires `modules.view`)**:
-   - Renders toggleable cog cards (`disabled_cogs`) and per-command/subcommand override drawer (`command_settings`: `disabled`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`).
-   - Displays legacy `disabled_cmds` as a read-only badge list if non-empty.
-   - Uses `data-cog`, `data-cmd`, and `addEventListener` delegation (eliminating the Phase A0 inline `onclick` / `innerHTML` XSS).
-2. **`GET /automod/{guild_id}` (`automod.html`, requires `automod.view`)**:
-   - Renders `automod_enabled` toggle (`default=False`) and `banned_words` chip/textarea editor.
-3. **`GET /wizard/{guild_id}` (`wizard.html`, requires `settings.view`)**:
-   - Renders the guided quick-setup wizard for **wired** fields only (`welcome_enabled`, `welcome_channel`, `log_channel`, `auto_role`, `automod_enabled`, `leveling_enabled`, `ai_enabled`, `default_ai_model` with options `auto`/`deepseek`/`groq`/`gemini` from `cogs/ai.py:678-683`).
-4. **`GET /lockdown/{guild_id}` (`lockdown.html`, requires `antinuke.view`)**:
-   - Renders a clear read-only status panel explaining that emergency lockdown is disabled (`Disabled: being rebuilt`) until Phase B's channel permission snapshot system (`db.lockdown_snapshots`) lands.
-5. **`GET /misc/{guild_id}` (`misc.html`, requires `settings.view`)**:
-   - Renders `default_ai_model` (`auto`/`deepseek`/`groq`/`gemini`), `ai_enabled`, `sports_enabled`, and `misc_enabled`.
-6. **`GET /logs/{guild_id}` (`logs.html`, requires `logging.view`)**:
-   - Renders recent entries from `db.security_logs` and `db.dashboard_audit` for `guild_id` (queried with `get_ready_db`, short timeout, bounded limit, and fail-open empty list on timeout).
+#### Batch 1: `automod` + `lockdown` + `misc` (Done & Verified)
+1. **`GET /automod/{guild_id}` (`automod.html`, requires `automod.view`)**:
+   - Matches legacy `cogs/dashboard.py:1243-1285` parity: renders the `banned_words` (`bot.py:191`, `cogs/ai.py:593`, `cogs/admin.py:907`, `cogs/dashboard.py:1243`, default `[]`) read-only comma-separated editor and active filter badge pills (capped at 500 displayed entries with a `+N more` indicator when >500 words exist), plus a read-only status indicator for `automod_enabled` (`bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`, default `False`).
+2. **`GET /lockdown/{guild_id}` (`lockdown.html`, requires `antinuke.view`)**:
+   - Renders the Emergency Lockdown status panel (`cogs/dashboard.py:1365-1378`) with the `Disabled: being rebuilt` banner and disabled button explaining that lockdown is disabled until Phase B's `db.lockdown_snapshots` lands.
+3. **`GET /misc/{guild_id}` (`misc.html`, requires `settings.view`)**:
+   - Matches legacy `cogs/dashboard.py:1663-1708` parity: renders only the `misc_enabled` (`cogs/misc.py:174, 538`, `cogs/admin.py:246`, `cogs/dashboard.py:1663`, default `True`) status toggle card for `/afk`, `/whois`, and `/serverinfo`.
+
+#### Batch 2: `wizard` + `logs` (Done & Verified)
+4. **`GET /wizard/{guild_id}` (`wizard.html`, requires `settings.view`)**:
+   - Matches legacy `cogs/dashboard.py:1535-1606` parity (AI model selector only), updated from obsolete `nexusify`/`gemini`/`sarvam` to the 4 real models wired in `cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754` (`auto`, `deepseek`, `groq`, `gemini`).
+5. **`GET /logs/{guild_id}` (`logs.html`, requires `logging.view`)**:
+   - Queries `db.security_logs` (sorted by float `timestamp` descending per `cogs/dashboard.py:1425`, `bot.py:208, 266`) for any user with `logging.view`, truncating displayed `content` at 300 characters with an ellipsis (`…`).
+   - **Permission-Gated Audit History**: Queries and renders the `db.dashboard_audit` section (sorted by UTC `created_at` descending per `webdash/audit.py:83, 138`) **ONLY** when `"audit.view" in access.granted_permissions` (`webdash/permissions.py:62-63`). Users with `logging.view` alone (such as the `Support` preset at `webdash/permissions.py:90-95`) see only `security_logs` and never `dashboard_audit`.
+   - **Database Unavailable / Timeout Banner**: If the `security_logs` or `dashboard_audit` query fails or times out (2.0s timeout), renders `"Could not load logs (database unavailable)"` in that section instead of `"No security events logged yet."` / `"No configuration changes recorded yet."`.
+
+#### Batch 3: `modules` + `owner_panel` (Done)
+6. **`GET /modules/{guild_id}` (`modules.html`, requires `modules.view`)**:
+   - Renders toggleable cog cards (`disabled_cogs` read at `bot.py:107`, `cogs/core.py:745, 803`) and per-command override drawers exposing only the keys `cogs/core.py:749-777, 806-829` actually reads (`disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`).
+   - **Protected Cogs & Recovery Rule**: Hides protected cogs `core`, `database`, `dashboard`, `owner`, and `jishaku` (`cogs/dashboard.py:620` + `core`) from normal disabling. However, if a guild already has any of those 5 protected cogs in `disabled_cogs` (because the legacy UI allowed disabling `Core`), still renders that cog in `/modules/{guild_id}` with a clear `Protected` badge so the admin can switch it back on.
+   - Displays legacy `disabled_cmds` (`bot.py:108, 113`) as a read-only badge list if non-empty.
+   - Uses `data-cog`, `data-cmd`, and `addEventListener` delegation (zero inline `on*=` attributes).
 7. **`GET /owner_panel` (`owner_panel.html`, Bot Owner only)**:
-   - Renders loaded cog list, maintenance mode status, and recent `db.visit_logs` / `db.ip_bans` for the Bot Owner.
+   - Renders loaded cog extensions (`bot.extensions`, `cogs/dashboard.py:1762`), recent `db.visit_logs` (`cogs/dashboard.py:1777`), and `db.ip_bans` (`cogs/dashboard.py:2024`).
+   - **Accurate Read-Only Maintenance Flags**: Separately displays and labels both distinct flags read-only:
+     1. `bot.global_lockdown` (`bot.py:33, 82` — blocks bot commands for non-owners), and
+     2. `bot.dashboard_maintenance` (`cogs/dashboard.py:43, 122` — blocks web dashboard access for non-owners),
+     explicitly noting in the UI and docs that the legacy `/owner_panel` (`cogs/dashboard.py:1761-1881`) showed neither flag.
 
-### 8.2 Checkpoint 3C — Mutation Endpoints, Strict Validation, Cache Invalidation & Audit Trail
-Port the POST mutation endpoints into `webdash/router.py` (all protected by the CSRF middleware, `mutation` rate-limit scope, and live `resolve_guild_access` / Bot Owner checks):
+### 8.2 Checkpoint 3C — Mutation Endpoints, Strict Validation, Cache Invalidation & Audit Trail (Legacy Parity)
+Port the POST mutation endpoints into `webdash/router.py` matching legacy parity (all protected by the CSRF middleware, `mutation` rate-limit scope, and live `resolve_guild_access` / Bot Owner checks):
 
 1. **`POST /api/settings/{guild_id}`**:
-   - Actions:
-     - `update_automod` (requires `automod.edit`): validates `automod_enabled` (`bool`) and `banned_words` (list/CSV of strings, max 200 words, max 64 chars each).
-     - `update_misc` (requires `settings.edit` or `ai.edit`): validates `default_ai_model` against `{"auto", "deepseek", "groq", "gemini"}`, `ai_enabled` (`bool`), `misc_enabled` (`bool`), `sports_enabled` (`bool`).
-     - `wizard_complete` (requires `settings.edit`): validates channel/role IDs against live `guild.channels` / `guild.roles` before writing wired keys (`welcome_channel`, `log_channel`, `auto_role`, `automod_enabled`, `leveling_enabled`, `ai_enabled`, `default_ai_model`).
-     - `toggle_lockdown` (requires `lockdown.execute`): returns HTTP `501` JSON `{"error": "Lockdown is temporarily disabled until Lockdown v2 snapshots are implemented."}`.
+   - Actions matching `cogs/dashboard.py:1928-1962`:
+     - `update_automod` (requires `automod.edit`): validates `banned_words` (`words` string or list, max 200 words, max 64 chars each, lowercased & deduplicated).
+     - `update_ai_model` (requires `settings.edit` or `ai.edit`): validates `model` against `{"auto", "deepseek", "groq", "gemini"}` and writes `default_ai_model`.
+     - `toggle` with `module == "toggleMisc"` (requires `settings.edit`): validates `enabled` (`bool`) and writes `misc_enabled`.
+     - `toggle_lockdown` (requires `lockdown.execute`): returns HTTP `501` JSON `{"error": "Lockdown is being rebuilt and is temporarily disabled"}` (`cogs/dashboard.py:1960-1961`).
    - On every write:
      - Reads current cached settings for `before_snapshot`.
      - Updates `db.guild_settings` with `asyncio.wait_for(..., timeout=2.0)`.
-     - Calls `cfg_cache.invalidate(guild_id)` (which also calls `AI._invalidate_guild_cfg(guild_id)`).
-     - Records field-level diff in `db.dashboard_audit` via `AuditLogger.record(...)`.
+     - Calls `cfg_cache.invalidate(guild_id)` (which also calls `AI._invalidate_guild_cfg(guild_id)` per `webdash/cache.py:177-181` and `cogs/ai.py:267-269`).
+     - Records field-level diff in `db.dashboard_audit` via `AuditLogger.record(...)` (`webdash/audit.py:95-146`).
 2. **`POST /api/modules/{guild_id}` (requires `modules.edit` / `commands.edit`)**:
-   - Validates `disabled_cogs` against real loaded cog names (excluding core protected cogs `core`, `database`, `dashboard`) and validates `command_settings` structure (verifying channel and role snowflakess belong to `guild`).
+   - Validates `disabled_cogs` against real loaded cog names: forbids adding any protected cog (`core`, `database`, `dashboard`, `owner`, `jishaku`) to `disabled_cogs`, while allowing removal of a previously disabled protected cog so a server can recover.
+   - Validates `command_settings` structure (`disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`, verifying channel and role snowflakes belong to `guild`).
    - Writes to `db.guild_settings`, invalidates `GuildConfigCache`, and records an audit log entry in `db.dashboard_audit`.
 3. **`POST /api/owner_action` & `POST /api/ip_action` (Bot Owner only)**:
-   - Validates owner identity via `resolve_bot_owner_id(request)` and executes `reload_cog` / maintenance toggle / IP ban or unban with CSRF protection.
+   - Validates owner identity via `resolve_bot_owner_id(request)` and executes `reload_cog` (`cogs/dashboard.py:1985-1995`) and IP `ban`/`unban` (`cogs/dashboard.py:2023-2032`) with CSRF protection.
+4. **Post-3C Dependency Cleanup**:
+   - Grep the repository for `quart` and `quart_cors` / `quart-cors`; once confirmed unused, remove `quart` and `quart-cors` from `requirements.txt` in a dedicated commit.
 
-### 8.3 Subsequent Phases (After Phase A1 Sign-Off)
-- **Phase A2**: Consolidate `bot.py` and `cogs/core.py` command/module/blacklist checks into one shared access-check helper backed by `bot.guild_config` (`GuildConfigCache`) and short-TTL caches for `global_blacklist` and `co_owners`, preserving `_original_interaction_check` and adding ephemeral/short-TTL feedback on blocked commands.
+### 8.3 Checkpoint 3D — Expanded Wired-Field Scope (After 3C Sign-Off)
+Once Checkpoints 3B and 3C are live and verified with 100% legacy parity, expand the existing pages to expose the additional settings that cogs already read in production:
+- **`/automod/{guild_id}`**: Add interactive `automod_enabled` toggle (`bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`, default `False`).
+- **`/wizard/{guild_id}`**: Expand the guided quick-setup wizard to configure wired setup fields (`welcome_enabled`, `welcome_channel`, `log_channel`, `auto_role`, `automod_enabled`, `leveling_enabled`, `ai_enabled`, `default_ai_model`), validating channel/role snowflakes against live `guild.channels` / `guild.roles`.
+- **`/misc/{guild_id}`**: Add `ai_enabled` (`cogs/ai.py:607`), `default_ai_model` (`cogs/ai.py:657`), and `sports_enabled` (`cogs/sports.py:35`, `cogs/admin.py:244`) toggles/selectors alongside `misc_enabled`.
+
+### 8.4 Subsequent Phases (After Phase A1 Sign-Off)
+- **Phase A2**: Consolidate `bot.py` and `cogs/core.py` command/module/blacklist checks into one shared access-check helper backed by `bot.guild_config` (`GuildConfigCache`) and short-TTL caches for `global_blacklist` and `co_owners`, preserving `_original_interaction_check` (`cogs/core.py:707, 714, 831`) and adding ephemeral/short-TTL feedback on blocked commands.
 - **Phase B**: Declarative schema engine (`webdash/schema.py` + `webdash/modules/*.py`), full MEE6/Dyno/Carl-bot module editors for all wired fields in §6.2, RBAC role-mapping UI (`permissions.manage`), Audit Log viewer with one-click revision rollback (`audit.restore`), JSON export/import (`settings.export` / `settings.import`), and Lockdown v2 (`db.lockdown_snapshots`).
 - **Later Wire-Up Phase**: One cog per change for the unwired fields in §6.3, with defaults matching current hardcoded behavior and explicit approval before touching any cog.

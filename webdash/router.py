@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime
+import json
 import logging
 import math
 import os
@@ -49,6 +51,7 @@ from webdash.security import (
     SESSION_DATA_KEY,
     InMemoryRateLimiter,
     is_secure_request,
+    normalize_ip,
 )
 
 logger = logging.getLogger("recluse.webdash.router")
@@ -68,6 +71,53 @@ _MISSING_MEMBER_SENTINEL = object()
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DEFAULT_AVATAR_URL = "https://cdn.discordapp.com/embed/avatars/0.png"
+
+MAX_BANNED_WORDS_DISPLAY = 500
+MAX_SECURITY_LOG_CONTENT_CHARS = 300
+LOGS_QUERY_LIMIT = 50
+LOGS_DB_TIMEOUT_SECONDS = 2.0
+OWNER_VISIT_LOGS_LIMIT = 30
+
+# Protected system cogs excluded from normal disabling in /modules/{guild_id}
+# (cogs/dashboard.py:620 excludes dashboard, jishaku, database, owner; core added per 3B spec).
+# If a guild already has one of these in disabled_cogs, it is still rendered with a
+# "Protected (Re-enable Only)" badge so an admin can switch it back on.
+PROTECTED_COGS_LOWER: frozenset[str] = frozenset(
+    {"core", "database", "dashboard", "owner", "jishaku"}
+)
+
+# Verified AI models in cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754
+AI_MODEL_OPTIONS: tuple[dict[str, str], ...] = (
+    {
+        "value": "auto",
+        "title": "Auto (Smart Routing)",
+        "subtitle": "Smart routing across engines",
+        "icon": "fa-solid fa-wand-magic-sparkles",
+        "icon_color": "text-blue-400",
+    },
+    {
+        "value": "deepseek",
+        "title": "DeepSeek V4.1 Flash",
+        "subtitle": "Smartest reasoning engine",
+        "icon": "fa-solid fa-brain",
+        "icon_color": "text-indigo-400",
+    },
+    {
+        "value": "groq",
+        "title": "Groq (GPT OSS 120B)",
+        "subtitle": "Fast & uncensored responses",
+        "icon": "fa-solid fa-bolt",
+        "icon_color": "text-amber-400",
+    },
+    {
+        "value": "gemini",
+        "title": "Gemini 2.5 Flash",
+        "subtitle": "Multimodal & vision support",
+        "icon": "fa-brands fa-google",
+        "icon_color": "text-emerald-400",
+    },
+)
+VALID_AI_MODELS: frozenset[str] = frozenset(m["value"] for m in AI_MODEL_OPTIONS)
 
 
 @dataclasses.dataclass
@@ -339,11 +389,16 @@ async def resolve_guild_access(
 def build_sidebar_nav(guild_id: int, granted: set[str]) -> list[dict[str, str]]:
     """
     Build sidebar navigation items filtered by the user's granted permissions.
-    In Checkpoint 3A, ONLY implemented pages are listed in the sidebar (Overview).
-    Additional pages are added in Checkpoint 3B as their templates and handlers land.
+    Pages are added in Checkpoint 3B only as their templates and handlers land.
     """
     candidates = [
         ("overview", f"/manage/{guild_id}", "fa-chart-pie", "Overview", "overview.view"),
+        ("modules", f"/modules/{guild_id}", "fa-layer-group", "Modules & Commands", "modules.view"),
+        ("automod", f"/automod/{guild_id}", "fa-shield-halved", "AutoMod", "automod.view"),
+        ("lockdown", f"/lockdown/{guild_id}", "fa-lock", "Lockdown", "antinuke.view"),
+        ("wizard", f"/wizard/{guild_id}", "fa-wand-magic-sparkles", "Setup Wizard", "settings.view"),
+        ("misc", f"/misc/{guild_id}", "fa-sliders", "Utilities & Misc", "settings.view"),
+        ("logs", f"/logs/{guild_id}", "fa-scroll", "Audit Logs", "logging.view"),
     ]
     nav: list[dict[str, str]] = []
     for key, href, icon, title, req_perm in candidates:
@@ -879,6 +934,89 @@ async def _render_servers_page(request: web.Request, session_doc: dict[str, Any]
     return aiohttp_jinja2.render_template("servers.html", request, context)
 
 
+async def _prepare_guild_page(
+    request: web.Request,
+    *,
+    required_permission: str,
+    active_tab: str,
+) -> tuple[web.Response | None, GuildAccessContext | None, dict[str, Any]]:
+    """
+    Validate session, guild_id snowflake, live guild membership, and required RBAC
+    permission. Returns `(error_response, None, {})` on failure, or
+    `(None, access, base_context)` when authorized.
+    """
+    session_doc = request.get(SESSION_DATA_KEY)
+    if not session_doc:
+        return _redirect("/login"), None, {}
+
+    try:
+        user_id = int(session_doc["discord_id"])
+    except (KeyError, ValueError, TypeError):
+        return _redirect("/login"), None, {}
+
+    raw_guild_id = request.match_info.get("guild_id", "")
+    try:
+        guild_id = int(raw_guild_id)
+    except (ValueError, TypeError):
+        return (
+            render_error_page(
+                request,
+                status_code=400,
+                title="Invalid Server ID",
+                message="The requested server ID is not a valid Discord snowflake.",
+            ),
+            None,
+            {},
+        )
+
+    access = await resolve_guild_access(request, guild_id, user_id, required_permission)
+    if access.guild is None:
+        return (
+            render_error_page(
+                request,
+                status_code=404,
+                title="Server Not Found",
+                message="Recluse is not currently a member of this server.",
+            ),
+            None,
+            {},
+        )
+    if not access.allowed:
+        return (
+            render_error_page(
+                request,
+                status_code=403,
+                title="Access Denied",
+                message="You do not have permission to access this server's dashboard.",
+            ),
+            None,
+            {},
+        )
+
+    guild = access.guild
+    bot = request.app.get(BOT_KEY)
+    guild_name = str(getattr(guild, "name", None) or "Server")
+    icon_obj = getattr(guild, "icon", None)
+    raw_icon_url = getattr(icon_obj, "url", None) if icon_obj is not None else None
+    guild_icon = get_guild_icon_url(guild_id, guild_name, raw_icon_url)
+
+    base_context: dict[str, Any] = {
+        "bot_avatar": get_bot_avatar_url(bot),
+        "user_name": str(session_doc.get("username") or "User"),
+        "user_avatar": get_user_avatar_url(session_doc),
+        "csrf_token": str(session_doc.get("csrf_token") or ""),
+        "guild_id": str(guild_id),
+        "guild_name": guild_name,
+        "guild_icon": guild_icon,
+        "active_tab": active_tab,
+        "nav_items": build_sidebar_nav(guild_id, access.granted_permissions),
+        "is_bot_owner": access.is_bot_owner,
+        "is_guild_owner": access.is_guild_owner,
+        "is_discord_admin": access.is_discord_admin,
+    }
+    return None, access, base_context
+
+
 async def handle_guild_overview(request: web.Request) -> web.Response:
     """
     GET /manage/{guild_id}
@@ -886,50 +1024,16 @@ async def handle_guild_overview(request: web.Request) -> web.Response:
     - Evaluates `overview.view` via `resolve_guild_access` using live member roles.
     - Renders overview.html with live guild stats and cached guild_settings.
     """
-    session_doc = request.get(SESSION_DATA_KEY)
-    if not session_doc:
-        return _redirect("/login")
-
-    try:
-        user_id = int(session_doc["discord_id"])
-    except (KeyError, ValueError, TypeError):
-        return _redirect("/login")
-
-    raw_guild_id = request.match_info.get("guild_id", "")
-    try:
-        guild_id = int(raw_guild_id)
-    except (ValueError, TypeError):
-        return render_error_page(
-            request,
-            status_code=400,
-            title="Invalid Server ID",
-            message="The requested server ID is not a valid Discord snowflake.",
-        )
-
-    access = await resolve_guild_access(request, guild_id, user_id, "overview.view")
-    if access.guild is None:
-        return render_error_page(
-            request,
-            status_code=404,
-            title="Server Not Found",
-            message="Recluse is not currently a member of this server.",
-        )
-    if not access.allowed:
-        return render_error_page(
-            request,
-            status_code=403,
-            title="Access Denied",
-            message="You do not have permission to access this server's dashboard.",
-        )
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="overview.view",
+        active_tab="overview",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
 
     guild = access.guild
     settings = access.settings
-    bot = request.app.get(BOT_KEY)
-
-    guild_name = str(getattr(guild, "name", None) or "Server")
-    icon_obj = getattr(guild, "icon", None)
-    raw_icon_url = getattr(icon_obj, "url", None) if icon_obj is not None else None
-    guild_icon = get_guild_icon_url(guild_id, guild_name, raw_icon_url)
 
     member_count_val = getattr(guild, "member_count", None)
     if member_count_val is None:
@@ -951,7 +1055,7 @@ async def handle_guild_overview(request: web.Request) -> web.Response:
     #   cogs/ai.py:657 (`cfg.get("default_ai_model", "auto")`),
     #   cogs/admin.py:256 (`cfg.get("default_ai_model", "auto")`),
     #   cogs/admin.py:842 (`cfg.get("default_ai_model", "auto")`)
-    #   Valid options in cogs/ai.py:678-683: auto / deepseek / groq / gemini
+    #   Valid options in cogs/ai.py:77-87, 657: auto / deepseek / groq / gemini
     raw_ai_model = str(settings.get("default_ai_model") or "auto").strip().lower()
     default_ai_model = raw_ai_model if raw_ai_model in ("auto", "deepseek", "groq", "gemini") else "auto"
 
@@ -985,114 +1089,565 @@ async def handle_guild_overview(request: web.Request) -> web.Response:
         {"label": "Utilities & Misc", "icon": "fa-sliders", "enabled": bool(settings.get("misc_enabled", True))},
     ]
 
-    context = {
-        "bot_avatar": get_bot_avatar_url(bot),
-        "user_name": str(session_doc.get("username") or "User"),
-        "user_avatar": get_user_avatar_url(session_doc),
-        "csrf_token": str(session_doc.get("csrf_token") or ""),
-        "guild_id": str(guild_id),
-        "guild_name": guild_name,
-        "guild_icon": guild_icon,
-        "active_tab": "overview",
-        "nav_items": build_sidebar_nav(guild_id, access.granted_permissions),
-        "is_bot_owner": access.is_bot_owner,
-        "is_guild_owner": access.is_guild_owner,
-        "is_discord_admin": access.is_discord_admin,
-        "member_count": f"{int(member_count_val):,}",
-        "channel_count": len(channels_list) if hasattr(channels_list, "__len__") else 0,
-        "role_count": len(roles_list) if hasattr(roles_list, "__len__") else 0,
-        "automod_enabled": automod_enabled,
-        "banned_words_count": banned_words_count,
-        "default_ai_model": default_ai_model,
-        "ai_enabled": ai_enabled,
-        "disabled_cogs_count": disabled_cogs_count,
-        "command_overrides_count": command_overrides_count,
-        "module_cards": module_cards,
-    }
+    context.update(
+        {
+            "member_count": f"{int(member_count_val):,}",
+            "channel_count": len(channels_list) if hasattr(channels_list, "__len__") else 0,
+            "role_count": len(roles_list) if hasattr(roles_list, "__len__") else 0,
+            "automod_enabled": automod_enabled,
+            "banned_words_count": banned_words_count,
+            "default_ai_model": default_ai_model,
+            "ai_enabled": ai_enabled,
+            "disabled_cogs_count": disabled_cogs_count,
+            "command_overrides_count": command_overrides_count,
+            "module_cards": module_cards,
+        }
+    )
     return aiohttp_jinja2.render_template("overview.html", request, context)
 
 
-def _make_guild_not_available_handler(
-    required_permission: str,
-    page_title: str,
-) -> Callable[[web.Request], Awaitable[web.Response]]:
+async def handle_guild_automod(request: web.Request) -> web.Response:
     """
-    Checkpoint 3A placeholder handler for guild pages that will be ported in Checkpoint 3B.
-    Enforces login and live guild permission checks, then renders not_available.html (501).
+    GET /automod/{guild_id}
+    - Requires `automod.view` (webdash/permissions.py:33).
+    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1243-1285 parity.
+    - Reads `banned_words` (bot.py:191, cogs/ai.py:593, cogs/admin.py:907, default=[])
+      and `automod_enabled` (bot.py:189, cogs/ai.py:591, cogs/admin.py:247, 843, default=False).
+    - Caps displayed `banned_words` at MAX_BANNED_WORDS_DISPLAY (500) with a "+N more" note.
     """
-    async def _handler(request: web.Request) -> web.Response:
-        session_doc = request.get(SESSION_DATA_KEY)
-        if not session_doc:
-            return _redirect("/login")
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="automod.view",
+        active_tab="automod",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
 
-        try:
-            user_id = int(session_doc["discord_id"])
-        except (KeyError, ValueError, TypeError):
-            return _redirect("/login")
+    settings = access.settings
+    raw_banned = settings.get("banned_words", [])
+    all_banned_words: list[str] = []
+    if isinstance(raw_banned, list):
+        for item in raw_banned:
+            if isinstance(item, (str, int, float)):
+                cleaned = str(item).strip()
+                if cleaned:
+                    all_banned_words.append(cleaned)
 
-        raw_guild_id = request.match_info.get("guild_id", "")
-        try:
-            guild_id = int(raw_guild_id)
-        except (ValueError, TypeError):
-            return render_error_page(
-                request,
-                status_code=400,
-                title="Invalid Server ID",
-                message="The requested server ID is not a valid Discord snowflake.",
-            )
+    total_banned_words = len(all_banned_words)
+    displayed_words = all_banned_words[:MAX_BANNED_WORDS_DISPLAY]
+    extra_count = max(0, total_banned_words - MAX_BANNED_WORDS_DISPLAY)
 
-        access = await resolve_guild_access(request, guild_id, user_id, required_permission)
-        if access.guild is None:
-            return render_error_page(
-                request,
-                status_code=404,
-                title="Server Not Found",
-                message="Recluse is not currently a member of this server.",
-            )
-        if not access.allowed:
-            return render_error_page(
-                request,
-                status_code=403,
-                title="Access Denied",
-                message="You do not have permission to access this server's dashboard.",
-            )
-
-        guild = access.guild
-        bot = request.app.get(BOT_KEY)
-        guild_name = str(getattr(guild, "name", None) or "Server")
-        icon_obj = getattr(guild, "icon", None)
-        raw_icon_url = getattr(icon_obj, "url", None) if icon_obj is not None else None
-        guild_icon = get_guild_icon_url(guild_id, guild_name, raw_icon_url)
-
-        context = {
-            "bot_avatar": get_bot_avatar_url(bot),
-            "user_name": str(session_doc.get("username") or "User"),
-            "user_avatar": get_user_avatar_url(session_doc),
-            "csrf_token": str(session_doc.get("csrf_token") or ""),
-            "guild_id": str(guild_id),
-            "guild_name": guild_name,
-            "guild_icon": guild_icon,
-            "active_tab": "",
-            "page_title": page_title,
-            "nav_items": build_sidebar_nav(guild_id, access.granted_permissions),
-            "is_bot_owner": access.is_bot_owner,
-            "is_guild_owner": access.is_guild_owner,
-            "is_discord_admin": access.is_discord_admin,
+    context.update(
+        {
+            "automod_enabled": bool(settings.get("automod_enabled", False)),
+            "banned_words": displayed_words,
+            "total_banned_words": total_banned_words,
+            "extra_banned_words_count": extra_count,
+            "words_string": ", ".join(displayed_words),
         }
-        return aiohttp_jinja2.render_template(
-            "not_available.html",
-            request,
-            context,
-            status=501,
+    )
+    return aiohttp_jinja2.render_template("automod.html", request, context)
+
+
+async def handle_guild_lockdown(request: web.Request) -> web.Response:
+    """
+    GET /lockdown/{guild_id}
+    - Requires `antinuke.view` (webdash/permissions.py:36).
+    - Renders lockdown.html showing the "Disabled: being rebuilt" status banner
+      and disabled button (cogs/dashboard.py:1365-1378).
+    """
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="antinuke.view",
+        active_tab="lockdown",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
+
+    return aiohttp_jinja2.render_template("lockdown.html", request, context)
+
+
+async def handle_guild_misc(request: web.Request) -> web.Response:
+    """
+    GET /misc/{guild_id}
+    - Requires `settings.view` (webdash/permissions.py:16).
+    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1663-1708 parity
+      (exposes `misc_enabled` read at cogs/misc.py:174, 538, cogs/admin.py:246, default=True).
+    """
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="settings.view",
+        active_tab="misc",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
+
+    settings = access.settings
+    context.update(
+        {
+            "misc_enabled": bool(settings.get("misc_enabled", True)),
+        }
+    )
+    return aiohttp_jinja2.render_template("misc.html", request, context)
+
+
+async def handle_guild_wizard(request: web.Request) -> web.Response:
+    """
+    GET /wizard/{guild_id}
+    - Requires `settings.view` (webdash/permissions.py:16).
+    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1535-1606 parity (AI-only),
+      updated to the 4 real AI models wired in cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754
+      (`auto`, `deepseek`, `groq`, `gemini`).
+    """
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="settings.view",
+        active_tab="wizard",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
+
+    settings = access.settings
+    raw_model = str(settings.get("default_ai_model") or "auto").strip().lower()
+    default_ai_model = raw_model if raw_model in VALID_AI_MODELS else "auto"
+
+    context.update(
+        {
+            "default_ai_model": default_ai_model,
+            "ai_enabled": bool(settings.get("ai_enabled", True)),
+            "ai_models": AI_MODEL_OPTIONS,
+        }
+    )
+    return aiohttp_jinja2.render_template("wizard.html", request, context)
+
+
+async def _fetch_cursor_docs(
+    cursor: Any,
+    *,
+    limit: int = LOGS_QUERY_LIMIT,
+    timeout: float = LOGS_DB_TIMEOUT_SECONDS,
+) -> list[dict[str, Any]]:
+    """Drain an async Motor/mock cursor with a strict timeout, returning at most `limit` dicts."""
+    async def _drain() -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        if hasattr(cursor, "__aiter__"):
+            async for doc in cursor:
+                if isinstance(doc, dict):
+                    results.append(doc)
+                    if len(results) >= limit:
+                        break
+            return results
+        to_list_fn = getattr(cursor, "to_list", None)
+        if callable(to_list_fn):
+            raw_list = await to_list_fn(length=limit)
+            if isinstance(raw_list, list):
+                return [d for d in raw_list[:limit] if isinstance(d, dict)]
+        return results
+
+    return await asyncio.wait_for(_drain(), timeout=timeout)
+
+
+def _format_utc_timestamp(raw_val: Any) -> str:
+    """Format either a float/int epoch timestamp or a datetime into 'YYYY-MM-DD HH:MM UTC'."""
+    if isinstance(raw_val, datetime.datetime):
+        dt = raw_val
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt = dt.astimezone(datetime.timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    if isinstance(raw_val, (int, float)) and not isinstance(raw_val, bool) and math.isfinite(raw_val):
+        try:
+            dt = datetime.datetime.fromtimestamp(float(raw_val), tz=datetime.timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, OSError, OverflowError):
+            return "Unknown"
+    if isinstance(raw_val, str) and raw_val.strip():
+        try:
+            dt = datetime.datetime.fromtimestamp(float(raw_val.strip()), tz=datetime.timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M UTC")
+        except (ValueError, OSError, OverflowError):
+            return raw_val.strip()[:32]
+    return "Unknown"
+
+
+def _format_audit_value(val: Any) -> str:
+    """Format an old/new audit diff value concisely for read-only display."""
+    try:
+        rendered = json.dumps(val, ensure_ascii=False, default=str)
+    except Exception:
+        rendered = str(val)
+    if len(rendered) > 120:
+        return rendered[:117] + "..."
+    return rendered
+
+
+def _truncate_security_log_content(
+    raw_content: Any,
+    max_chars: int = MAX_SECURITY_LOG_CONTENT_CHARS,
+) -> str:
+    """Truncate displayed security_logs content to `max_chars` (300) characters with an ellipsis."""
+    text = str(raw_content if raw_content is not None else "—")
+    if len(text) > max_chars:
+        return text[:max_chars] + "…"
+    return text
+
+
+async def handle_guild_logs(request: web.Request) -> web.Response:
+    """
+    GET /logs/{guild_id}
+    - Requires `logging.view` (webdash/permissions.py:62).
+    - Queries `db.security_logs` (sorted by float `timestamp` descending per cogs/dashboard.py:1425,
+      bot.py:203-208, 262-267) for all users with `logging.view`.
+    - Queries and renders `db.dashboard_audit` (sorted by UTC `created_at` descending per
+      webdash/audit.py:83, 138) ONLY when the user also holds `audit.view` (webdash/permissions.py:63).
+    - If either query fails, times out (>2s), or the database is unavailable, sets
+      `security_logs_error` / `audit_logs_error` so the template renders
+      "Could not load logs (database unavailable)".
+    - Truncates displayed `security_logs` content to 300 characters with an ellipsis.
+    """
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="logging.view",
+        active_tab="logs",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
+
+    guild_id = int(context["guild_id"])
+    can_view_audit = "audit.view" in access.granted_permissions
+    bot = request.app.get(BOT_KEY)
+    db = get_ready_db(bot)
+
+    security_logs: list[dict[str, str]] = []
+    security_logs_error = False
+    if db is None or getattr(db, "security_logs", None) is None:
+        security_logs_error = True
+    else:
+        try:
+            sec_cursor = (
+                db.security_logs.find({"guild_id": guild_id})
+                .sort("timestamp", -1)
+                .limit(LOGS_QUERY_LIMIT)
+            )
+            raw_sec_logs = await _fetch_cursor_docs(sec_cursor, limit=LOGS_QUERY_LIMIT)
+            for doc in raw_sec_logs:
+                security_logs.append(
+                    {
+                        "timestamp": _format_utc_timestamp(doc.get("timestamp")),
+                        "action": str(doc.get("action") or "Unknown"),
+                        "user_id": str(doc.get("user_id") if doc.get("user_id") is not None else "—"),
+                        "content": _truncate_security_log_content(doc.get("content")),
+                    }
+                )
+        except Exception:
+            security_logs_error = True
+            logger.exception("Failed to query db.security_logs for guild_id=%s", guild_id)
+
+    audit_logs: list[dict[str, Any]] = []
+    audit_logs_error = False
+    if can_view_audit:
+        if db is None or getattr(db, "dashboard_audit", None) is None:
+            audit_logs_error = True
+        else:
+            try:
+                audit_cursor = (
+                    db.dashboard_audit.find({"guild_id": guild_id})
+                    .sort("created_at", -1)
+                    .limit(LOGS_QUERY_LIMIT)
+                )
+                raw_audit_logs = await _fetch_cursor_docs(audit_cursor, limit=LOGS_QUERY_LIMIT)
+                for doc in raw_audit_logs:
+                    raw_changes = doc.get("changes")
+                    change_items: list[dict[str, str]] = []
+                    if isinstance(raw_changes, dict):
+                        for field_key, diff_obj in raw_changes.items():
+                            if isinstance(diff_obj, dict):
+                                old_str = _format_audit_value(diff_obj.get("old"))
+                                new_str = _format_audit_value(diff_obj.get("new"))
+                            else:
+                                old_str = "—"
+                                new_str = _format_audit_value(diff_obj)
+                            change_items.append(
+                                {
+                                    "key": str(field_key),
+                                    "old": old_str,
+                                    "new": new_str,
+                                }
+                            )
+                    audit_logs.append(
+                        {
+                            "created_at": _format_utc_timestamp(doc.get("created_at")),
+                            "actor_name": str(doc.get("actor_name") or "Unknown"),
+                            "actor_id": str(doc.get("actor_id") if doc.get("actor_id") is not None else "—"),
+                            "module": str(doc.get("module") or "settings"),
+                            "action": str(doc.get("action") or "update"),
+                            "change_items": change_items,
+                        }
+                    )
+            except Exception:
+                audit_logs_error = True
+                logger.exception("Failed to query db.dashboard_audit for guild_id=%s", guild_id)
+
+    context.update(
+        {
+            "security_logs": security_logs,
+            "security_logs_error": security_logs_error,
+            "can_view_audit": can_view_audit,
+            "audit_logs": audit_logs,
+            "audit_logs_error": audit_logs_error,
+        }
+    )
+    return aiohttp_jinja2.render_template("logs.html", request, context)
+
+
+def _extract_cog_commands(cog: Any) -> dict[str, dict[str, Any]]:
+    """
+    Collect top-level commands and subcommands from a loaded Discord Cog
+    (matching cogs/dashboard.py:626-642).
+    """
+    cmds_dict: dict[str, dict[str, Any]] = {}
+    if cog is None:
+        return cmds_dict
+
+    get_commands_fn = getattr(cog, "get_commands", None)
+    if callable(get_commands_fn):
+        try:
+            for cmd in get_commands_fn() or []:
+                cmd_name = str(getattr(cmd, "name", "") or "").strip()
+                if not cmd_name:
+                    continue
+                if cmd_name not in cmds_dict:
+                    desc = getattr(cmd, "help", None) or getattr(cmd, "description", None) or "No description"
+                    cmds_dict[cmd_name] = {"desc": str(desc), "subs": []}
+                sub_commands = getattr(cmd, "commands", None)
+                if isinstance(sub_commands, (list, tuple, set)):
+                    for sub in sub_commands:
+                        sub_name = str(getattr(sub, "name", "") or "").strip()
+                        if sub_name and sub_name not in cmds_dict[cmd_name]["subs"]:
+                            cmds_dict[cmd_name]["subs"].append(sub_name)
+        except Exception:
+            logger.debug("Failed to inspect get_commands() on cog %r", cog, exc_info=True)
+
+    walk_app_fn = getattr(cog, "walk_app_commands", None)
+    if callable(walk_app_fn):
+        try:
+            for app_cmd in walk_app_fn() or []:
+                parent_obj = getattr(app_cmd, "parent", None)
+                if parent_obj is not None:
+                    # Handled via parent's .commands below or attached to root
+                    root_name = str(getattr(parent_obj, "name", "") or "").strip()
+                    sub_name = str(getattr(app_cmd, "name", "") or "").strip()
+                    if root_name and sub_name:
+                        if root_name not in cmds_dict:
+                            cmds_dict[root_name] = {"desc": "No description", "subs": []}
+                        if sub_name not in cmds_dict[root_name]["subs"]:
+                            cmds_dict[root_name]["subs"].append(sub_name)
+                    continue
+
+                cmd_name = str(getattr(app_cmd, "name", "") or "").strip()
+                if not cmd_name:
+                    continue
+                if cmd_name not in cmds_dict:
+                    desc = getattr(app_cmd, "description", None) or "No description"
+                    cmds_dict[cmd_name] = {"desc": str(desc), "subs": []}
+                sub_commands = getattr(app_cmd, "commands", None)
+                if isinstance(sub_commands, (list, tuple, set)):
+                    for sub in sub_commands:
+                        sub_name = str(getattr(sub, "name", "") or "").strip()
+                        if sub_name and sub_name not in cmds_dict[cmd_name]["subs"]:
+                            cmds_dict[cmd_name]["subs"].append(sub_name)
+        except Exception:
+            logger.debug("Failed to inspect walk_app_commands() on cog %r", cog, exc_info=True)
+
+    return cmds_dict
+
+
+def _resolve_id_badges(
+    raw_ids: Any,
+    lookup_map: dict[str, str],
+    fallback_prefix: str,
+) -> list[dict[str, str]]:
+    """Resolve a list of channel/role ID strings against live guild channels/roles."""
+    badges: list[dict[str, str]] = []
+    if not isinstance(raw_ids, list):
+        return badges
+    for item in raw_ids:
+        if not isinstance(item, (str, int)):
+            continue
+        id_str = str(item).strip()
+        if not id_str:
+            continue
+        name = lookup_map.get(id_str, f"{fallback_prefix}-{id_str}")
+        badges.append({"id": id_str, "name": name})
+    return badges
+
+
+async def handle_guild_modules(request: web.Request) -> web.Response:
+    """
+    GET /modules/{guild_id}
+    - Requires `modules.view` (webdash/permissions.py:21).
+    - Reads `disabled_cogs` (bot.py:107, cogs/core.py:745, 803, cogs/dashboard.py:606),
+      `command_settings` (cogs/core.py:749-777, 806-829, cogs/dashboard.py:607), and
+      read-only `disabled_cmds` (bot.py:108, 113).
+    - Protected-cog recovery rule: excludes `core`, `database`, `dashboard`, `owner`, `jishaku`
+      when enabled; if a server already has one of them in `disabled_cogs` (legacy UI allowed
+      disabling `Core`), still shows that cog with a clear "Protected (Re-enable Only)" badge.
+    - Exposes ONLY the 5 `command_settings` keys that `cogs/core.py:753-764, 808-818` reads:
+      `disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`.
+    """
+    err_resp, access, context = await _prepare_guild_page(
+        request,
+        required_permission="modules.view",
+        active_tab="modules",
+    )
+    if err_resp is not None or access is None:
+        return err_resp  # type: ignore[return-value]
+
+    guild = access.guild
+    settings = access.settings
+    bot = request.app.get(BOT_KEY)
+
+    raw_disabled_cogs = settings.get("disabled_cogs", [])
+    disabled_cogs: list[str] = []
+    if isinstance(raw_disabled_cogs, list):
+        for entry in raw_disabled_cogs:
+            if isinstance(entry, str) and entry.strip():
+                disabled_cogs.append(entry.strip())
+    disabled_cogs_lower = {c.lower() for c in disabled_cogs}
+
+    raw_disabled_cmds = settings.get("disabled_cmds", [])
+    disabled_cmds: list[str] = []
+    if isinstance(raw_disabled_cmds, list):
+        for entry in raw_disabled_cmds:
+            if isinstance(entry, str) and entry.strip():
+                disabled_cmds.append(entry.strip())
+
+    raw_cmd_settings = settings.get("command_settings", {})
+    command_settings: dict[str, dict[str, Any]] = (
+        raw_cmd_settings if isinstance(raw_cmd_settings, dict) else {}
+    )
+
+    # Build live channel and role lookup maps (cogs/dashboard.py:610-611)
+    raw_channels = getattr(guild, "text_channels", None)
+    if raw_channels is None:
+        raw_channels = getattr(guild, "channels", None) or []
+    channel_map: dict[str, str] = {}
+    for ch in raw_channels:
+        cid = getattr(ch, "id", None)
+        cname = getattr(ch, "name", None)
+        if cid is not None and cname is not None:
+            channel_map[str(cid)] = str(cname)
+
+    raw_roles = getattr(guild, "roles", None) or []
+    role_map: dict[str, str] = {}
+    for role in raw_roles:
+        rid = getattr(role, "id", None)
+        rname = getattr(role, "name", None)
+        if rid is not None and rname is not None and str(rname) != "@everyone":
+            role_map[str(rid)] = str(rname)
+
+    bot_cogs_dict: dict[str, Any] = {}
+    if bot is not None and isinstance(getattr(bot, "cogs", None), dict):
+        bot_cogs_dict = dict(bot.cogs)
+
+    # Build ordered list of (cog_name, cog_obj), ensuring any disabled cog in disabled_cogs
+    # (including protected ones like Core) is included even if not in bot.cogs.
+    cog_entries: list[tuple[str, Any]] = list(bot_cogs_dict.items())
+    seen_cog_names_lower = {name.lower() for name, _ in cog_entries}
+    for dcog in disabled_cogs:
+        if dcog.lower() not in seen_cog_names_lower:
+            cog_entries.append((dcog, None))
+            seen_cog_names_lower.add(dcog.lower())
+
+    modules_view: list[dict[str, Any]] = []
+    for cog_name, cog_obj in cog_entries:
+        cog_name_str = str(cog_name).strip()
+        if not cog_name_str:
+            continue
+        cog_lower = cog_name_str.lower()
+        is_disabled = (cog_name_str in disabled_cogs) or (cog_lower in disabled_cogs_lower)
+        is_protected = cog_lower in PROTECTED_COGS_LOWER
+
+        # Protected-cog recovery rule:
+        # Hide protected cogs (core, database, dashboard, owner, jishaku) when enabled,
+        # but ALWAYS show them with a "Protected (Re-enable Only)" badge if disabled!
+        if is_protected and not is_disabled:
+            continue
+
+        cmds_dict = _extract_cog_commands(cog_obj)
+        commands_view: list[dict[str, Any]] = []
+        for cmd_name, cmd_meta in cmds_dict.items():
+            raw_override = command_settings.get(cmd_name)
+            override = raw_override if isinstance(raw_override, dict) else {}
+
+            raw_dis_subs = override.get("disabled_subcommands", [])
+            dis_subs_set = (
+                {str(s).strip() for s in raw_dis_subs if isinstance(s, str)}
+                if isinstance(raw_dis_subs, list)
+                else set()
+            )
+
+            all_subs: list[str] = list(cmd_meta.get("subs", []))
+            for s in dis_subs_set:
+                if s and s not in all_subs:
+                    all_subs.append(s)
+
+            subcommands_view = [
+                {"name": sub_name, "is_disabled": sub_name in dis_subs_set}
+                for sub_name in all_subs
+            ]
+
+            commands_view.append(
+                {
+                    "name": cmd_name,
+                    "description": str(cmd_meta.get("desc") or "No description"),
+                    "subcommands": subcommands_view,
+                    "allowed_channels": _resolve_id_badges(
+                        override.get("allowed_channels", []), channel_map, "channel"
+                    ),
+                    "ignored_channels": _resolve_id_badges(
+                        override.get("ignored_channels", []), channel_map, "channel"
+                    ),
+                    "allowed_roles": _resolve_id_badges(
+                        override.get("allowed_roles", []), role_map, "role"
+                    ),
+                    "ignored_roles": _resolve_id_badges(
+                        override.get("ignored_roles", []), role_map, "role"
+                    ),
+                }
+            )
+
+        modules_view.append(
+            {
+                "name": cog_name_str,
+                "is_disabled": is_disabled,
+                "is_protected": is_protected,
+                "commands": commands_view,
+            }
         )
 
-    return _handler
+    context.update(
+        {
+            "modules": modules_view,
+            "disabled_cogs": disabled_cogs,
+            "disabled_cmds": disabled_cmds,
+        }
+    )
+    return aiohttp_jinja2.render_template("modules.html", request, context)
 
 
-async def handle_owner_panel_placeholder(request: web.Request) -> web.Response:
+async def handle_owner_panel(request: web.Request) -> web.Response:
     """
-    Checkpoint 3A placeholder for GET /owner_panel.
-    Enforces login and Bot Owner check, then renders a 501 notice.
+    GET /owner_panel
+    - Bot Owner only (resolve_bot_owner_id; redirects to /login when unauthenticated,
+      returns 403 when authenticated non-owner).
+    - Displays both `bot.global_lockdown` (bot.py:33, 82) and `bot.dashboard_maintenance`
+      (cogs/dashboard.py:43, 122) separately read-only, noting legacy /owner_panel
+      (cogs/dashboard.py:1761-1881) showed neither.
+    - Displays loaded extensions (bot.extensions, cogs/dashboard.py:1762),
+      recent `db.visit_logs` (cogs/dashboard.py:1777), and `db.ip_bans` (cogs/dashboard.py:2024)
+      with every IP normalized via `normalize_ip` (webdash/security.py:92) and escaped via Jinja2.
     """
     session_doc = request.get(SESSION_DATA_KEY)
     if not session_doc:
@@ -1112,12 +1667,85 @@ async def handle_owner_panel_placeholder(request: web.Request) -> web.Response:
             message="Bot Owner access is required to view the Owner Panel.",
         )
 
-    return render_error_page(
-        request,
-        status_code=501,
-        title="Owner Panel Not Available Yet",
-        message="This page is not available in this build yet; set WEBDASH_ENABLED=0 to use the legacy dashboard.",
+    bot = request.app.get(BOT_KEY)
+    global_lockdown = bool(getattr(bot, "global_lockdown", False)) if bot is not None else False
+    dashboard_maintenance = (
+        bool(getattr(bot, "dashboard_maintenance", False)) if bot is not None else False
     )
+
+    raw_guilds = getattr(bot, "guilds", None) if bot is not None else None
+    guild_count = len(raw_guilds) if isinstance(raw_guilds, (list, tuple, set)) else 0
+
+    raw_cogs = getattr(bot, "cogs", None) if bot is not None else None
+    cog_count = len(raw_cogs) if isinstance(raw_cogs, dict) else 0
+
+    raw_extensions = getattr(bot, "extensions", None) if bot is not None else None
+    extensions_list: list[dict[str, str]] = []
+    if isinstance(raw_extensions, dict):
+        for ext_key in list(raw_extensions.keys()):
+            ext_str = str(ext_key)
+            short_str = ext_str[5:] if ext_str.startswith("cogs.") else ext_str
+            extensions_list.append({"full_name": ext_str, "short_name": short_str})
+
+    db = get_ready_db(bot)
+    visit_logs: list[dict[str, Any]] = []
+    if db is not None and getattr(db, "visit_logs", None) is not None:
+        try:
+            visit_cursor = (
+                db.visit_logs.find()
+                .sort("last_visit", -1)
+                .limit(OWNER_VISIT_LOGS_LIMIT)
+            )
+            raw_visits = await _fetch_cursor_docs(
+                visit_cursor,
+                limit=OWNER_VISIT_LOGS_LIMIT,
+                timeout=LOGS_DB_TIMEOUT_SECONDS,
+            )
+            for doc in raw_visits:
+                norm_ip = normalize_ip(str(doc.get("ip", "")))
+                last_user = str(doc.get("last_user") or "Guest")
+                raw_hits = doc.get("hits", 1)
+                try:
+                    hits_int = int(raw_hits)
+                except (ValueError, TypeError):
+                    hits_int = 1
+                visit_logs.append(
+                    {
+                        "ip": norm_ip,
+                        "last_user": last_user,
+                        "hits": hits_int,
+                    }
+                )
+        except Exception:
+            logger.exception("Failed to query db.visit_logs in handle_owner_panel")
+
+    ip_bans: list[dict[str, str]] = []
+    if db is not None and getattr(db, "ip_bans", None) is not None:
+        try:
+            bans_cursor = db.ip_bans.find().limit(LOGS_QUERY_LIMIT)
+            raw_bans = await _fetch_cursor_docs(
+                bans_cursor,
+                limit=LOGS_QUERY_LIMIT,
+                timeout=LOGS_DB_TIMEOUT_SECONDS,
+            )
+            for doc in raw_bans:
+                norm_ip = normalize_ip(str(doc.get("ip", "")))
+                ip_bans.append({"ip": norm_ip})
+        except Exception:
+            logger.exception("Failed to query db.ip_bans in handle_owner_panel")
+
+    context = {
+        "bot_avatar": get_bot_avatar_url(bot),
+        "csrf_token": str(session_doc.get("csrf_token") or ""),
+        "guild_count": guild_count,
+        "cog_count": cog_count,
+        "global_lockdown": global_lockdown,
+        "dashboard_maintenance": dashboard_maintenance,
+        "extensions": extensions_list,
+        "visit_logs": visit_logs,
+        "ip_bans": ip_bans,
+    }
+    return aiohttp_jinja2.render_template("owner_panel.html", request, context)
 
 
 def register_routes(
@@ -1125,7 +1753,7 @@ def register_routes(
     *,
     enable_debug_ip: bool | None = None,
 ) -> None:
-    """Register Checkpoint 3A routes on `app`."""
+    """Register Checkpoint 3A + 3B (Batches 1, 2 & 3) routes on `app`."""
     debug_ip_enabled = (
         enable_debug_ip
         if enable_debug_ip is not None
@@ -1140,35 +1768,18 @@ def register_routes(
         web.get("/callback", handle_callback),
         web.post("/logout", handle_logout),
         web.get("/manage/{guild_id}", handle_guild_overview),
-        # Checkpoint 3A clean 501 placeholders for pages ported in Checkpoint 3B
-        web.get(
-            "/modules/{guild_id}",
-            _make_guild_not_available_handler("modules.view", "Modules & Commands"),
-        ),
-        web.get(
-            "/automod/{guild_id}",
-            _make_guild_not_available_handler("automod.view", "Auto Moderation"),
-        ),
-        web.get(
-            "/wizard/{guild_id}",
-            _make_guild_not_available_handler("settings.view", "Setup Wizard"),
-        ),
-        web.get(
-            "/lockdown/{guild_id}",
-            _make_guild_not_available_handler("antinuke.view", "Server Lockdown"),
-        ),
-        web.get(
-            "/misc/{guild_id}",
-            _make_guild_not_available_handler("settings.view", "Utilities & Misc"),
-        ),
-        web.get(
-            "/logs/{guild_id}",
-            _make_guild_not_available_handler("logging.view", "Audit Logs"),
-        ),
-        web.get("/owner_panel", handle_owner_panel_placeholder),
+        # Checkpoint 3B (Batches 1, 2 & 3) read-only Jinja2 routes
+        web.get("/modules/{guild_id}", handle_guild_modules),
+        web.get("/automod/{guild_id}", handle_guild_automod),
+        web.get("/lockdown/{guild_id}", handle_guild_lockdown),
+        web.get("/misc/{guild_id}", handle_guild_misc),
+        web.get("/wizard/{guild_id}", handle_guild_wizard),
+        web.get("/logs/{guild_id}", handle_guild_logs),
+        web.get("/owner_panel", handle_owner_panel),
     ]
     if debug_ip_enabled:
         routes.append(web.get("/debug/ip", handle_debug_ip))
 
     app.add_routes(routes)
+
 

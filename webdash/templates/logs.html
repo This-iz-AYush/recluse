@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Security Logs{% endblock %}
+{% block page_heading %}Automated Security Audits{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-10">
+    <!-- Section 1: Bot Security Logs (db.security_logs — visible to logging.view) -->
+    <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-hidden">
+        <div class="px-8 py-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-black/30">
+            <div>
+                <h2 class="font-extrabold text-white text-lg tracking-wide flex items-center gap-3">
+                    <i class="fa-solid fa-shield-cat text-blue-400"></i>Bot Security &amp; AutoMod Events
+                </h2>
+                <p class="text-xs text-zinc-400 mt-1">
+                    Recent automated moderation and anti-spam actions recorded in <code class="font-mono text-zinc-300">db.security_logs</code>.
+                </p>
+            </div>
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/10 self-start sm:self-auto">
+                {{ security_logs|length }} event{% if security_logs|length != 1 %}s{% endif %}
+            </span>
+        </div>
+
+        <div class="overflow-x-auto custom-scrollbar">
+            <table class="w-full text-left whitespace-nowrap">
+                <thead class="bg-black/50 border-b border-white/10 text-xs font-extrabold text-zinc-400 uppercase tracking-widest shadow-inner">
+                    <tr>
+                        <th class="py-4 px-6">Timestamp</th>
+                        <th class="py-4 px-6">Action</th>
+                        <th class="py-4 px-6">Subject</th>
+                        <th class="py-4 px-6">Payload</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if security_logs_error %}
+                        <tr>
+                            <td colspan="4" class="py-12 text-center text-sm text-amber-300 font-semibold bg-amber-500/10">Could not load logs (database unavailable)</td>
+                        </tr>
+                    {% elif security_logs %}
+                        {% for item in security_logs %}
+                        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors text-sm text-zinc-300">
+                            <td class="py-4 px-6 font-mono text-zinc-500">{{ item.timestamp }}</td>
+                            <td class="py-4 px-6 font-bold text-white drop-shadow-sm">{{ item.action }}</td>
+                            <td class="py-4 px-6">
+                                <span class="font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-md shadow-inner">{{ item.user_id }}</span>
+                            </td>
+                            <td class="py-4 px-6 truncate max-w-md">{{ item.content }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="py-12 text-center text-sm text-zinc-500 italic bg-black/20">No security events logged yet.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    {% if can_view_audit %}
+    <!-- Section 2: Dashboard Configuration Audit History (db.dashboard_audit — ONLY visible to audit.view) -->
+    <section id="dashboardAuditSection" class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl overflow-hidden">
+        <div class="px-8 py-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-black/30">
+            <div>
+                <h2 class="font-extrabold text-white text-lg tracking-wide flex items-center gap-3">
+                    <i class="fa-solid fa-clock-rotate-left text-emerald-400"></i>Dashboard Configuration Audit History
+                </h2>
+                <p class="text-xs text-zinc-400 mt-1">
+                    Field-level configuration changes recorded in <code class="font-mono text-zinc-300">db.dashboard_audit</code> (30-day retention).
+                </p>
+            </div>
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/10 self-start sm:self-auto">
+                {{ audit_logs|length }} change{% if audit_logs|length != 1 %}s{% endif %}
+            </span>
+        </div>
+
+        <div class="overflow-x-auto custom-scrollbar">
+            <table class="w-full text-left whitespace-nowrap">
+                <thead class="bg-black/50 border-b border-white/10 text-xs font-extrabold text-zinc-400 uppercase tracking-widest shadow-inner">
+                    <tr>
+                        <th class="py-4 px-6">Timestamp</th>
+                        <th class="py-4 px-6">Actor</th>
+                        <th class="py-4 px-6">Module / Action</th>
+                        <th class="py-4 px-6">Field Changes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if audit_logs_error %}
+                        <tr>
+                            <td colspan="4" class="py-12 text-center text-sm text-amber-300 font-semibold bg-amber-500/10">Could not load logs (database unavailable)</td>
+                        </tr>
+                    {% elif audit_logs %}
+                        {% for entry in audit_logs %}
+                        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors text-sm text-zinc-300 align-top">
+                            <td class="py-4 px-6 font-mono text-zinc-500">{{ entry.created_at }}</td>
+                            <td class="py-4 px-6">
+                                <div class="font-bold text-white">{{ entry.actor_name }}</div>
+                                <div class="font-mono text-xs text-zinc-500">{{ entry.actor_id }}</div>
+                            </td>
+                            <td class="py-4 px-6">
+                                <span class="px-2.5 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-emerald-300 uppercase tracking-wider">{{ entry.module }}</span>
+                                <span class="ml-2 text-xs font-mono text-zinc-400">{{ entry.action }}</span>
+                            </td>
+                            <td class="py-4 px-6 whitespace-normal max-w-xl">
+                                {% if entry.change_items %}
+                                <div class="space-y-1.5">
+                                    {% for chg in entry.change_items %}
+                                    <div class="text-xs font-mono bg-black/40 border border-white/5 rounded-lg px-3 py-1.5">
+                                        <span class="text-blue-300 font-bold">{{ chg.key }}</span>:
+                                        <span class="text-red-300/90">{{ chg.old }}</span>
+                                        <i class="fa-solid fa-arrow-right mx-1 text-zinc-500"></i>
+                                        <span class="text-emerald-300">{{ chg.new }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <span class="text-xs text-zinc-500 italic">No field diff recorded</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="py-12 text-center text-sm text-zinc-500 italic bg-black/20">No configuration changes recorded yet.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Lockdown{% endblock %}
+{% block page_heading %}Emergency Protocols{% endblock %}
+
+{% block content %}
+<div class="min-h-[65vh] flex items-center justify-center">
+    <div class="max-w-lg w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2rem] p-12 text-center shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
+        <div class="w-24 h-24 mx-auto rounded-3xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center mb-6 text-4xl shadow-xl">
+            <i class="fa-solid fa-lock"></i>
+        </div>
+
+        <span class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-extrabold uppercase tracking-wider mb-4">
+            <i class="fa-solid fa-triangle-exclamation"></i> Disabled: being rebuilt
+        </span>
+
+        <h2 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Emergency Lockdown</h2>
+        <p class="text-sm text-zinc-300 mb-10 leading-relaxed px-4">
+            Severing send permissions from the <code class="bg-black/60 px-2 py-1 rounded-lg text-white border border-white/10 shadow-inner font-bold">@everyone</code> role freezes conversation channels instantaneously to curb active raids. Channel overwrite snapshot protection (<code class="bg-black/60 px-2 py-0.5 rounded text-zinc-200 font-mono text-xs">db.lockdown_snapshots</code>) is currently being rebuilt.
+        </p>
+
+        <button type="button"
+                disabled
+                id="lockBtn"
+                class="w-full py-4 rounded-xl font-extrabold text-base text-zinc-400 bg-white/5 border border-white/10 cursor-not-allowed shadow-none">
+            Lockdown is being rebuilt and is temporarily disabled
+        </button>
+    </div>
+</div>
+{% endblock %}

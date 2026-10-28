@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token | default('') }}">
+    <title>Recluse | Developer Root</title>
+    <link rel="icon" type="image/png" href="{{ bot_avatar }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+    </style>
+</head>
+<body class="bg-[#09090e] text-zinc-100 min-h-screen p-6 sm:p-8 relative font-sans">
+    <!-- Ambient Background -->
+    <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#09090e]">
+        <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-purple-600/20 rounded-full mix-blend-screen filter blur-[150px] opacity-70 animate-pulse"></div>
+        <div class="absolute top-[20%] right-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-70 animate-pulse"></div>
+        <div class="absolute bottom-[-20%] left-[20%] w-[700px] h-[700px] bg-indigo-600/20 rounded-full mix-blend-screen filter blur-[140px] opacity-60 animate-pulse"></div>
+    </div>
+
+    <div class="max-w-7xl mx-auto space-y-8 z-10 relative">
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-white/10 bg-black/40 backdrop-blur-3xl p-8 rounded-3xl shadow-[0_8px_30px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)]">
+            <div class="flex items-center gap-6">
+                <div class="w-16 h-16 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 text-3xl shadow-[inset_0_2px_10px_rgba(248,113,113,0.3)] shrink-0">
+                    <i class="fa-solid fa-terminal"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl sm:text-3xl font-extrabold text-white drop-shadow-lg tracking-tight">System Override Console</h1>
+                    <p class="text-sm text-zinc-300 font-mono mt-2 bg-black/50 px-4 py-1.5 rounded-lg inline-block border border-white/5 shadow-inner font-bold">
+                        Guilds: {{ guild_count }} | Cogs: {{ cog_count }}
+                    </p>
+                </div>
+            </div>
+            <a href="/" class="text-sm font-extrabold px-6 py-3 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xl text-zinc-300 hover:text-white hover:bg-white/10 transition shadow-inner self-start sm:self-auto">
+                Exit to Home
+            </a>
+        </div>
+
+        <!-- Read-Only Runtime Maintenance Flags (bot.global_lockdown vs bot.dashboard_maintenance) -->
+        <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-6">
+                <div>
+                    <h2 class="font-extrabold text-white text-lg flex items-center gap-3">
+                        <i class="fa-solid fa-sliders text-amber-400"></i>Runtime Maintenance &amp; Lockdown Flags (Read-Only)
+                    </h2>
+                    <p class="text-xs text-zinc-400 mt-1">
+                        Note: the legacy <code class="font-mono text-zinc-300">/owner_panel</code> showed neither flag; both distinct flags are displayed here read-only for operator visibility.
+                    </p>
+                </div>
+                <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10 self-start sm:self-auto">
+                    Read-Only Status
+                </span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Flag 1: bot.global_lockdown (bot.py:33, 82) -->
+                <div class="bg-black/40 border border-white/10 rounded-2xl p-5 flex items-center justify-between gap-4" id="globalLockdownCard">
+                    <div>
+                        <div class="text-xs font-mono text-zinc-400">bot.global_lockdown (bot.py:33, 82)</div>
+                        <div class="text-base font-extrabold text-white mt-1">Global Command Lockdown</div>
+                        <p class="text-xs text-zinc-400 mt-1">
+                            Blocks Discord prefix and slash commands for non-owners in <code class="font-mono text-zinc-300">_core_security_check</code>.
+                        </p>
+                    </div>
+                    {% if global_lockdown %}
+                    <span class="px-3.5 py-1.5 rounded-xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-extrabold uppercase tracking-wider shrink-0">
+                        Active (Locked)
+                    </span>
+                    {% else %}
+                    <span class="px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold uppercase tracking-wider shrink-0">
+                        Inactive (Normal)
+                    </span>
+                    {% endif %}
+                </div>
+
+                <!-- Flag 2: bot.dashboard_maintenance (cogs/dashboard.py:43, 122) -->
+                <div class="bg-black/40 border border-white/10 rounded-2xl p-5 flex items-center justify-between gap-4" id="dashboardMaintenanceCard">
+                    <div>
+                        <div class="text-xs font-mono text-zinc-400">bot.dashboard_maintenance (cogs/dashboard.py:43, 122)</div>
+                        <div class="text-base font-extrabold text-white mt-1">Web Dashboard Maintenance</div>
+                        <p class="text-xs text-zinc-400 mt-1">
+                            Blocks web dashboard access with HTTP 503 for non-owners while Discord commands stay active.
+                        </p>
+                    </div>
+                    {% if dashboard_maintenance %}
+                    <span class="px-3.5 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-extrabold uppercase tracking-wider shrink-0">
+                        Maintenance On
+                    </span>
+                    {% else %}
+                    <span class="px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold uppercase tracking-wider shrink-0">
+                        Operational
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+
+        <!-- Main 2-Column Grid: Hot-Reload Cogs + Ingress Telemetry -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Column 1: Loaded Extensions (cogs/dashboard.py:1762) -->
+            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-[2.5rem] p-8 sm:p-10">
+                <h2 class="font-extrabold text-white text-xl mb-6 drop-shadow-md flex items-center gap-3">
+                    <i class="fa-solid fa-rotate text-blue-400"></i> Hot-Reload Cogs
+                </h2>
+                <div class="overflow-y-auto max-h-[600px] pr-2 custom-scrollbar space-y-1">
+                    {% if extensions %}
+                        {% for item in extensions %}
+                        <div class="flex items-center justify-between py-3.5 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm font-bold text-zinc-300">
+                            <span class="font-mono">{{ item.full_name }}</span>
+                            <button
+                                type="button"
+                                data-action="reload-cog"
+                                data-cog="{{ item.short_name }}"
+                                class="reload-cog-btn px-5 py-2 rounded-xl bg-black/50 border border-white/10 text-zinc-400 font-bold shadow-inner cursor-not-allowed opacity-75"
+                                disabled
+                            >
+                                Reload
+                            </button>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-sm text-zinc-500 italic px-4 bg-black/30 py-6 rounded-2xl text-center border border-white/5 font-bold">
+                            No extensions loaded.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Column 2: Ingress Telemetry & IP Bans (cogs/dashboard.py:1777, 2024) -->
+            <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-[2.5rem] p-8 sm:p-10 flex flex-col h-[700px]">
+                <h2 class="font-extrabold text-white text-xl mb-6 drop-shadow-md flex items-center gap-3">
+                    <i class="fa-solid fa-radar text-emerald-400"></i> Ingress Telemetry
+                </h2>
+                <input
+                    type="text"
+                    id="ipSearch"
+                    placeholder="Search IP or Discord Username..."
+                    class="w-full bg-black/50 border border-white/10 backdrop-blur-2xl rounded-2xl p-4 text-sm font-bold text-white mb-6 focus:outline-none focus:border-blue-500/70 focus:bg-black/70 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] tracking-wide"
+                >
+                <div class="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-1" id="ipContainer">
+                    {% if visit_logs %}
+                        {% for visit in visit_logs %}
+                        <div class="flex items-center justify-between py-4 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm filter-row" data-ip="{{ visit.ip }}">
+                            <div>
+                                <span class="font-mono font-extrabold text-white ip-text drop-shadow-sm">{{ visit.ip }}</span>
+                                <span class="ml-4 text-xs px-3 py-1.5 rounded-lg border {% if visit.last_user != 'Guest' %}bg-violet-500/20 text-violet-300 border-violet-500/40{% else %}bg-black/60 text-zinc-400 border-white/10{% endif %} user-text backdrop-blur-md font-bold tracking-wide">{{ visit.last_user }}</span>
+                                <div class="text-xs text-zinc-400 mt-2 font-bold bg-black/40 inline-block px-3 py-1 rounded-lg border border-white/5 shadow-inner">
+                                    Hits: {{ visit.hits }}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                data-action="ban"
+                                data-ip="{{ visit.ip }}"
+                                class="ip-action-btn px-5 py-2.5 rounded-xl bg-red-600/30 text-red-200 border border-red-500/50 font-bold shadow-sm cursor-not-allowed opacity-75"
+                                disabled
+                            >
+                                Ban IP
+                            </button>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-sm text-zinc-500 italic px-4 bg-black/30 py-6 rounded-2xl text-center border border-white/5 font-bold">
+                            No logged hits.
+                        </p>
+                    {% endif %}
+
+                    {% if ip_bans %}
+                    <div class="pt-6 mt-4 border-t border-white/10">
+                        <h3 class="text-xs font-extrabold text-red-300 uppercase tracking-widest mb-3 px-4">
+                            Active IP Restrictions ({{ ip_bans|length }})
+                        </h3>
+                        {% for ban in ip_bans %}
+                        <div class="flex items-center justify-between py-3 border-b border-white/5 px-4 rounded-xl text-sm filter-row" data-ip="{{ ban.ip }}">
+                            <span class="font-mono font-bold text-red-300 ip-text">{{ ban.ip }}</span>
+                            <span class="hidden user-text">banned</span>
+                            <button
+                                type="button"
+                                data-action="unban"
+                                data-ip="{{ ban.ip }}"
+                                class="ip-action-btn px-4 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 border border-white/10 text-xs font-bold cursor-not-allowed opacity-75"
+                                disabled
+                            >
+                                Unban IP
+                            </button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        const searchInput = document.getElementById("ipSearch");
+        if (!searchInput) return;
+        searchInput.addEventListener("input", function (event) {
+            const query = (event.target.value || "").toLowerCase();
+            document.querySelectorAll(".filter-row").forEach(function (rowEl) {
+                const ipEl = rowEl.querySelector(".ip-text");
+                const userEl = rowEl.querySelector(".user-text");
+                const ipText = ipEl ? ipEl.textContent.toLowerCase() : "";
+                const userText = userEl ? userEl.textContent.toLowerCase() : "";
+                if (ipText.includes(query) || userText.includes(query)) {
+                    rowEl.style.display = "flex";
+                } else {
+                    rowEl.style.display = "none";
+                }
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

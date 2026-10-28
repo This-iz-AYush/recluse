@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Wizard{% endblock %}
+{% block page_heading %}Setup Wizard{% endblock %}
+
+{% block content %}
+<div class="min-h-[65vh] flex items-center justify-center">
+    <div class="max-w-4xl w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-10 shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
+        <div class="mb-10 border-b border-white/10 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+            <div class="flex items-center gap-5">
+                <div class="p-4 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400 text-2xl shadow-inner shrink-0">
+                    <i class="fa-solid fa-microchip"></i>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
+                    <p class="text-sm text-zinc-400 mt-1">
+                        Choose the primary generative model for chat interactions in this server (<code class="font-mono text-xs text-zinc-300">default_ai_model</code>).
+                    </p>
+                </div>
+            </div>
+            <span class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border self-start sm:self-auto {% if ai_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                <i class="fa-solid fa-robot mr-1.5"></i>AI Chat: {% if ai_enabled %}Enabled{% else %}Disabled{% endif %}
+            </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+            {% for opt in ai_models %}
+            <label class="relative cursor-not-allowed group">
+                <input type="radio"
+                       name="ai_model"
+                       value="{{ opt.value }}"
+                       disabled
+                       {% if default_ai_model == opt.value %}checked{% endif %}
+                       class="peer sr-only">
+                <div class="flex flex-col h-full justify-between p-6 rounded-2xl border transition-all duration-300 shadow-inner {% if default_ai_model == opt.value %}border-blue-500/80 bg-blue-500/10 shadow-[0_8px_30px_rgba(59,130,246,0.25)]{% else %}border-white/10 bg-black/40 opacity-80{% endif %}">
+                    <div>
+                        <div class="flex items-center justify-between mb-5">
+                            <i class="{{ opt.icon }} text-3xl {{ opt.icon_color }}"></i>
+                            {% if default_ai_model == opt.value %}
+                            <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider bg-blue-500/25 border border-blue-400/40 text-blue-300">
+                                Active
+                            </span>
+                            {% endif %}
+                        </div>
+                        <span class="text-white font-extrabold text-base tracking-wide block">{{ opt.title }}</span>
+                    </div>
+                    <span class="text-zinc-400 font-bold text-xs mt-4 bg-black/50 py-1.5 px-3 rounded-lg inline-block text-center border border-white/5 shadow-inner">
+                        {{ opt.subtitle }}
+                    </span>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-white/10">
+            <p class="text-xs text-zinc-400">
+                <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Read-only preview in Checkpoint 3B. Saving configuration lands in Checkpoint 3C.
+            </p>
+            <button type="button"
+                    id="saveBtn"
+                    disabled
+                    class="px-8 py-3.5 rounded-xl bg-white/5 border border-white/10 text-zinc-400 font-extrabold text-sm cursor-not-allowed flex items-center gap-3 self-end sm:self-auto">
+                <i class="fa-solid fa-check text-lg"></i> Save Configuration (Read-Only)
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}

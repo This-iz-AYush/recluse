@@ -647,65 +647,681 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
             cookies={SESSION_COOKIE_NAME: admin_sid},
         )
         self.assertEqual(r_ov.status, 200)
-        html = await r_ov.text()
+        overview_body = await r_ov.text()
 
         # 1. Lockdown card shows "Disabled: being rebuilt", never "ENGAGED" or "Channel permission snapshot protection"
-        self.assertIn("Disabled: being rebuilt", html)
-        self.assertNotIn("ENGAGED", html)
-        self.assertNotIn("Channel permission snapshot protection", html)
+        self.assertIn("Disabled: being rebuilt", overview_body)
+        self.assertNotIn("ENGAGED", overview_body)
+        self.assertNotIn("Channel permission snapshot protection", overview_body)
 
-        # 2. Sidebar has hidden md:flex and lists ONLY Overview (/manage/{guild_id}) in Checkpoint 3A
-        self.assertIn("hidden md:flex", html)
-        self.assertIn(f'/manage/{self.guild_id}', html)
-        self.assertNotIn(f'/modules/{self.guild_id}', html)
-        self.assertNotIn(f'/automod/{self.guild_id}', html)
-        self.assertNotIn(f'/lockdown/{self.guild_id}', html)
+        # 2. Sidebar has hidden md:flex and lists all Checkpoint 3B pages
+        #    (overview, modules, automod, lockdown, wizard, misc, logs)
+        self.assertIn("hidden md:flex", overview_body)
+        self.assertIn(f"/manage/{self.guild_id}", overview_body)
+        self.assertIn(f"/modules/{self.guild_id}", overview_body)
+        self.assertIn(f"/automod/{self.guild_id}", overview_body)
+        self.assertIn(f"/lockdown/{self.guild_id}", overview_body)
+        self.assertIn(f"/wizard/{self.guild_id}", overview_body)
+        self.assertIn(f"/misc/{self.guild_id}", overview_body)
+        self.assertIn(f"/logs/{self.guild_id}", overview_body)
 
         # 3. Default automod_enabled is False ("Disabled" in AutoMod Status card)
-        self.assertIn("Disabled", html)
+        self.assertIn("Disabled", overview_body)
 
-    async def test_checkpoint_3a_placeholder_routes_return_501_with_rollback_note(self):
+    async def test_checkpoint_3b_batch1_automod_lockdown_and_misc_routes(self):
+        from webdash.router import GUILD_CONFIG_CACHE_KEY
+
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "automod_enabled": False,
+            "banned_words": ["badword1", "<script>xss()</script>"],
+            "misc_enabled": False,
+            "dashboard_permissions": {
+                "role_mappings": {
+                    "555": {"allow": ["overview.view", "automod.*"], "deny": []},
+                }
+            },
+        }
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+
         admin_sid, _ = await self._create_test_session(self.admin_user_id, "AdminUser")
+        mod_sid, _ = await self._create_test_session(self.mod_user_id, "ModUser")
         outsider_sid, _ = await self._create_test_session(self.outsider_user_id, "Outsider")
-        owner_sid, _ = await self._create_test_session(self.bot_owner_id, "Owner")
 
-        unported_guild_paths = [
-            f"/modules/{self.guild_id}",
+        batch1_paths = [
             f"/automod/{self.guild_id}",
-            f"/wizard/{self.guild_id}",
             f"/lockdown/{self.guild_id}",
             f"/misc/{self.guild_id}",
-            f"/logs/{self.guild_id}",
         ]
-        for path in unported_guild_paths:
+        for path in batch1_paths:
             with self.subTest(path=path):
-                # Logged out -> 302
+                # Logged out -> 302 to /login
                 r_anon = await self.client.get(path, allow_redirects=False)
                 self.assertEqual(r_anon.status, 302)
+                self.assertEqual(r_anon.headers.get("Location"), "/login")
 
                 # Non-member -> 403
                 r_out = await self.client.get(path, cookies={SESSION_COOKIE_NAME: outsider_sid})
                 self.assertEqual(r_out.status, 403)
 
-                # Authorized Admin -> 501 with WEBDASH_ENABLED=0 note
-                r_ok = await self.client.get(path, cookies={SESSION_COOKIE_NAME: admin_sid})
-                self.assertEqual(r_ok.status, 501)
-                text = await r_ok.text()
-                self.assertIn("WEBDASH_ENABLED=0", text)
+                # Missing guild -> 404; invalid snowflake -> 400
+                route_prefix = path.rsplit("/", 1)[0]
+                r_missing = await self.client.get(
+                    f"{route_prefix}/111222333",
+                    cookies={SESSION_COOKIE_NAME: admin_sid},
+                )
+                self.assertEqual(r_missing.status, 404)
 
-        # /owner_panel: non-owner -> 403, owner -> 501
-        r_owner_denied = await self.client.get(
+                r_bad_id = await self.client.get(
+                    f"{route_prefix}/not-a-snowflake",
+                    cookies={SESSION_COOKIE_NAME: admin_sid},
+                )
+                self.assertEqual(r_bad_id.status, 400)
+
+        # 1. GET /automod/{guild_id} — ModUser (has automod.*) -> 200, escaped XSS, zero inline handlers,
+        #    and sidebar filtered to ONLY overview + automod (no lockdown, wizard, misc, or logs)
+        r_automod = await self.client.get(
+            f"/automod/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_automod.status, 200)
+        automod_body = await r_automod.text()
+        self.assertIn("Automated Content Filtration", automod_body)
+        self.assertIn("badword1", automod_body)
+        self.assertNotIn("<script>xss()</script>", automod_body)
+        self.assertIn("&lt;script&gt;xss()&lt;/script&gt;", automod_body)
+        self.assertIn("AutoMod: Disabled", automod_body)
+        self.assertIn(f"/automod/{self.guild_id}", automod_body)
+        self.assertNotIn(f"/lockdown/{self.guild_id}", automod_body)
+        self.assertNotIn(f"/wizard/{self.guild_id}", automod_body)
+        self.assertNotIn(f"/misc/{self.guild_id}", automod_body)
+        self.assertNotIn(f"/logs/{self.guild_id}", automod_body)
+        self.assertIsNone(INLINE_HANDLER_RE.search(automod_body))
+
+        # 1b. AutoMod banned_words display cap at 500 entries with "+N more" note
+        self.guild_settings_doc["banned_words"] = [f"term_{i}" for i in range(1, 513)]
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+        r_automod_cap = await self.client.get(
+            f"/automod/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_automod_cap.status, 200)
+        automod_cap_body = await r_automod_cap.text()
+        self.assertIn("512 words", automod_cap_body)
+        self.assertIn("term_1", automod_cap_body)
+        self.assertIn("term_500", automod_cap_body)
+        self.assertNotIn("term_501", automod_cap_body)
+        self.assertIn("+12 more", automod_cap_body)
+
+        # 2. GET /lockdown/{guild_id} — ModUser (lacks antinuke.view) -> 403; AdminUser -> 200
+        r_lock_mod = await self.client.get(
+            f"/lockdown/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_lock_mod.status, 403)
+
+        r_lock_admin = await self.client.get(
+            f"/lockdown/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_lock_admin.status, 200)
+        lock_body = await r_lock_admin.text()
+        self.assertIn("Disabled: being rebuilt", lock_body)
+        self.assertIn("Lockdown is being rebuilt and is temporarily disabled", lock_body)
+        self.assertIsNone(INLINE_HANDLER_RE.search(lock_body))
+
+        # 3. GET /misc/{guild_id} — ModUser (lacks settings.view) -> 403; AdminUser -> 200
+        r_misc_mod = await self.client.get(
+            f"/misc/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_misc_mod.status, 403)
+
+        r_misc_admin = await self.client.get(
+            f"/misc/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_misc_admin.status, 200)
+        misc_body = await r_misc_admin.text()
+        self.assertIn("Dynamic AFK &amp; Information Tools", misc_body)
+        self.assertIn("Disabled", misc_body)
+        self.assertIsNone(INLINE_HANDLER_RE.search(misc_body))
+
+    async def test_checkpoint_3b_batch2_wizard_and_logs_with_support_preset_audit_split(self):
+        import datetime
+        from webdash.router import GUILD_CONFIG_CACHE_KEY
+
+        class _AsyncListCursor:
+            def __init__(self, items: list[dict]) -> None:
+                self._items = list(items)
+
+            def sort(self, *_args, **_kwargs):
+                return self
+
+            def limit(self, *_args, **_kwargs):
+                return self
+
+            def __aiter__(self):
+                return self._iter()
+
+            async def _iter(self):
+                for item in self._items:
+                    yield item
+
+        self.fake_db.security_logs.find = MagicMock(
+            side_effect=lambda _q: _AsyncListCursor(
+                [
+                    {
+                        "guild_id": self.guild_id,
+                        "timestamp": 1761523200.0,
+                        "action": "Automod — Banned Word",
+                        "user_id": 777888999,
+                        "content": "blocked <script>evil()</script> message",
+                    }
+                ]
+            )
+        )
+        self.fake_db.dashboard_audit.find = MagicMock(
+            side_effect=lambda _q: _AsyncListCursor(
+                [
+                    {
+                        "guild_id": self.guild_id,
+                        "actor_id": self.admin_user_id,
+                        "actor_name": "Admin<script>xss()</script>",
+                        "module": "automod",
+                        "action": "update",
+                        "changes": {
+                            "automod_enabled": {"old": False, "new": True},
+                        },
+                        "created_at": datetime.datetime(2026, 10, 27, 1, 30, tzinfo=datetime.timezone.utc),
+                    }
+                ]
+            )
+        )
+
+        # Configure role 555 (ModUser) with the built-in "Support" preset
+        # (webdash/permissions.py:90-95 -> overview.view, tickets.*, moderation.view, logging.view; NO audit.view)
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "default_ai_model": "deepseek",
+            "ai_enabled": True,
+            "dashboard_permissions": {
+                "role_mappings": {
+                    "555": {"allow": ["Support"], "deny": []},
+                }
+            },
+        }
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+
+        admin_sid, _ = await self._create_test_session(self.admin_user_id, "AdminUser")
+        support_sid, _ = await self._create_test_session(self.mod_user_id, "SupportUser")
+        outsider_sid, _ = await self._create_test_session(self.outsider_user_id, "Outsider")
+
+        batch2_paths = [
+            f"/wizard/{self.guild_id}",
+            f"/logs/{self.guild_id}",
+        ]
+        for path in batch2_paths:
+            with self.subTest(path=path):
+                # Logged out -> 302 to /login
+                r_anon = await self.client.get(path, allow_redirects=False)
+                self.assertEqual(r_anon.status, 302)
+                self.assertEqual(r_anon.headers.get("Location"), "/login")
+
+                # Non-member -> 403
+                r_out = await self.client.get(path, cookies={SESSION_COOKIE_NAME: outsider_sid})
+                self.assertEqual(r_out.status, 403)
+
+                # Missing guild -> 404; invalid snowflake -> 400
+                route_prefix = path.rsplit("/", 1)[0]
+                r_missing = await self.client.get(
+                    f"{route_prefix}/111222333",
+                    cookies={SESSION_COOKIE_NAME: admin_sid},
+                )
+                self.assertEqual(r_missing.status, 404)
+
+                r_bad_id = await self.client.get(
+                    f"{route_prefix}/not-a-snowflake",
+                    cookies={SESSION_COOKIE_NAME: admin_sid},
+                )
+                self.assertEqual(r_bad_id.status, 400)
+
+        # 1. GET /wizard/{guild_id}:
+        #    - SupportUser lacks settings.view -> 403
+        r_wiz_support = await self.client.get(
+            f"/wizard/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: support_sid},
+        )
+        self.assertEqual(r_wiz_support.status, 403)
+
+        #    - AdminUser -> 200, renders real cogs/ai.py models (auto, deepseek, groq, gemini), never nexusify/sarvam
+        r_wiz_admin = await self.client.get(
+            f"/wizard/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_wiz_admin.status, 200)
+        wiz_body = await r_wiz_admin.text()
+        self.assertIn("Select Default AI Core", wiz_body)
+        self.assertIn('value="auto"', wiz_body)
+        self.assertIn('value="deepseek"', wiz_body)
+        self.assertIn('value="groq"', wiz_body)
+        self.assertIn('value="gemini"', wiz_body)
+        self.assertNotIn("nexusify", wiz_body.lower())
+        self.assertNotIn("sarvam", wiz_body.lower())
+        self.assertIsNone(INLINE_HANDLER_RE.search(wiz_body))
+
+        # 2. GET /logs/{guild_id} as Support-preset user (has logging.view, lacks audit.view):
+        #    - Sees security_logs section (with escaped XSS), does NOT see dashboard_audit section,
+        #      and db.dashboard_audit.find is NEVER called!
+        self.fake_db.security_logs.find.reset_mock()
+        self.fake_db.dashboard_audit.find.reset_mock()
+
+        r_logs_support = await self.client.get(
+            f"/logs/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: support_sid},
+        )
+        self.assertEqual(r_logs_support.status, 200)
+        logs_support_body = await r_logs_support.text()
+        self.assertIn("Bot Security &amp; AutoMod Events", logs_support_body)
+        self.assertIn("Automod — Banned Word", logs_support_body)
+        self.assertNotIn("<script>evil()</script>", logs_support_body)
+        self.assertIn("&lt;script&gt;evil()&lt;/script&gt;", logs_support_body)
+        self.assertNotIn("Dashboard Configuration Audit History", logs_support_body)
+        self.assertNotIn("dashboardAuditSection", logs_support_body)
+        self.assertEqual(self.fake_db.security_logs.find.call_count, 1)
+        self.assertEqual(self.fake_db.dashboard_audit.find.call_count, 0)
+        self.assertIsNone(INLINE_HANDLER_RE.search(logs_support_body))
+
+        # 3. GET /logs/{guild_id} as AdminUser (has both logging.view and audit.view):
+        #    - Sees BOTH security_logs and dashboard_audit (with escaped actor name and field diff)
+        r_logs_admin = await self.client.get(
+            f"/logs/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_logs_admin.status, 200)
+        logs_admin_body = await r_logs_admin.text()
+        self.assertIn("Bot Security &amp; AutoMod Events", logs_admin_body)
+        self.assertIn("Dashboard Configuration Audit History", logs_admin_body)
+        self.assertIn("dashboardAuditSection", logs_admin_body)
+        self.assertIn("automod_enabled", logs_admin_body)
+        self.assertNotIn("<script>xss()</script>", logs_admin_body)
+        self.assertIn("Admin&lt;script&gt;xss()&lt;/script&gt;", logs_admin_body)
+        self.assertEqual(self.fake_db.dashboard_audit.find.call_count, 1)
+        self.assertIsNone(INLINE_HANDLER_RE.search(logs_admin_body))
+
+        # 4. Verify security_logs content truncation at 300 characters with an ellipsis ("…")
+        long_payload = "A" * 350
+        self.fake_db.security_logs.find = MagicMock(
+            side_effect=lambda _q: _AsyncListCursor(
+                [
+                    {
+                        "guild_id": self.guild_id,
+                        "timestamp": 1761523200.0,
+                        "action": "Long Content Test",
+                        "user_id": 777888999,
+                        "content": long_payload,
+                    }
+                ]
+            )
+        )
+        r_logs_trunc = await self.client.get(
+            f"/logs/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: support_sid},
+        )
+        self.assertEqual(r_logs_trunc.status, 200)
+        logs_trunc_body = await r_logs_trunc.text()
+        self.assertIn(("A" * 300) + "…", logs_trunc_body)
+        self.assertNotIn("A" * 301, logs_trunc_body)
+
+    async def test_logs_query_raises_and_timeout_show_database_unavailable_message(self):
+        from webdash.router import GUILD_CONFIG_CACHE_KEY
+
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "dashboard_permissions": {
+                "role_mappings": {
+                    "555": {"allow": ["Support"], "deny": []},
+                }
+            },
+        }
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+
+        admin_sid, _ = await self._create_test_session(self.admin_user_id, "AdminUser")
+        support_sid, _ = await self._create_test_session(self.mod_user_id, "SupportUser")
+
+        # 1. Both security_logs.find and dashboard_audit.find raise RuntimeError
+        self.fake_db.security_logs.find = MagicMock(side_effect=RuntimeError("Mongo network error"))
+        self.fake_db.dashboard_audit.find = MagicMock(side_effect=RuntimeError("Mongo network error"))
+
+        r_raise = await self.client.get(
+            f"/logs/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_raise.status, 200)
+        raise_body = await r_raise.text()
+        self.assertEqual(raise_body.count("Could not load logs (database unavailable)"), 2)
+        self.assertNotIn("No security events logged yet.", raise_body)
+        self.assertNotIn("No configuration changes recorded yet.", raise_body)
+
+        # 2. Both cursors hang past the 2.0s timeout (tested both with real 2.0s timeout on SupportUser
+        #    and patched fast timeout for dashboard_audit)
+        class _HangingCursor:
+            def sort(self, *_args, **_kwargs):
+                return self
+
+            def limit(self, *_args, **_kwargs):
+                return self
+
+            def __aiter__(self):
+                return self._iter()
+
+            async def _iter(self):
+                await asyncio.sleep(5.0)
+                if False:
+                    yield {}
+
+        self.fake_db.security_logs.find = MagicMock(side_effect=lambda _q: _HangingCursor())
+        self.fake_db.dashboard_audit.find = MagicMock(side_effect=lambda _q: _HangingCursor())
+
+        r_timeout_support = await self.client.get(
+            f"/logs/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: support_sid},
+        )
+        self.assertEqual(r_timeout_support.status, 200)
+        timeout_support_body = await r_timeout_support.text()
+        self.assertIn("Could not load logs (database unavailable)", timeout_support_body)
+        self.assertNotIn("No security events logged yet.", timeout_support_body)
+        self.assertEqual(self.fake_db.dashboard_audit.find.call_count, 0)
+
+    async def test_checkpoint_3b_batch3_modules_protected_cog_recovery_and_wired_command_keys(self):
+        from webdash.router import GUILD_CONFIG_CACHE_KEY
+
+        # Configure live guild channels and roles
+        ch_gen = MagicMock()
+        ch_gen.id = 1001
+        ch_gen.name = "general"
+        ch_bot = MagicMock()
+        ch_bot.id = 1002
+        ch_bot.name = "bot-commands"
+        self.fake_guild.text_channels = [ch_gen, ch_bot]
+
+        r_everyone = MagicMock()
+        r_everyone.id = self.guild_id
+        r_everyone.name = "@everyone"
+        r_mod = MagicMock()
+        r_mod.id = 2001
+        r_mod.name = "Moderator"
+        r_muted = MagicMock()
+        r_muted.id = 2002
+        r_muted.name = "Muted"
+        self.fake_guild.roles = [r_everyone, r_mod, r_muted]
+
+        # Build fake cogs on self.fake_bot.cogs:
+        # Protected cogs: Core, Database, Dashboard, Owner, Jishaku
+        # Configurable cogs: Moderation, Sports
+        def _make_cog(cmds_spec: list[tuple[str, str, list[str]]]):
+            cog = MagicMock()
+            prefix_cmds = []
+            for cname, cdesc, subs in cmds_spec:
+                cmd_obj = MagicMock()
+                cmd_obj.name = cname
+                cmd_obj.help = cdesc
+                cmd_obj.description = cdesc
+                sub_objs = []
+                for sname in subs:
+                    sobj = MagicMock()
+                    sobj.name = sname
+                    sub_objs.append(sobj)
+                cmd_obj.commands = sub_objs
+                prefix_cmds.append(cmd_obj)
+            cog.get_commands = MagicMock(return_value=prefix_cmds)
+            cog.walk_app_commands = MagicMock(return_value=[])
+            return cog
+
+        self.fake_bot.cogs = {
+            "Core": _make_cog([("help", "Show help menu", [])]),
+            "Database": _make_cog([]),
+            "Dashboard": _make_cog([]),
+            "Owner": _make_cog([]),
+            "Jishaku": _make_cog([]),
+            "Moderation": _make_cog(
+                [
+                    ("ban", "Ban a member <script>xss()</script>", ["temp", "perm"]),
+                ]
+            ),
+            "Sports": _make_cog([("nba", "NBA scores", [])]),
+        }
+
+        # Case A: Normal state — Core, Database, Dashboard, Owner, Jishaku are enabled (not in disabled_cogs).
+        # All 5 protected cogs MUST be hidden from /modules/{guild_id}.
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "disabled_cogs": ["Sports"],
+            "disabled_cmds": ["purge", "evil<script>alert(1)</script>"],
+            "command_settings": {
+                "ban": {
+                    "disabled": True,  # Legacy unwired top-level key — must NOT be exposed as a command toggle
+                    "disabled_subcommands": ["temp"],
+                    "allowed_channels": ["1001"],
+                    "ignored_channels": ["1002"],
+                    "allowed_roles": ["2001"],
+                    "ignored_roles": ["2002"],
+                }
+            },
+            "dashboard_permissions": {
+                "role_mappings": {
+                    "555": {"allow": ["Support"], "deny": []},
+                }
+            },
+        }
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+
+        admin_sid, _ = await self._create_test_session(self.admin_user_id, "AdminUser")
+        support_sid, _ = await self._create_test_session(self.mod_user_id, "SupportUser")
+        outsider_sid, _ = await self._create_test_session(self.outsider_user_id, "Outsider")
+
+        # RBAC checks: Logged out -> 302, Outsider -> 403, SupportUser (lacks modules.view) -> 403,
+        # Missing guild -> 404, Invalid snowflake -> 400
+        r_anon = await self.client.get(f"/modules/{self.guild_id}", allow_redirects=False)
+        self.assertEqual(r_anon.status, 302)
+        self.assertEqual(r_anon.headers.get("Location"), "/login")
+
+        r_out = await self.client.get(
+            f"/modules/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: outsider_sid},
+        )
+        self.assertEqual(r_out.status, 403)
+
+        r_sup = await self.client.get(
+            f"/modules/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: support_sid},
+        )
+        self.assertEqual(r_sup.status, 403)
+
+        r_missing = await self.client.get(
+            "/modules/111222333",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_missing.status, 404)
+
+        r_bad = await self.client.get(
+            "/modules/not-a-snowflake",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_bad.status, 400)
+
+        # AdminUser -> 200 OK
+        r_mod_ok = await self.client.get(
+            f"/modules/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_mod_ok.status, 200)
+        mod_body = await r_mod_ok.text()
+
+        # Verify all 5 protected cogs are hidden when enabled
+        self.assertNotIn("Core Module", mod_body)
+        self.assertNotIn("Database Module", mod_body)
+        self.assertNotIn("Dashboard Module", mod_body)
+        self.assertNotIn("Owner Module", mod_body)
+        self.assertNotIn("Jishaku Module", mod_body)
+
+        # Verify Moderation and Sports are shown
+        self.assertIn("Moderation Module", mod_body)
+        self.assertIn("Sports Module", mod_body)
+
+        # Verify only the 5 wired command_settings keys are rendered and resolved to live channel/role names
+        self.assertIn("allowed_channels", mod_body)
+        self.assertIn("#general", mod_body)
+        self.assertIn("ignored_channels", mod_body)
+        self.assertIn("#bot-commands", mod_body)
+        self.assertIn("allowed_roles", mod_body)
+        self.assertIn("@Moderator", mod_body)
+        self.assertIn("ignored_roles", mod_body)
+        self.assertIn("@Muted", mod_body)
+        self.assertIn("disabled_subcommands", mod_body)
+        self.assertIn("/ban temp", mod_body)
+        self.assertIn("/ban perm", mod_body)
+
+        # Verify read-only disabled_cmds is displayed and escaped
+        self.assertIn("disabled_cmds", mod_body)
+        self.assertIn("/purge", mod_body)
+        self.assertNotIn("<script>alert(1)</script>", mod_body)
+        self.assertIn("/evil&lt;script&gt;alert(1)&lt;/script&gt;", mod_body)
+        self.assertNotIn("<script>xss()</script>", mod_body)
+        self.assertIn("&lt;script&gt;xss()&lt;/script&gt;", mod_body)
+        self.assertIsNone(INLINE_HANDLER_RE.search(mod_body))
+
+        # Case B: Protected-Cog Recovery Rule — Server has "Core" in disabled_cogs (from legacy UI).
+        # "Core Module" MUST now be displayed with a clear "Protected (Re-enable Only)" badge
+        # while the other 4 enabled protected cogs stay hidden!
+        self.guild_settings_doc["disabled_cogs"] = ["Core", "Sports"]
+        self.app[GUILD_CONFIG_CACHE_KEY].clear()
+
+        r_recovery = await self.client.get(
+            f"/modules/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_recovery.status, 200)
+        recovery_body = await r_recovery.text()
+        self.assertIn("Core Module", recovery_body)
+        self.assertIn("Protected (Re-enable Only)", recovery_body)
+        self.assertIn('data-protected="true"', recovery_body)
+        self.assertNotIn("Database Module", recovery_body)
+        self.assertNotIn("Dashboard Module", recovery_body)
+        self.assertNotIn("Owner Module", recovery_body)
+        self.assertNotIn("Jishaku Module", recovery_body)
+        self.assertIsNone(INLINE_HANDLER_RE.search(recovery_body))
+
+    async def test_checkpoint_3b_batch3_owner_panel_separate_flags_and_normalized_escaped_ips(self):
+        class _AsyncListCursor:
+            def __init__(self, items: list[dict]) -> None:
+                self._items = list(items)
+
+            def sort(self, *_args, **_kwargs):
+                return self
+
+            def limit(self, *_args, **_kwargs):
+                return self
+
+            def __aiter__(self):
+                return self._iter()
+
+            async def _iter(self):
+                for item in self._items:
+                    yield item
+
+        self.fake_bot.extensions = {
+            "cogs.admin": MagicMock(),
+            "cogs.moderation": MagicMock(),
+        }
+        self.fake_db.visit_logs.find = MagicMock(
+            side_effect=lambda: _AsyncListCursor(
+                [
+                    {
+                        "ip": "::ffff:203.0.113.7",
+                        "last_user": "Visitor<script>xss()</script>",
+                        "hits": 9,
+                    },
+                    {
+                        "ip": '1.2.3.4" data-evil="1',
+                        "last_user": "Guest",
+                        "hits": 2,
+                    },
+                ]
+            )
+        )
+        self.fake_db.ip_bans.find = MagicMock(
+            side_effect=lambda: _AsyncListCursor(
+                [
+                    {"ip": "::ffff:198.51.100.44"},
+                ]
+            )
+        )
+
+        admin_sid, _ = await self._create_test_session(self.admin_user_id, "AdminUser")
+        owner_sid, _ = await self._create_test_session(self.bot_owner_id, "OwnerUser")
+
+        # 1. Logged out -> 302 to /login
+        r_anon = await self.client.get("/owner_panel", allow_redirects=False)
+        self.assertEqual(r_anon.status, 302)
+        self.assertEqual(r_anon.headers.get("Location"), "/login")
+
+        # 2. Non-owner Admin -> 403 Forbidden
+        r_denied = await self.client.get(
             "/owner_panel",
             cookies={SESSION_COOKIE_NAME: admin_sid},
         )
-        self.assertEqual(r_owner_denied.status, 403)
+        self.assertEqual(r_denied.status, 403)
 
-        r_owner_ok = await self.client.get(
+        # 3. Bot Owner with global_lockdown=True, dashboard_maintenance=False -> 200 OK
+        self.fake_bot.global_lockdown = True
+        self.fake_bot.dashboard_maintenance = False
+
+        r_owner1 = await self.client.get(
             "/owner_panel",
             cookies={SESSION_COOKIE_NAME: owner_sid},
         )
-        self.assertEqual(r_owner_ok.status, 501)
-        self.assertIn("WEBDASH_ENABLED=0", await r_owner_ok.text())
+        self.assertEqual(r_owner1.status, 200)
+        owner_body1 = await r_owner1.text()
+
+        # Verify both distinct flags and the note that legacy showed neither
+        self.assertIn("bot.global_lockdown (bot.py:33, 82)", owner_body1)
+        self.assertIn("Global Command Lockdown", owner_body1)
+        self.assertIn("Active (Locked)", owner_body1)
+        self.assertIn("bot.dashboard_maintenance (cogs/dashboard.py:43, 122)", owner_body1)
+        self.assertIn("Web Dashboard Maintenance", owner_body1)
+        self.assertIn("Operational", owner_body1)
+        self.assertIn("showed neither flag", owner_body1)
+
+        # Verify loaded extensions use data-cog attributes
+        self.assertIn("cogs.admin", owner_body1)
+        self.assertIn('data-cog="admin"', owner_body1)
+        self.assertIn("cogs.moderation", owner_body1)
+        self.assertIn('data-cog="moderation"', owner_body1)
+
+        # Verify IPs are normalized via normalize_ip (::ffff:203.0.113.7 -> 203.0.113.7;
+        # malformed IP -> "invalid") and XSS in last_user is escaped
+        self.assertIn('data-ip="203.0.113.7"', owner_body1)
+        self.assertNotIn("::ffff:203.0.113.7", owner_body1)
+        self.assertIn('data-ip="invalid"', owner_body1)
+        self.assertNotIn('data-evil="1', owner_body1)
+        self.assertIn('data-ip="198.51.100.44"', owner_body1)
+        self.assertNotIn("<script>xss()</script>", owner_body1)
+        self.assertIn("Visitor&lt;script&gt;xss()&lt;/script&gt;", owner_body1)
+        self.assertIsNone(INLINE_HANDLER_RE.search(owner_body1))
+
+        # 4. Flip flags: global_lockdown=False, dashboard_maintenance=True
+        self.fake_bot.global_lockdown = False
+        self.fake_bot.dashboard_maintenance = True
+        r_owner2 = await self.client.get(
+            "/owner_panel",
+            cookies={SESSION_COOKIE_NAME: owner_sid},
+        )
+        self.assertEqual(r_owner2.status, 200)
+        owner_body2 = await r_owner2.text()
+        self.assertIn("Inactive (Normal)", owner_body2)
+        self.assertIn("Maintenance On", owner_body2)
+        self.assertIsNone(INLINE_HANDLER_RE.search(owner_body2))
 
 
 class TestDashboardCogWebdashWiring(unittest.IsolatedAsyncioTestCase):

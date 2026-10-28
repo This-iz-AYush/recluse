@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}{{ guild_name }} | Auto Moderation{% endblock %}
+{% block page_heading %}Automated Content Filtration{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-8">
+    <!-- Banned Lexicon Card (Legacy Parity: banned_words) -->
+    <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <div>
+                <h2 class="font-extrabold text-white text-xl drop-shadow-sm flex items-center gap-3">
+                    <i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon
+                </h2>
+                <p class="text-sm text-zinc-400 mt-1">
+                    Exact words or phrases filtered automatically when AutoMod is active. Separate items with commas.
+                </p>
+            </div>
+            <span class="px-3.5 py-1.5 rounded-xl text-xs font-bold border self-start sm:self-auto {% if automod_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                <i class="fa-solid fa-shield-halved mr-1.5"></i>AutoMod: {% if automod_enabled %}Active{% else %}Disabled{% endif %}
+            </span>
+        </div>
+
+        <label for="bannedWords" class="sr-only">Banned Words</label>
+        <textarea id="bannedWords"
+                  rows="5"
+                  readonly
+                  class="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-sm font-mono text-zinc-200 focus:outline-none transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] leading-relaxed cursor-default">{{ words_string }}</textarea>
+
+        <div class="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div class="space-y-1">
+                <p class="text-xs text-zinc-400">
+                    <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Read-only preview in Checkpoint 3B. Saving changes lands in Checkpoint 3C.
+                </p>
+                {% if extra_banned_words_count > 0 %}
+                <p class="text-xs text-amber-300 font-semibold">
+                    Showing first {{ banned_words|length }} of {{ total_banned_words }} entries (+{{ extra_banned_words_count }} more).
+                </p>
+                {% endif %}
+            </div>
+            <button type="button"
+                    id="saveWordsBtn"
+                    disabled
+                    class="px-6 py-3 rounded-xl bg-white/5 border border-white/10 text-zinc-400 font-bold text-sm cursor-not-allowed">
+                Update Filters (Read-Only)
+            </button>
+        </div>
+    </div>
+
+    <!-- Active Filters Pills Card -->
+    <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="font-extrabold text-white text-lg tracking-wide">Active Filters Loaded</h3>
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10">
+                {{ total_banned_words }} word{% if total_banned_words != 1 %}s{% endif %}
+            </span>
+        </div>
+        <div class="flex flex-wrap gap-3">
+            {% if banned_words %}
+                {% for word in banned_words %}
+                <span class="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-sm font-bold text-red-300 shadow-sm">{{ word }}</span>
+                {% endfor %}
+                {% if extra_banned_words_count > 0 %}
+                <span class="px-4 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-sm font-extrabold text-amber-300 shadow-sm">+{{ extra_banned_words_count }} more</span>
+                {% endif %}
+            {% else %}
+                <span class="text-sm text-zinc-500 italic bg-black/30 px-4 py-2 rounded-xl border border-white/5">No active word restrictions.</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
