@@ -4,7 +4,10 @@
 {% block page_heading %}Miscellaneous Utilities{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-6">
+<div id="miscRoot"
+     data-guild-id="{{ guild_id }}"
+     data-dashboard-rev="{{ dashboard_rev }}"
+     class="max-w-4xl mx-auto space-y-6">
     <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-10">
         <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-6">
             <div class="flex gap-6 items-center">
@@ -20,13 +23,13 @@
             </div>
 
             <div class="flex items-center gap-4 self-end sm:self-center">
-                <span class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border {% if misc_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                <span id="miscStatusBadge" class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border {% if misc_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
                     {% if misc_enabled %}Enabled{% else %}Disabled{% endif %}
                 </span>
-                <label class="relative inline-flex items-center cursor-not-allowed opacity-75" title="Read-only in Checkpoint 3B">
+                <label class="relative inline-flex items-center {% if can_edit_misc %}cursor-pointer{% else %}cursor-not-allowed opacity-75{% endif %}">
                     <input type="checkbox"
                            id="toggleMisc"
-                           disabled
+                           {% if not can_edit_misc %}disabled{% endif %}
                            {% if misc_enabled %}checked{% endif %}
                            class="sr-only peer">
                     <div class="w-14 h-7 bg-black/70 border border-white/20 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600/80 peer-checked:border-blue-400"></div>
@@ -34,12 +37,101 @@
             </div>
         </div>
 
+        <div id="miscStatusMsg" role="status" aria-live="polite" class="hidden mt-6 px-4 py-3 rounded-xl text-xs font-bold border"></div>
+
         <div class="mt-6 pt-6 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
+            {% if can_edit_misc %}
             <span>
-                <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Read-only preview in Checkpoint 3B. Live toggling lands in Checkpoint 3C.
+                <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Toggle to immediately enable or disable miscellaneous utility commands.
             </span>
+            {% else %}
+            <span>
+                <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">settings.edit</code> required to toggle).
+            </span>
+            {% endif %}
             <span class="font-mono text-zinc-500">misc_enabled</span>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if can_edit_misc %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var rootEl = document.getElementById("miscRoot");
+    var toggleEl = document.getElementById("toggleMisc");
+    var badgeEl = document.getElementById("miscStatusBadge");
+    var statusBox = document.getElementById("miscStatusMsg");
+    if (!rootEl || !toggleEl || !badgeEl || !statusBox) {
+        return;
+    }
+
+    function showStatus(msg, isError) {
+        statusBox.textContent = msg;
+        statusBox.className = "mt-6 px-4 py-3 rounded-xl text-xs font-bold border " + (
+            isError
+                ? "bg-red-500/15 border-red-500/40 text-red-300"
+                : "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+        );
+    }
+
+    function updateBadge(isEnabled) {
+        badgeEl.textContent = isEnabled ? "Enabled" : "Disabled";
+        badgeEl.className = "px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border " + (
+            isEnabled
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                : "bg-zinc-800/80 border-white/10 text-zinc-400"
+        );
+    }
+
+    toggleEl.addEventListener("change", function () {
+        var desiredState = Boolean(toggleEl.checked);
+        var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
+        if (isNaN(rev) || rev < 0) {
+            rev = 0;
+        }
+
+        toggleEl.disabled = true;
+        fetch("/api/settings/{{ guild_id }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": getCsrfToken()
+            },
+            body: JSON.stringify({
+                type: "toggle",
+                module: "toggleMisc",
+                enabled: desiredState,
+                dashboard_rev: rev
+            })
+        })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { status: resp.status, ok: resp.ok, data: data };
+            });
+        })
+        .then(function (res) {
+            toggleEl.disabled = false;
+            if (res.ok && res.data && res.data.status === "ok") {
+                if (typeof res.data.dashboard_rev === "number") {
+                    rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
+                }
+                updateBadge(desiredState);
+                showStatus("Miscellaneous utilities " + (desiredState ? "enabled" : "disabled") + ".", false);
+            } else {
+                toggleEl.checked = !desiredState;
+                var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update miscellaneous setting.";
+                showStatus(errMsg, true);
+            }
+        })
+        .catch(function () {
+            toggleEl.disabled = false;
+            toggleEl.checked = !desiredState;
+            showStatus("Network error while updating miscellaneous setting.", true);
+        });
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

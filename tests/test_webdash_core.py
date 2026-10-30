@@ -30,7 +30,7 @@ from webdash.auth import (
     hash_session_token,
     verify_oauth_state,
 )
-from webdash.cache import GuildConfigCache, ShortTTLCache
+from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache
 from webdash.permissions import (
     DISCORD_PERM_ADMINISTRATOR,
     DISCORD_PERM_MANAGE_GUILD,
@@ -655,6 +655,87 @@ class TestSessionsCacheAndAudit(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["before_snapshot"], {"welcome_channel": 111, "welcome_enabled": False})
         self.assertEqual(AUDIT_TTL_SECONDS, 2592000)
+
+    async def test_ip_ban_cache_single_flight_serves_previous_set_and_fails_open(self):
+        bot = MagicMock()
+        bot.db_ready = True
+
+        find_calls = 0
+        refresh_gate = asyncio.Event()
+        current_docs: list[dict] = [{"ip": "203.0.113.10"}]
+
+        class _GateCursor:
+            def __init__(self, docs: list[dict], wait_gate: bool):
+                self._docs = list(docs)
+                self._wait_gate = wait_gate
+
+            def limit(self, _n: int):
+                return self
+
+            def __aiter__(self):
+                self._idx = 0
+                return self
+
+            async def __anext__(self):
+                if self._wait_gate and self._idx == 0:
+                    await refresh_gate.wait()
+                if self._idx >= len(self._docs):
+                    raise StopAsyncIteration
+                item = self._docs[self._idx]
+                self._idx += 1
+                return item
+
+        wait_on_gate = False
+
+        def _fake_find():
+            nonlocal find_calls
+            find_calls += 1
+            return _GateCursor(current_docs, wait_on_gate)
+
+        bot.db.ip_bans.find = MagicMock(side_effect=_fake_find)
+
+        cache = IpBanCache(
+            bot,
+            max_size=100,
+            ttl_seconds=60.0,
+            db_timeout=0.3,
+            failure_backoff_seconds=10.0,
+        )
+
+        # 1. Initial load populates {"203.0.113.10"}
+        self.assertTrue(await cache.is_banned("203.0.113.10", now=10.0))
+        self.assertFalse(await cache.is_banned("198.51.100.20", now=10.0))
+        self.assertEqual(find_calls, 1)
+
+        # 2. Expire TTL at now=80.0 and hold the refresh inside the DB cursor
+        current_docs = [{"ip": "198.51.100.20"}]
+        wait_on_gate = True
+        refresh_gate.clear()
+
+        in_flight_task = asyncio.create_task(cache.is_banned("198.51.100.20", now=80.0))
+        await asyncio.sleep(0.02)
+        self.assertTrue(cache._refresh_lock.locked())
+        self.assertEqual(find_calls, 2)  # Only 1 new refresh started (total 2)
+
+        # While the refresh is in-flight, concurrent callers do NOT wait and do NOT trigger extra DB queries;
+        # they immediately receive decisions from the PREVIOUS set ({"203.0.113.10"})!
+        served_prev_true = await asyncio.wait_for(cache.is_banned("203.0.113.10", now=80.0), timeout=0.05)
+        served_prev_false = await asyncio.wait_for(cache.is_banned("198.51.100.20", now=80.0), timeout=0.05)
+        self.assertTrue(served_prev_true)
+        self.assertFalse(served_prev_false)
+        self.assertEqual(find_calls, 2)
+
+        # Release gate -> in-flight refresh finishes and swaps in {"198.51.100.20"}
+        refresh_gate.set()
+        self.assertTrue(await in_flight_task)
+        self.assertFalse(await cache.is_banned("203.0.113.10", now=81.0))
+        self.assertTrue(await cache.is_banned("198.51.100.20", now=81.0))
+
+        # 3. DB error / timeout after TTL expiry fails OPEN (keeps previous set and backs off)
+        wait_on_gate = False
+        bot.db.ip_bans.find = MagicMock(side_effect=RuntimeError("Mongo network error"))
+        self.assertTrue(await cache.is_banned("198.51.100.20", now=200.0))
+        self.assertFalse(await cache.is_banned("203.0.113.99", now=200.0))
 
 
 class TestSecurityMiddlewareIntegration(AioHTTPTestCase):

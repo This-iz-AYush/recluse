@@ -1,6 +1,6 @@
 {
-  "summary":  "Updated Checkpoint 3B plan to reflect Batch 1 & Batch 2 completion, the 500-word display cap on /automod/{guild_id}, the audit.view-gated dashboard_audit section on /logs/{guild_id}, and the two distinct maintenance flags on /owner_panel.",
-  "updatedAt":  "2026-10-27T08:50:53.102575348Z",
+  "summary":  "Implementation plan for the Pre-3C exact-case disabled_cogs fix and Checkpoint 3C mutation endpoints in 4 small reviewable batches (Batch 0, Batch 3C-1, Batch 3C-2, Batch 3C-3), incorporating dashboard_rev optimistic concurrency and 60s cached IP ban enforcement.",
+  "updatedAt":  "2026-10-28T06:09:43.416811535Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

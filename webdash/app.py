@@ -15,11 +15,12 @@ from aiohttp import web
 
 from webdash.audit import AuditLogger
 from webdash.auth import SESSION_COOKIE_NAME, SessionManager
-from webdash.cache import GuildConfigCache, ShortTTLCache
+from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache
 from webdash.router import (
     AUDIT_LOGGER_KEY,
     BOT_KEY,
     GUILD_CONFIG_CACHE_KEY,
+    IP_BAN_CACHE_KEY,
     MEMBER_CACHE_KEY,
     OAUTH_CLIENT_KEY,
     OWNER_ID_CACHE_KEY,
@@ -38,6 +39,7 @@ def create_webdash_app(
     rate_limiter: InMemoryRateLimiter | None = None,
     session_manager: SessionManager | None = None,
     guild_config_cache: GuildConfigCache | None = None,
+    ip_ban_cache: IpBanCache | None = None,
     member_cache: ShortTTLCache | None = None,
     owner_id_cache: ShortTTLCache | None = None,
     audit_logger: AuditLogger | None = None,
@@ -52,6 +54,7 @@ def create_webdash_app(
     """
     limiter = rate_limiter if rate_limiter is not None else InMemoryRateLimiter()
     sessions = session_manager if session_manager is not None else SessionManager(bot)
+    ban_cache = ip_ban_cache if ip_ban_cache is not None else IpBanCache(bot)
 
     existing_cfg_cache = getattr(bot, "guild_config", None) if bot is not None else None
     if guild_config_cache is not None:
@@ -86,6 +89,7 @@ def create_webdash_app(
     security_mw = create_security_middleware(
         limiter,
         session_loader=_load_session,
+        ip_ban_cache=ban_cache,
         trusted_hops=trusted_hops,
         origin_secret=origin_secret,
         require_origin_secret=require_origin_secret,
@@ -96,6 +100,7 @@ def create_webdash_app(
     app[BOT_KEY] = bot
     app[SESSION_MANAGER_KEY] = sessions
     app[GUILD_CONFIG_CACHE_KEY] = cfg_cache
+    app[IP_BAN_CACHE_KEY] = ban_cache
     app[MEMBER_CACHE_KEY] = mem_cache
     app[OWNER_ID_CACHE_KEY] = own_cache
     app[AUDIT_LOGGER_KEY] = auditor

@@ -448,6 +448,7 @@ def create_security_middleware(
     rate_limiter: InMemoryRateLimiter,
     *,
     session_loader: Callable[[web.Request], Awaitable[dict[str, Any] | None]] | None = None,
+    ip_ban_cache: Any | None = None,
     csrf_exempt_paths: set[str] | None = None,
     trusted_hops: int | None = None,
     origin_secret: str | None = None,
@@ -460,6 +461,7 @@ def create_security_middleware(
     - Fast-paths GET /health and unauthenticated GET /
     - Resolves client IP (right-most XFF / ORIGIN_SHARED_SECRET)
     - Enforces REQUIRE_ORIGIN_SHARED_SECRET (blocks direct-origin requests with 403 except /health and unauth /)
+    - Enforces IpBanCache against the TRUSTED client IP only (never blocking GET /health or unauthenticated GET /, failing open on DB error)
     - Cheap pre-check: skips session_loader when `recluse_sid` does not match `^[A-Za-z0-9_-]{43}$`
     - Applies an IP-keyed (or shared 'unidentified') pre-limit BEFORE calling session_loader
     - Enforces dual-pool bounded in-memory rate limits
@@ -548,6 +550,28 @@ def create_security_middleware(
                     {"error": "Forbidden: Direct origin access is disabled."},
                     status=403,
                 )
+                apply_security_headers(resp)
+                return resp
+
+        # 3b. Enforce IpBanCache against the TRUSTED client IP only (never on GET /health
+        #     or unauthenticated GET / which returned in step 2; fails open on error).
+        if ip_ban_cache is not None and ip_trusted and client_ip != "invalid":
+            try:
+                is_ip_banned = await ip_ban_cache.is_banned(client_ip)
+            except Exception:
+                is_ip_banned = False
+            if is_ip_banned:
+                if path.startswith("/api/"):
+                    resp = web.json_response(
+                        {"error": "Forbidden: Your IP address has been restricted."},
+                        status=403,
+                    )
+                else:
+                    resp = web.Response(
+                        text="403 Forbidden: Your IP address has been restricted.",
+                        status=403,
+                        content_type="text/plain",
+                    )
                 apply_security_headers(resp)
                 return resp
 

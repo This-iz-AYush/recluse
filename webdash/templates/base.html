@@ -93,6 +93,11 @@
     </main>
 
     <script>
+        function getCsrfToken() {
+            var meta = document.querySelector('meta[name="csrf-token"]');
+            return meta ? (meta.getAttribute("content") || "") : "";
+        }
+
         document.addEventListener("DOMContentLoaded", function () {
             var toggleBtn = document.getElementById("sidebarToggleBtn");
             var sidebar = document.getElementById("sidebarPanel");

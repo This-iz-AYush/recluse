@@ -4,15 +4,49 @@
 {% block page_heading %}Modules &amp; Granular Command Permissions{% endblock %}
 
 {% block content %}
-<div class="max-w-5xl mx-auto space-y-8 pb-20">
-    <!-- Read-Only Checkpoint 3B Notice -->
+<div
+    id="modulesRoot"
+    class="max-w-5xl mx-auto space-y-8 pb-20"
+    data-guild-id="{{ guild_id }}"
+    data-dashboard-rev="{{ dashboard_rev }}"
+    data-can-edit-modules="{{ 'true' if can_edit_modules else 'false' }}"
+    data-can-edit-commands="{{ 'true' if can_edit_commands else 'false' }}"
+>
+    {% if can_edit_modules or can_edit_commands %}
+    <!-- Interactive Save Bar (Checkpoint 3C-2) -->
+    <div class="bg-[#14151c]/90 backdrop-blur-3xl border border-blue-500/30 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-lg">
+        <div class="flex items-start gap-3.5">
+            <i class="fa-solid fa-sliders text-blue-400 text-lg mt-0.5"></i>
+            <div class="text-xs text-zinc-300 leading-relaxed">
+                <span class="font-bold text-white">Module &amp; Command Configuration:</span>
+                {% if can_edit_modules and can_edit_commands %}
+                You can toggle active modules (<code class="font-mono text-blue-300">disabled_cogs</code>) and edit per-command routing rules (<code class="font-mono text-blue-300">command_settings</code>).
+                {% elif can_edit_modules %}
+                You can toggle active modules (<code class="font-mono text-blue-300">disabled_cogs</code>). Per-command routing rules are read-only (<code class="font-mono text-zinc-400">commands.edit</code> required).
+                {% else %}
+                You can edit per-command routing rules (<code class="font-mono text-blue-300">command_settings</code>). Module toggles are read-only (<code class="font-mono text-zinc-400">modules.edit</code> required).
+                {% endif %}
+                <p id="modulesSaveStatus" class="hidden mt-2 text-xs font-bold"></p>
+            </div>
+        </div>
+        <button
+            type="button"
+            id="saveModulesBtn"
+            class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold uppercase tracking-wider transition shadow-md shrink-0 cursor-pointer"
+        >
+            <i class="fa-solid fa-floppy-disk mr-1.5"></i>Save Changes
+        </button>
+    </div>
+    {% else %}
+    <!-- Read-Only Access Notice -->
     <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5 flex items-start gap-4">
         <i class="fa-solid fa-circle-info text-blue-400 text-lg mt-0.5"></i>
         <div class="text-xs text-zinc-300 leading-relaxed">
-            <span class="font-bold text-white">Read-Only Preview (Checkpoint 3B):</span>
-            Inspect active module states (<code class="font-mono text-blue-300">disabled_cogs</code>) and per-command routing rules (<code class="font-mono text-blue-300">command_settings</code>). Saving changes will be enabled in Checkpoint 3C.
+            <span class="font-bold text-white">View-Only Access:</span>
+            Inspect active module states (<code class="font-mono text-blue-300">disabled_cogs</code>) and per-command routing rules (<code class="font-mono text-blue-300">command_settings</code>). <code class="font-mono text-blue-300">modules.edit</code> or <code class="font-mono text-blue-300">commands.edit</code> is required to save changes.
         </div>
     </div>
+    {% endif %}
 
     <!-- Read-Only Legacy disabled_cmds Notice (bot.py:108, 113) -->
     <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 shadow-lg">
@@ -83,7 +117,7 @@
 
                     <div class="flex items-center gap-4 bg-[#0e0f14] px-4 py-2.5 rounded-xl border border-white/5 shadow-inner self-start sm:self-auto" data-stop-propagation="true">
                         <span class="text-xs text-zinc-300 font-extrabold uppercase tracking-widest">Status</span>
-                        <label class="relative inline-flex items-center cursor-not-allowed opacity-80">
+                        <label class="relative inline-flex items-center {% if can_edit_modules %}cursor-pointer{% else %}cursor-not-allowed opacity-80{% endif %}">
                             <input
                                 type="checkbox"
                                 value="{{ mod.name }}"
@@ -91,7 +125,7 @@
                                 data-protected="{{ 'true' if mod.is_protected else 'false' }}"
                                 class="sr-only peer cog-toggle"
                                 {% if not mod.is_disabled %}checked{% endif %}
-                                disabled
+                                {% if not can_edit_modules %}disabled{% endif %}
                             >
                             <div class="w-12 h-6 bg-black/80 border border-white/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600/90 peer-checked:border-blue-400"></div>
                         </label>
@@ -101,7 +135,7 @@
                 <div class="p-6 sm:p-8 bg-[#0b0c10] border-t border-white/5 hidden space-y-4" data-cog-body="{{ mod.name }}">
                     {% if mod.commands %}
                         {% for cmd in mod.commands %}
-                        <div class="cmd-block border border-white/5 bg-[#181920] shadow-md rounded-2xl overflow-hidden transition-all" data-cmd-block="{{ cmd.name }}">
+                        <div class="cmd-block border border-white/5 bg-[#181920] shadow-md rounded-2xl overflow-hidden transition-all" data-cmd-block="{{ cmd.name }}" data-protected-cog="{{ 'true' if mod.is_protected else 'false' }}">
                             <div class="p-5 flex items-center justify-between cursor-pointer hover:bg-white/5 transition" data-action="toggle-cmd-drawer" data-cmd="{{ cmd.name }}">
                                 <div>
                                     <span class="text-base font-extrabold text-white tracking-wide">/{{ cmd.name }}</span>
@@ -117,8 +151,8 @@
 
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <!-- Allowed Channels (allowed_channels) -->
-                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
-                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl space-y-2.5">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest">
                                             Allowed Channels (<code class="font-mono text-zinc-300">allowed_channels</code>)
                                         </div>
                                         {% if cmd.allowed_channels %}
@@ -130,13 +164,30 @@
                                             {% endfor %}
                                         </div>
                                         {% else %}
-                                        <span class="text-xs text-zinc-500 italic">All channels allowed</span>
+                                        <span class="text-xs text-zinc-500 italic block">All channels allowed</span>
+                                        {% endif %}
+                                        {% if can_edit_commands and not mod.is_protected and guild_channels %}
+                                        <div class="pt-2 border-t border-white/5 flex flex-wrap gap-2" data-cmd-list-group="allowed_channels" data-cmd="{{ cmd.name }}">
+                                            {% for gch in guild_channels %}
+                                            <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-black/40 border border-white/10 text-xs font-mono text-zinc-300 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    value="{{ gch.id }}"
+                                                    data-cmd="{{ cmd.name }}"
+                                                    data-setting-key="allowed_channels"
+                                                    class="accent-blue-500 rounded cmd-setting-checkbox"
+                                                    {% if gch.id in cmd.allowed_channel_ids %}checked{% endif %}
+                                                >
+                                                <span>#{{ gch.name }}</span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
                                         {% endif %}
                                     </div>
 
                                     <!-- Ignored Channels (ignored_channels) -->
-                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
-                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl space-y-2.5">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest">
                                             Ignored Channels (<code class="font-mono text-zinc-300">ignored_channels</code>)
                                         </div>
                                         {% if cmd.ignored_channels %}
@@ -148,13 +199,30 @@
                                             {% endfor %}
                                         </div>
                                         {% else %}
-                                        <span class="text-xs text-zinc-500 italic">No channels ignored</span>
+                                        <span class="text-xs text-zinc-500 italic block">No channels ignored</span>
+                                        {% endif %}
+                                        {% if can_edit_commands and not mod.is_protected and guild_channels %}
+                                        <div class="pt-2 border-t border-white/5 flex flex-wrap gap-2" data-cmd-list-group="ignored_channels" data-cmd="{{ cmd.name }}">
+                                            {% for gch in guild_channels %}
+                                            <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-black/40 border border-white/10 text-xs font-mono text-zinc-300 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    value="{{ gch.id }}"
+                                                    data-cmd="{{ cmd.name }}"
+                                                    data-setting-key="ignored_channels"
+                                                    class="accent-red-500 rounded cmd-setting-checkbox"
+                                                    {% if gch.id in cmd.ignored_channel_ids %}checked{% endif %}
+                                                >
+                                                <span>#{{ gch.name }}</span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
                                         {% endif %}
                                     </div>
 
                                     <!-- Allowed Roles (allowed_roles) -->
-                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
-                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl space-y-2.5">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest">
                                             Allowed Roles (<code class="font-mono text-zinc-300">allowed_roles</code>)
                                         </div>
                                         {% if cmd.allowed_roles %}
@@ -166,13 +234,30 @@
                                             {% endfor %}
                                         </div>
                                         {% else %}
-                                        <span class="text-xs text-zinc-500 italic">All roles allowed</span>
+                                        <span class="text-xs text-zinc-500 italic block">All roles allowed</span>
+                                        {% endif %}
+                                        {% if can_edit_commands and not mod.is_protected and guild_roles %}
+                                        <div class="pt-2 border-t border-white/5 flex flex-wrap gap-2" data-cmd-list-group="allowed_roles" data-cmd="{{ cmd.name }}">
+                                            {% for gr in guild_roles %}
+                                            <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-black/40 border border-white/10 text-xs font-mono text-zinc-300 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    value="{{ gr.id }}"
+                                                    data-cmd="{{ cmd.name }}"
+                                                    data-setting-key="allowed_roles"
+                                                    class="accent-emerald-500 rounded cmd-setting-checkbox"
+                                                    {% if gr.id in cmd.allowed_role_ids %}checked{% endif %}
+                                                >
+                                                <span>@{{ gr.name }}</span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
                                         {% endif %}
                                     </div>
 
                                     <!-- Ignored Roles (ignored_roles) -->
-                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl">
-                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                                    <div class="bg-[#1a1b24] border border-white/5 p-4 rounded-xl space-y-2.5">
+                                        <div class="text-xs font-bold text-zinc-400 uppercase tracking-widest">
                                             Ignored Roles (<code class="font-mono text-zinc-300">ignored_roles</code>)
                                         </div>
                                         {% if cmd.ignored_roles %}
@@ -184,7 +269,24 @@
                                             {% endfor %}
                                         </div>
                                         {% else %}
-                                        <span class="text-xs text-zinc-500 italic">No roles ignored</span>
+                                        <span class="text-xs text-zinc-500 italic block">No roles ignored</span>
+                                        {% endif %}
+                                        {% if can_edit_commands and not mod.is_protected and guild_roles %}
+                                        <div class="pt-2 border-t border-white/5 flex flex-wrap gap-2" data-cmd-list-group="ignored_roles" data-cmd="{{ cmd.name }}">
+                                            {% for gr in guild_roles %}
+                                            <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-black/40 border border-white/10 text-xs font-mono text-zinc-300 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    value="{{ gr.id }}"
+                                                    data-cmd="{{ cmd.name }}"
+                                                    data-setting-key="ignored_roles"
+                                                    class="accent-amber-500 rounded cmd-setting-checkbox"
+                                                    {% if gr.id in cmd.ignored_role_ids %}checked{% endif %}
+                                                >
+                                                <span>@{{ gr.name }}</span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -197,16 +299,16 @@
                                     </h5>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         {% for sub in cmd.subcommands %}
-                                        <label class="flex items-center justify-between p-3.5 bg-[#14151a] border border-white/5 rounded-xl cursor-not-allowed opacity-85 shadow-inner">
+                                        <label class="flex items-center justify-between p-3.5 bg-[#14151a] border border-white/5 rounded-xl {% if can_edit_commands and not mod.is_protected %}cursor-pointer{% else %}cursor-not-allowed opacity-85{% endif %} shadow-inner">
                                             <span class="text-sm font-bold text-zinc-200 drop-shadow-sm">/{{ cmd.name }} {{ sub.name }}</span>
                                             <input
                                                 type="checkbox"
                                                 value="{{ sub.name }}"
                                                 data-cmd="{{ cmd.name }}"
                                                 data-subcommand="{{ sub.name }}"
-                                                class="w-4 h-4 accent-blue-500 rounded"
+                                                class="w-4 h-4 accent-blue-500 rounded subcommand-toggle"
                                                 {% if not sub.is_disabled %}checked{% endif %}
-                                                disabled
+                                                {% if not can_edit_commands or mod.is_protected %}disabled{% endif %}
                                             >
                                         </label>
                                         {% endfor %}
@@ -276,5 +378,93 @@ document.addEventListener("click", function (event) {
         }
     }
 });
+{% if can_edit_modules or can_edit_commands %}
+(function () {
+    const rootEl = document.getElementById("modulesRoot");
+    const saveBtn = document.getElementById("saveModulesBtn");
+    const statusEl = document.getElementById("modulesSaveStatus");
+    if (!rootEl || !saveBtn) return;
+
+    function showStatus(msg, isError) {
+        if (!statusEl) return;
+        statusEl.textContent = msg;
+        statusEl.className = "mt-2 text-xs font-bold " + (isError ? "text-red-400" : "text-emerald-400");
+    }
+
+    saveBtn.addEventListener("click", async function () {
+        const rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10) || 0;
+        const canEditModules = rootEl.getAttribute("data-can-edit-modules") === "true";
+        const canEditCommands = rootEl.getAttribute("data-can-edit-commands") === "true";
+        const payload = { dashboard_rev: rev };
+
+        if (canEditModules) {
+            const disabledCogs = [];
+            rootEl.querySelectorAll("input.cog-toggle[data-cog-toggle]").forEach(function (cb) {
+                const cogName = cb.getAttribute("data-cog-toggle");
+                if (cogName && !cb.checked) {
+                    disabledCogs.push(cogName);
+                }
+            });
+            payload.disabled_cogs = disabledCogs;
+        }
+
+        if (canEditCommands) {
+            const cmdSettings = {};
+            rootEl.querySelectorAll("[data-cmd-block]").forEach(function (cmdBlock) {
+                if (cmdBlock.getAttribute("data-protected-cog") === "true") {
+                    return;
+                }
+                const cmdName = cmdBlock.getAttribute("data-cmd-block");
+                if (!cmdName) return;
+
+                const disabledSubs = [];
+                cmdBlock.querySelectorAll("input.subcommand-toggle[data-subcommand]").forEach(function (subCb) {
+                    const subName = subCb.getAttribute("data-subcommand");
+                    if (subName && !subCb.checked) {
+                        disabledSubs.push(subName);
+                    }
+                });
+
+                const listKeys = ["allowed_channels", "ignored_channels", "allowed_roles", "ignored_roles"];
+                const entry = { disabled_subcommands: disabledSubs };
+                listKeys.forEach(function (k) {
+                    const selected = [];
+                    cmdBlock.querySelectorAll("input.cmd-setting-checkbox[data-setting-key='" + k + "']").forEach(function (itemCb) {
+                        if (itemCb.checked && itemCb.value) {
+                            selected.push(String(itemCb.value));
+                        }
+                    });
+                    entry[k] = selected;
+                });
+                cmdSettings[cmdName] = entry;
+            });
+            payload.command_settings = cmdSettings;
+        }
+
+        saveBtn.disabled = true;
+        try {
+            const resp = await fetch("/api/modules/{{ guild_id }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": getCsrfToken()
+                },
+                body: JSON.stringify(payload)
+            });
+            const respData = await resp.json().catch(function () { return {}; });
+            if (resp.ok && typeof respData.dashboard_rev === "number") {
+                rootEl.setAttribute("data-dashboard-rev", String(respData.dashboard_rev));
+                showStatus("Saved module & command settings (rev " + respData.dashboard_rev + ").", false);
+            } else {
+                showStatus(respData.error || ("Save failed (HTTP " + resp.status + ")."), true);
+            }
+        } catch (_err) {
+            showStatus("Network error while saving module settings.", true);
+        } finally {
+            saveBtn.disabled = false;
+        }
+    });
+})();
+{% endif %}
 </script>
 {% endblock %}

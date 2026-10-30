@@ -14,12 +14,14 @@ webdash/router.py — Phase A1 Checkpoint 3A route handlers:
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import datetime
 import json
 import logging
 import math
 import os
+import re
 import urllib.parse
 from typing import Any, Awaitable, Callable
 
@@ -28,7 +30,7 @@ import aiohttp_jinja2
 from aiohttp import web
 
 from webdash import get_ready_db
-from webdash.audit import AuditLogger
+from webdash.audit import AuditLogger, compute_diff
 from webdash.auth import (
     DEFAULT_SESSION_TTL_SECONDS,
     OAUTH_STATE_COOKIE_NAME,
@@ -37,7 +39,7 @@ from webdash.auth import (
     generate_oauth_state,
     verify_oauth_state,
 )
-from webdash.cache import GuildConfigCache, ShortTTLCache
+from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache
 from webdash.permissions import (
     DISCORD_PERM_ADMINISTRATOR,
     DISCORD_PERM_MANAGE_GUILD,
@@ -65,6 +67,7 @@ MEMBER_CACHE_KEY = _AppKey("member_cache", ShortTTLCache)
 OWNER_ID_CACHE_KEY = _AppKey("owner_id_cache", ShortTTLCache)
 AUDIT_LOGGER_KEY = _AppKey("audit_logger", AuditLogger)
 RATE_LIMITER_KEY = _AppKey("rate_limiter", InMemoryRateLimiter)
+IP_BAN_CACHE_KEY = _AppKey("ip_ban_cache", IpBanCache)
 OAUTH_CLIENT_KEY = _AppKey("oauth_client", Any)
 
 _MISSING_MEMBER_SENTINEL = object()
@@ -73,17 +76,36 @@ DISCORD_API_BASE = "https://discord.com/api/v10"
 DEFAULT_AVATAR_URL = "https://cdn.discordapp.com/embed/avatars/0.png"
 
 MAX_BANNED_WORDS_DISPLAY = 500
+MAX_BANNED_WORDS_ENTRIES = 500
+MAX_BANNED_WORD_LENGTH = 64
+MAX_DISABLED_COGS_ENTRIES = 100
+MAX_COMMAND_SETTINGS_ENTRIES = 200
+MAX_COMMAND_LIST_ITEMS = 100
+VALID_COMMAND_SETTING_KEYS: tuple[str, ...] = (
+    "disabled_subcommands",
+    "allowed_channels",
+    "ignored_channels",
+    "allowed_roles",
+    "ignored_roles",
+)
+MAX_JSON_BODY_BYTES = 65536
 MAX_SECURITY_LOG_CONTENT_CHARS = 300
 LOGS_QUERY_LIMIT = 50
 LOGS_DB_TIMEOUT_SECONDS = 2.0
 OWNER_VISIT_LOGS_LIMIT = 30
+OWNER_RELOAD_TIMEOUT_SECONDS = 10.0
+OWNER_RELOAD_COG_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+DISALLOWED_WEB_RELOAD_COGS: frozenset[str] = frozenset({"dashboard", "database"})
 
 # Protected system cogs excluded from normal disabling in /modules/{guild_id}
 # (cogs/dashboard.py:620 excludes dashboard, jishaku, database, owner; core added per 3B spec).
-# If a guild already has one of these in disabled_cogs, it is still rendered with a
+# If a guild already has one of these in disabled_cogs (exact case), it is still rendered with a
 # "Protected (Re-enable Only)" badge so an admin can switch it back on.
 PROTECTED_COGS_LOWER: frozenset[str] = frozenset(
     {"core", "database", "dashboard", "owner", "jishaku"}
+)
+PROTECTED_COG_CANONICAL_NAMES: frozenset[str] = frozenset(
+    {"Core", "Database", "Dashboard", "Owner", "Jishaku"}
 )
 
 # Verified AI models in cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754
@@ -135,6 +157,8 @@ class GuildAccessContext:
     member_role_ids: list[int] = dataclasses.field(default_factory=list)
     granted_permissions: set[str] = dataclasses.field(default_factory=set)
     settings: dict[str, Any] = dataclasses.field(default_factory=dict)
+    settings_doc: dict[str, Any] | None = None
+    settings_read_failed: bool = False
 
 
 def get_bot_avatar_url(bot: Any) -> str:
@@ -302,15 +326,68 @@ def _extract_member_perm_bits_and_roles(member: Any) -> tuple[int, bool, bool, l
     return perm_bits, is_admin, has_manage, role_ids
 
 
+def _extract_dashboard_rev(settings: dict[str, Any] | None) -> int:
+    """Return the integer `dashboard_rev` from a guild_settings document (missing/invalid = 0)."""
+    if not isinstance(settings, dict):
+        return 0
+    raw = settings.get("dashboard_rev", 0)
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        return int(raw)
+    return 0
+
+
+async def _fetch_fresh_guild_settings_strict(
+    bot: Any, guild_id: int
+) -> tuple[bool, dict[str, Any] | None]:
+    """
+    Fetch `db.guild_settings` directly from MongoDB (bypassing GuildConfigCache) and
+    strictly distinguish:
+    - `(True, dict)` -> read succeeded and document exists
+    - `(True, None)` -> read succeeded and document is missing (safe for upsert on rev 0)
+    - `(False, None)` -> read failed or database unavailable (mutations MUST return 503)
+    """
+    db = get_ready_db(bot)
+    if db is None or getattr(db, "guild_settings", None) is None:
+        return False, None
+    try:
+        doc = await asyncio.wait_for(
+            db.guild_settings.find_one({"guild_id": int(guild_id)}),
+            timeout=LOGS_DB_TIMEOUT_SECONDS,
+        )
+        if doc is None:
+            return True, None
+        if isinstance(doc, dict):
+            return True, copy.deepcopy(doc)
+        return False, None
+    except Exception:
+        logger.exception("Failed to fetch fresh guild_settings for guild_id=%s", guild_id)
+        return False, None
+
+
+async def _fetch_fresh_guild_settings(bot: Any, guild_id: int) -> dict[str, Any]:
+    """
+    Fail-open wrapper around `_fetch_fresh_guild_settings_strict` for display GET pages.
+    """
+    read_ok, doc = await _fetch_fresh_guild_settings_strict(bot, guild_id)
+    return doc if (read_ok and isinstance(doc, dict)) else {}
+
+
 async def resolve_guild_access(
     request: web.Request,
     guild_id: int,
     user_id: int,
     required_permission: str,
+    *,
+    fresh_settings: bool = False,
+    strict_settings_read: bool | None = None,
 ) -> GuildAccessContext:
     """
     Evaluate whether `user_id` has `required_permission` in `guild_id` using
-    live guild membership, live member roles/permissions, and `GuildConfigCache`.
+    live guild membership, live member roles/permissions, and `GuildConfigCache`
+    (or a fresh MongoDB read when `fresh_settings=True`).
+    For POST/mutation endpoints (or when `strict_settings_read=True`), a failed fresh
+    MongoDB read fails closed with `status_code=503` and `settings_read_failed=True`
+    so a transient read failure is never mistaken for "no document".
     Never relies on the session's stored guild list.
     """
     bot = request.app.get(BOT_KEY)
@@ -337,10 +414,63 @@ async def resolve_guild_access(
     perm_bits, is_admin, has_manage, role_ids = _extract_member_perm_bits_and_roles(member)
     is_member = (member is not None) or is_guild_owner
 
-    cfg_cache: GuildConfigCache | None = request.app.get(GUILD_CONFIG_CACHE_KEY)
+    # Non-members who are not the Bot Owner are always denied before touching guild_settings
+    if not is_member and not is_bot_owner:
+        return GuildAccessContext(
+            guild=guild,
+            allowed=False,
+            status_code=403,
+            reason="You do not have permission to view this page.",
+            user_id=int(user_id),
+            bot_owner_id=bot_owner_id,
+            is_bot_owner=False,
+            is_guild_owner=False,
+            is_discord_admin=False,
+            has_manage_guild=False,
+            member_role_ids=[],
+            granted_permissions=set(),
+            settings={},
+            settings_doc=None,
+            settings_read_failed=False,
+        )
+
     settings: dict[str, Any] = {}
-    if cfg_cache is not None:
-        settings = await cfg_cache.get(int(guild_id))
+    settings_doc: dict[str, Any] | None = None
+    if fresh_settings:
+        is_strict = (
+            strict_settings_read
+            if strict_settings_read is not None
+            else (str(getattr(request, "method", "GET")).upper() != "GET")
+        )
+        read_ok, raw_doc = await _fetch_fresh_guild_settings_strict(bot, int(guild_id))
+        if not read_ok:
+            if is_strict:
+                return GuildAccessContext(
+                    guild=guild,
+                    allowed=False,
+                    status_code=503,
+                    reason="Database temporarily unavailable, please retry",
+                    user_id=int(user_id),
+                    bot_owner_id=bot_owner_id,
+                    is_bot_owner=is_bot_owner,
+                    is_guild_owner=is_guild_owner,
+                    is_discord_admin=is_admin,
+                    has_manage_guild=has_manage,
+                    member_role_ids=role_ids,
+                    granted_permissions=set(),
+                    settings={},
+                    settings_doc=None,
+                    settings_read_failed=True,
+                )
+            settings = {}
+            settings_doc = None
+        else:
+            settings_doc = raw_doc
+            settings = copy.deepcopy(raw_doc) if isinstance(raw_doc, dict) else {}
+    else:
+        cfg_cache: GuildConfigCache | None = request.app.get(GUILD_CONFIG_CACHE_KEY)
+        if cfg_cache is not None:
+            settings = await cfg_cache.get(int(guild_id))
 
     acl_config = settings.get("dashboard_permissions") if isinstance(settings, dict) else None
 
@@ -383,6 +513,8 @@ async def resolve_guild_access(
         member_role_ids=role_ids,
         granted_permissions=granted,
         settings=settings,
+        settings_doc=settings_doc,
+        settings_read_failed=False,
     )
 
 
@@ -939,6 +1071,7 @@ async def _prepare_guild_page(
     *,
     required_permission: str,
     active_tab: str,
+    fresh_settings: bool = False,
 ) -> tuple[web.Response | None, GuildAccessContext | None, dict[str, Any]]:
     """
     Validate session, guild_id snowflake, live guild membership, and required RBAC
@@ -969,7 +1102,13 @@ async def _prepare_guild_page(
             {},
         )
 
-    access = await resolve_guild_access(request, guild_id, user_id, required_permission)
+    access = await resolve_guild_access(
+        request,
+        guild_id,
+        user_id,
+        required_permission,
+        fresh_settings=fresh_settings,
+    )
     if access.guild is None:
         return (
             render_error_page(
@@ -1109,16 +1248,19 @@ async def handle_guild_overview(request: web.Request) -> web.Response:
 async def handle_guild_automod(request: web.Request) -> web.Response:
     """
     GET /automod/{guild_id}
-    - Requires `automod.view` (webdash/permissions.py:33).
-    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1243-1285 parity.
+    - Requires `automod.view` (webdash/permissions.py:33); editing requires `automod.edit` (webdash/permissions.py:34).
+    - Reads settings fresh from MongoDB (bypassing GuildConfigCache).
     - Reads `banned_words` (bot.py:191, cogs/ai.py:593, cogs/admin.py:907, default=[])
       and `automod_enabled` (bot.py:189, cogs/ai.py:591, cogs/admin.py:247, 843, default=False).
     - Caps displayed `banned_words` at MAX_BANNED_WORDS_DISPLAY (500) with a "+N more" note.
+      If the stored list has > 500 entries, the editor is locked read-only with a notice so saving
+      cannot truncate unseen entries.
     """
     err_resp, access, context = await _prepare_guild_page(
         request,
         required_permission="automod.view",
         active_tab="automod",
+        fresh_settings=True,
     )
     if err_resp is not None or access is None:
         return err_resp  # type: ignore[return-value]
@@ -1136,6 +1278,8 @@ async def handle_guild_automod(request: web.Request) -> web.Response:
     total_banned_words = len(all_banned_words)
     displayed_words = all_banned_words[:MAX_BANNED_WORDS_DISPLAY]
     extra_count = max(0, total_banned_words - MAX_BANNED_WORDS_DISPLAY)
+    over_display_cap = extra_count > 0
+    can_edit_automod = ("automod.edit" in access.granted_permissions) and not over_display_cap
 
     context.update(
         {
@@ -1143,6 +1287,9 @@ async def handle_guild_automod(request: web.Request) -> web.Response:
             "banned_words": displayed_words,
             "total_banned_words": total_banned_words,
             "extra_banned_words_count": extra_count,
+            "over_display_cap": over_display_cap,
+            "can_edit_automod": can_edit_automod,
+            "dashboard_rev": _extract_dashboard_rev(settings),
             "words_string": ", ".join(displayed_words),
         }
     )
@@ -1170,14 +1317,15 @@ async def handle_guild_lockdown(request: web.Request) -> web.Response:
 async def handle_guild_misc(request: web.Request) -> web.Response:
     """
     GET /misc/{guild_id}
-    - Requires `settings.view` (webdash/permissions.py:16).
-    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1663-1708 parity
-      (exposes `misc_enabled` read at cogs/misc.py:174, 538, cogs/admin.py:246, default=True).
+    - Requires `settings.view` (webdash/permissions.py:16); toggling requires `settings.edit` (webdash/permissions.py:17).
+    - Reads settings fresh from MongoDB (bypassing GuildConfigCache).
+    - Exposes `misc_enabled` read at cogs/misc.py:174, 538, cogs/admin.py:246, default=True.
     """
     err_resp, access, context = await _prepare_guild_page(
         request,
         required_permission="settings.view",
         active_tab="misc",
+        fresh_settings=True,
     )
     if err_resp is not None or access is None:
         return err_resp  # type: ignore[return-value]
@@ -1186,6 +1334,8 @@ async def handle_guild_misc(request: web.Request) -> web.Response:
     context.update(
         {
             "misc_enabled": bool(settings.get("misc_enabled", True)),
+            "can_edit_misc": "settings.edit" in access.granted_permissions,
+            "dashboard_rev": _extract_dashboard_rev(settings),
         }
     )
     return aiohttp_jinja2.render_template("misc.html", request, context)
@@ -1194,15 +1344,17 @@ async def handle_guild_misc(request: web.Request) -> web.Response:
 async def handle_guild_wizard(request: web.Request) -> web.Response:
     """
     GET /wizard/{guild_id}
-    - Requires `settings.view` (webdash/permissions.py:16).
-    - Read-only Jinja2 port matching legacy cogs/dashboard.py:1535-1606 parity (AI-only),
-      updated to the 4 real AI models wired in cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754
+    - Requires `settings.view` (webdash/permissions.py:16); saving `default_ai_model`
+      requires `ai.edit` (webdash/permissions.py:47).
+    - Reads settings fresh from MongoDB (bypassing GuildConfigCache).
+    - Exposes the 4 real AI models wired in cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754
       (`auto`, `deepseek`, `groq`, `gemini`).
     """
     err_resp, access, context = await _prepare_guild_page(
         request,
         required_permission="settings.view",
         active_tab="wizard",
+        fresh_settings=True,
     )
     if err_resp is not None or access is None:
         return err_resp  # type: ignore[return-value]
@@ -1216,6 +1368,8 @@ async def handle_guild_wizard(request: web.Request) -> web.Response:
             "default_ai_model": default_ai_model,
             "ai_enabled": bool(settings.get("ai_enabled", True)),
             "ai_models": AI_MODEL_OPTIONS,
+            "can_edit_ai": "ai.edit" in access.granted_permissions,
+            "dashboard_rev": _extract_dashboard_rev(settings),
         }
     )
     return aiohttp_jinja2.render_template("wizard.html", request, context)
@@ -1487,12 +1641,17 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
     """
     GET /modules/{guild_id}
     - Requires `modules.view` (webdash/permissions.py:21).
-    - Reads `disabled_cogs` (bot.py:107, cogs/core.py:745, 803, cogs/dashboard.py:606),
+    - Reads settings fresh from MongoDB (bypassing GuildConfigCache).
+    - Reads `disabled_cogs` (bot.py:107, 110, cogs/core.py:745, 803, cogs/dashboard.py:606),
       `command_settings` (cogs/core.py:749-777, 806-829, cogs/dashboard.py:607), and
       read-only `disabled_cmds` (bot.py:108, 113).
+    - Exact-case `is_disabled` rule: `bot.py:110` and `cogs/core.py:745, 803` compare
+      `cog_name in disabled_cogs` with exact case sensitivity. `is_disabled` is decided
+      strictly by `cog_name_str in disabled_cogs`. Case-insensitive matching
+      (`PROTECTED_COGS_LOWER`) is used ONLY for hiding enabled protected cogs.
     - Protected-cog recovery rule: excludes `core`, `database`, `dashboard`, `owner`, `jishaku`
-      when enabled; if a server already has one of them in `disabled_cogs` (legacy UI allowed
-      disabling `Core`), still shows that cog with a clear "Protected (Re-enable Only)" badge.
+      when enabled; if a server already has one of them disabled (exact case, e.g. `"Core"`),
+      still shows that cog with a clear "Protected (Re-enable Only)" badge.
     - Exposes ONLY the 5 `command_settings` keys that `cogs/core.py:753-764, 808-818` reads:
       `disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`.
     """
@@ -1500,6 +1659,7 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
         request,
         required_permission="modules.view",
         active_tab="modules",
+        fresh_settings=True,
     )
     if err_resp is not None or access is None:
         return err_resp  # type: ignore[return-value]
@@ -1514,7 +1674,6 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
         for entry in raw_disabled_cogs:
             if isinstance(entry, str) and entry.strip():
                 disabled_cogs.append(entry.strip())
-    disabled_cogs_lower = {c.lower() for c in disabled_cogs}
 
     raw_disabled_cmds = settings.get("disabled_cmds", [])
     disabled_cmds: list[str] = []
@@ -1551,14 +1710,19 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
     if bot is not None and isinstance(getattr(bot, "cogs", None), dict):
         bot_cogs_dict = dict(bot.cogs)
 
-    # Build ordered list of (cog_name, cog_obj), ensuring any disabled cog in disabled_cogs
-    # (including protected ones like Core) is included even if not in bot.cogs.
+    # Build ordered list of (cog_name, cog_obj). Include unloaded disabled_cogs entries
+    # only if they are not wrong-case aliases of loaded or protected cogs.
     cog_entries: list[tuple[str, Any]] = list(bot_cogs_dict.items())
+    seen_cog_names = {name for name, _ in cog_entries}
     seen_cog_names_lower = {name.lower() for name, _ in cog_entries}
     for dcog in disabled_cogs:
-        if dcog.lower() not in seen_cog_names_lower:
-            cog_entries.append((dcog, None))
-            seen_cog_names_lower.add(dcog.lower())
+        if dcog in seen_cog_names or dcog.lower() in seen_cog_names_lower:
+            continue
+        if dcog.lower() in PROTECTED_COGS_LOWER and dcog not in PROTECTED_COG_CANONICAL_NAMES:
+            continue
+        cog_entries.append((dcog, None))
+        seen_cog_names.add(dcog)
+        seen_cog_names_lower.add(dcog.lower())
 
     modules_view: list[dict[str, Any]] = []
     for cog_name, cog_obj in cog_entries:
@@ -1566,7 +1730,9 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
         if not cog_name_str:
             continue
         cog_lower = cog_name_str.lower()
-        is_disabled = (cog_name_str in disabled_cogs) or (cog_lower in disabled_cogs_lower)
+        # Exact, case-sensitive match against disabled_cogs (bot.py:110, cogs/core.py:745, 803)
+        is_disabled = cog_name_str in disabled_cogs
+        # Case-insensitive match ONLY for identifying protected cogs to hide when enabled
         is_protected = cog_lower in PROTECTED_COGS_LOWER
 
         # Protected-cog recovery rule:
@@ -1598,23 +1764,32 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
                 for sub_name in all_subs
             ]
 
+            allowed_ch_badges = _resolve_id_badges(
+                override.get("allowed_channels", []), channel_map, "channel"
+            )
+            ignored_ch_badges = _resolve_id_badges(
+                override.get("ignored_channels", []), channel_map, "channel"
+            )
+            allowed_role_badges = _resolve_id_badges(
+                override.get("allowed_roles", []), role_map, "role"
+            )
+            ignored_role_badges = _resolve_id_badges(
+                override.get("ignored_roles", []), role_map, "role"
+            )
+
             commands_view.append(
                 {
                     "name": cmd_name,
                     "description": str(cmd_meta.get("desc") or "No description"),
                     "subcommands": subcommands_view,
-                    "allowed_channels": _resolve_id_badges(
-                        override.get("allowed_channels", []), channel_map, "channel"
-                    ),
-                    "ignored_channels": _resolve_id_badges(
-                        override.get("ignored_channels", []), channel_map, "channel"
-                    ),
-                    "allowed_roles": _resolve_id_badges(
-                        override.get("allowed_roles", []), role_map, "role"
-                    ),
-                    "ignored_roles": _resolve_id_badges(
-                        override.get("ignored_roles", []), role_map, "role"
-                    ),
+                    "allowed_channels": allowed_ch_badges,
+                    "ignored_channels": ignored_ch_badges,
+                    "allowed_roles": allowed_role_badges,
+                    "ignored_roles": ignored_role_badges,
+                    "allowed_channel_ids": [b["id"] for b in allowed_ch_badges],
+                    "ignored_channel_ids": [b["id"] for b in ignored_ch_badges],
+                    "allowed_role_ids": [b["id"] for b in allowed_role_badges],
+                    "ignored_role_ids": [b["id"] for b in ignored_role_badges],
                 }
             )
 
@@ -1627,11 +1802,19 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
             }
         )
 
+    guild_channels = [{"id": cid, "name": cname} for cid, cname in channel_map.items()]
+    guild_roles = [{"id": rid, "name": rname} for rid, rname in role_map.items()]
+
     context.update(
         {
             "modules": modules_view,
             "disabled_cogs": disabled_cogs,
             "disabled_cmds": disabled_cmds,
+            "dashboard_rev": _extract_dashboard_rev(settings),
+            "can_edit_modules": "modules.edit" in access.granted_permissions,
+            "can_edit_commands": "commands.edit" in access.granted_permissions,
+            "guild_channels": guild_channels,
+            "guild_roles": guild_roles,
         }
     )
     return aiohttp_jinja2.render_template("modules.html", request, context)
@@ -1737,6 +1920,7 @@ async def handle_owner_panel(request: web.Request) -> web.Response:
     context = {
         "bot_avatar": get_bot_avatar_url(bot),
         "csrf_token": str(session_doc.get("csrf_token") or ""),
+        "current_ip": normalize_ip(request.get(CLIENT_IP_KEY, "invalid")),
         "guild_count": guild_count,
         "cog_count": cog_count,
         "global_lockdown": global_lockdown,
@@ -1748,12 +1932,1234 @@ async def handle_owner_panel(request: web.Request) -> web.Response:
     return aiohttp_jinja2.render_template("owner_panel.html", request, context)
 
 
+async def handle_owner_action(request: web.Request) -> web.Response:
+    """
+    POST /api/owner/action
+    Checkpoint 3C Batch 3 Bot Owner endpoint (`reload_cog` only):
+    - Requires active session (401) and Bot Owner identity via `resolve_bot_owner_id` (403).
+    - Restricts `cog` to `^[a-z0-9_]{1,32}$` (after stripping optional `"cogs."` prefix).
+    - Rejects `"dashboard"` and `"database"` (instructs the operator to use the Discord owner command).
+    - Verifies `"cogs.<name>" in bot.extensions` before calling `await bot.reload_extension(ext_name)`.
+    - Records an `AuditLogger` entry with `guild_id=0`, `module="owner"`, `action="reload_cog"`,
+      and non-empty `changes={"cog": {"old": ext_name, "new": ext_name}}`.
+    """
+    session_doc = request.get(SESSION_DATA_KEY)
+    if not session_doc:
+        return web.json_response({"error": "Authentication required."}, status=401)
+
+    try:
+        user_id = int(session_doc.get("discord_id"))
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Invalid session."}, status=401)
+
+    bot_owner_id = await resolve_bot_owner_id(request)
+    if bot_owner_id is None or user_id != int(bot_owner_id):
+        return web.json_response(
+            {"error": "Forbidden: Bot Owner access required."},
+            status=403,
+        )
+
+    try:
+        raw_bytes = await request.read()
+    except Exception:
+        return web.json_response({"error": "Failed to read request body."}, status=400)
+
+    if not raw_bytes or len(raw_bytes) > MAX_JSON_BODY_BYTES:
+        return web.json_response(
+            {"error": "Request body must be a non-empty JSON object within 64 KiB."},
+            status=400,
+        )
+
+    try:
+        body = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body."}, status=400)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Request body must be a JSON object."},
+            status=400,
+        )
+
+    allowed_keys = {"action", "cog", "csrf_token"}
+    if any(k not in allowed_keys for k in body):
+        return web.json_response(
+            {"error": "Unexpected keys in owner action payload."},
+            status=400,
+        )
+
+    action = body.get("action")
+    if not isinstance(action, str) or action != "reload_cog":
+        return web.json_response(
+            {"error": "Unsupported owner action. Only 'reload_cog' is permitted."},
+            status=400,
+        )
+
+    raw_cog = body.get("cog")
+    if not isinstance(raw_cog, str):
+        return web.json_response(
+            {"error": "Field 'cog' must be a string."},
+            status=400,
+        )
+
+    short_cog = raw_cog[5:] if raw_cog.startswith("cogs.") else raw_cog
+    if short_cog in DISALLOWED_WEB_RELOAD_COGS:
+        return web.json_response(
+            {
+                "error": (
+                    f"Extension 'cogs.{short_cog}' cannot be reloaded from the web dashboard. "
+                    "Please use the Discord owner command instead."
+                )
+            },
+            status=400,
+        )
+
+    if not OWNER_RELOAD_COG_RE.fullmatch(short_cog):
+        return web.json_response(
+            {"error": "Invalid cog name format (must match ^[a-z0-9_]{1,32}$)."},
+            status=400,
+        )
+
+    ext_name = f"cogs.{short_cog}"
+    bot = request.app.get(BOT_KEY)
+    raw_extensions = getattr(bot, "extensions", None) if bot is not None else None
+    if not isinstance(raw_extensions, dict) or ext_name not in raw_extensions:
+        return web.json_response(
+            {"error": f"Extension '{ext_name}' is not currently loaded."},
+            status=400,
+        )
+
+    reload_fn = getattr(bot, "reload_extension", None)
+    if not callable(reload_fn):
+        return web.json_response(
+            {"error": "Bot does not support extension reloading."},
+            status=500,
+        )
+
+    reload_task: asyncio.Task[Any] = asyncio.create_task(reload_fn(ext_name))
+
+    def _log_late_reload_error(done_task: asyncio.Task[Any]) -> None:
+        if done_task.cancelled():
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            logger.error(
+                "Background reload of %s failed after HTTP timeout",
+                ext_name,
+                exc_info=exc,
+            )
+
+    timed_out = False
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(reload_task),
+            timeout=OWNER_RELOAD_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        timed_out = True
+        reload_task.add_done_callback(_log_late_reload_error)
+    except Exception:
+        logger.exception("Failed to reload extension %s via handle_owner_action", ext_name)
+        return web.json_response(
+            {"error": f"Failed to reload extension '{ext_name}'."},
+            status=500,
+        )
+
+    audit_logger: AuditLogger | None = request.app.get(AUDIT_LOGGER_KEY)
+    if audit_logger is not None:
+        actor_name = str(session_doc.get("username") or user_id)
+        await audit_logger.record(
+            guild_id=0,
+            actor_id=user_id,
+            actor_name=actor_name,
+            module="owner",
+            action="reload_cog",
+            changes={"cog": {"old": ext_name, "new": ext_name}},
+            before_snapshot={"cog": ext_name},
+            client_ip=request.get(CLIENT_IP_KEY, "invalid"),
+        )
+
+    if timed_out:
+        return web.json_response(
+            {"status": "still running", "reloaded": ext_name},
+            status=202,
+        )
+
+    return web.json_response(
+        {"status": "ok", "reloaded": ext_name},
+        status=200,
+    )
+
+
+async def handle_owner_ip_action(request: web.Request) -> web.Response:
+    """
+    POST /api/owner/ip_action
+    Checkpoint 3C Batch 3 Bot Owner endpoint (`ban` / `unban` on `db.ip_bans`):
+    - Requires active session (401) and Bot Owner identity via `resolve_bot_owner_id` (403).
+    - Validates IP via `normalize_ip(raw_ip)` and rejects `'invalid'` with 400.
+    - Self-ban protection: `ban` refuses when `target_ip == normalize_ip(request[CLIENT_IP_KEY])`.
+    - Performs a STRICT read on `db.ip_bans` before any write; returns 503 if DB is unavailable
+      or the read/write fails.
+    - Skips the audit row and returns a clear message (`status="noop"`) when nothing changes
+      (banning an already-banned IP, or unbanning an IP that is not banned).
+    - Immediately updates and refreshes `IpBanCache` on both `ban` and `unban`.
+    - Records an `AuditLogger` entry with `guild_id=0`, `module="owner"`, `action="ban_ip"` /
+      `"unban_ip"`, and non-empty `changes` when the ban state changes.
+    """
+    session_doc = request.get(SESSION_DATA_KEY)
+    if not session_doc:
+        return web.json_response({"error": "Authentication required."}, status=401)
+
+    try:
+        user_id = int(session_doc.get("discord_id"))
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Invalid session."}, status=401)
+
+    bot_owner_id = await resolve_bot_owner_id(request)
+    if bot_owner_id is None or user_id != int(bot_owner_id):
+        return web.json_response(
+            {"error": "Forbidden: Bot Owner access required."},
+            status=403,
+        )
+
+    try:
+        raw_bytes = await request.read()
+    except Exception:
+        return web.json_response({"error": "Failed to read request body."}, status=400)
+
+    if not raw_bytes or len(raw_bytes) > MAX_JSON_BODY_BYTES:
+        return web.json_response(
+            {"error": "Request body must be a non-empty JSON object within 64 KiB."},
+            status=400,
+        )
+
+    try:
+        body = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body."}, status=400)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Request body must be a JSON object."},
+            status=400,
+        )
+
+    allowed_keys = {"action", "ip", "csrf_token"}
+    if any(k not in allowed_keys for k in body):
+        return web.json_response(
+            {"error": "Unexpected keys in IP action payload."},
+            status=400,
+        )
+
+    action = body.get("action")
+    if not isinstance(action, str) or action not in ("ban", "unban"):
+        return web.json_response(
+            {"error": "Field 'action' must be 'ban' or 'unban'."},
+            status=400,
+        )
+
+    raw_ip = body.get("ip")
+    if not isinstance(raw_ip, str):
+        return web.json_response(
+            {"error": "Field 'ip' must be a string."},
+            status=400,
+        )
+
+    target_ip = normalize_ip(raw_ip)
+    if target_ip == "invalid":
+        return web.json_response(
+            {"error": "Invalid IPv4 or IPv6 address."},
+            status=400,
+        )
+
+    requester_ip = normalize_ip(request.get(CLIENT_IP_KEY, "invalid"))
+    if action == "ban" and requester_ip != "invalid" and target_ip == requester_ip:
+        return web.json_response(
+            {"error": "Cannot ban your own current IP address."},
+            status=400,
+        )
+
+    bot = request.app.get(BOT_KEY)
+    db = get_ready_db(bot)
+    if db is None or getattr(db, "ip_bans", None) is None:
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+
+    # Strict pre-write read on db.ip_bans: distinguish missing document (None) from read failure (503)
+    find_one_fn = getattr(db.ip_bans, "find_one", None)
+    if not callable(find_one_fn):
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+    try:
+        existing_ban = await asyncio.wait_for(
+            find_one_fn({"ip": target_ip}),
+            timeout=LOGS_DB_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.exception("Strict read on db.ip_bans failed for ip=%s", target_ip)
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+
+    ip_ban_cache: IpBanCache | None = request.app.get(IP_BAN_CACHE_KEY)
+
+    if action == "ban":
+        if existing_ban is not None:
+            if ip_ban_cache is not None:
+                ip_ban_cache.add_local(target_ip)
+            return web.json_response(
+                {
+                    "status": "noop",
+                    "action": "ban",
+                    "ip": target_ip,
+                    "message": f"IP {target_ip} is already banned.",
+                },
+                status=200,
+            )
+
+        now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        try:
+            await asyncio.wait_for(
+                db.ip_bans.update_one(
+                    {"ip": target_ip},
+                    {"$set": {"ip": target_ip, "banned_at": now_ts}},
+                    upsert=True,
+                ),
+                timeout=LOGS_DB_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("Failed to write IP ban for ip=%s", target_ip)
+            return web.json_response(
+                {"error": "Database temporarily unavailable, please retry"},
+                status=503,
+            )
+
+        if ip_ban_cache is not None:
+            ip_ban_cache.add_local(target_ip)
+            await ip_ban_cache.refresh(force=True)
+
+        audit_action = "ban_ip"
+        audit_changes: dict[str, dict[str, Any]] = {
+            "ip": {"old": None, "new": target_ip},
+        }
+        before_snap: dict[str, Any] = {}
+    else:
+        if existing_ban is None:
+            if ip_ban_cache is not None:
+                ip_ban_cache.remove_local(target_ip)
+            return web.json_response(
+                {
+                    "status": "noop",
+                    "action": "unban",
+                    "ip": target_ip,
+                    "message": f"IP {target_ip} is not currently banned.",
+                },
+                status=200,
+            )
+
+        try:
+            del_res = await asyncio.wait_for(
+                db.ip_bans.delete_one({"ip": target_ip}),
+                timeout=LOGS_DB_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("Failed to delete IP ban for ip=%s", target_ip)
+            return web.json_response(
+                {"error": "Database temporarily unavailable, please retry"},
+                status=503,
+            )
+
+        if ip_ban_cache is not None:
+            ip_ban_cache.remove_local(target_ip)
+            await ip_ban_cache.refresh(force=True)
+
+        deleted_count = getattr(del_res, "deleted_count", 1)
+        if isinstance(deleted_count, int) and deleted_count == 0:
+            return web.json_response(
+                {
+                    "status": "noop",
+                    "action": "unban",
+                    "ip": target_ip,
+                    "message": f"IP {target_ip} is not currently banned.",
+                },
+                status=200,
+            )
+
+        audit_action = "unban_ip"
+        audit_changes = {
+            "ip": {"old": target_ip, "new": None},
+        }
+        before_snap = {"ip": target_ip}
+
+    audit_logger: AuditLogger | None = request.app.get(AUDIT_LOGGER_KEY)
+    if audit_logger is not None:
+        actor_name = str(session_doc.get("username") or user_id)
+        await audit_logger.record(
+            guild_id=0,
+            actor_id=user_id,
+            actor_name=actor_name,
+            module="owner",
+            action=audit_action,
+            changes=audit_changes,
+            before_snapshot=before_snap,
+            client_ip=request.get(CLIENT_IP_KEY, "invalid"),
+        )
+
+    return web.json_response(
+        {"status": "ok", "action": action, "ip": target_ip},
+        status=200,
+    )
+
+
+def _invalidate_guild_caches(request: web.Request, guild_id: int) -> None:
+    """
+    Invalidate both `GuildConfigCache` (webdash/cache.py:153-163, which also invokes
+    `ai_cog._invalidate_guild_cfg(guild_id)`) and fallback directly to the AI cog's
+    `_invalidate_guild_cfg(guild_id)` (cogs/ai.py:589-590) if `cfg_cache` is absent.
+    """
+    cfg_cache: GuildConfigCache | None = request.app.get(GUILD_CONFIG_CACHE_KEY)
+    if cfg_cache is not None:
+        cfg_cache.invalidate(int(guild_id))
+        return
+
+    bot = request.app.get(BOT_KEY)
+    get_cog_fn = getattr(bot, "get_cog", None) if bot is not None else None
+    if callable(get_cog_fn):
+        try:
+            ai_cog = get_cog_fn("AI")
+            inv_fn = getattr(ai_cog, "_invalidate_guild_cfg", None) if ai_cog is not None else None
+            if callable(inv_fn):
+                inv_fn(int(guild_id))
+        except Exception:
+            logger.warning("Failed to call ai_cog._invalidate_guild_cfg(%s)", guild_id, exc_info=True)
+
+
+async def _apply_guild_settings_mutation(
+    request: web.Request,
+    *,
+    guild_id: int,
+    user_id: int,
+    actor_name: str,
+    expected_rev: int,
+    before_doc: dict[str, Any] | None,
+    updates: dict[str, Any],
+    audit_module: str,
+    audit_action: str,
+) -> web.Response:
+    """
+    Execute a conditional optimistic-concurrency write on `db.guild_settings` using
+    `dashboard_rev` (missing = 0), `$set` only whitelisted keys, `$inc` `dashboard_rev` by 1,
+    invalidate `GuildConfigCache` + `ai_cog._invalidate_guild_cfg`, and record an
+    `AuditLogger` entry with a non-empty `changes` map.
+    """
+    bot = request.app.get(BOT_KEY)
+    db = get_ready_db(bot)
+    if db is None or getattr(db, "guild_settings", None) is None:
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+
+    current_rev = _extract_dashboard_rev(before_doc)
+    if current_rev != expected_rev:
+        return web.json_response(
+            {"error": "Someone else changed these settings, please reload the page."},
+            status=409,
+        )
+
+    if expected_rev == 0:
+        filter_query: dict[str, Any] = {
+            "guild_id": int(guild_id),
+            "$or": [
+                {"dashboard_rev": 0},
+                {"dashboard_rev": {"$exists": False}},
+            ],
+        }
+    else:
+        filter_query = {
+            "guild_id": int(guild_id),
+            "dashboard_rev": int(expected_rev),
+        }
+
+    set_payload = dict(updates)
+    upsert_flag = False
+    if before_doc is None and expected_rev == 0:
+        set_payload["guild_id"] = int(guild_id)
+        upsert_flag = True
+
+    update_doc: dict[str, Any] = {
+        "$set": set_payload,
+        "$inc": {"dashboard_rev": 1},
+    }
+
+    try:
+        res = await asyncio.wait_for(
+            db.guild_settings.update_one(filter_query, update_doc, upsert=upsert_flag),
+            timeout=LOGS_DB_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
+            return web.json_response(
+                {"error": "Someone else changed these settings, please reload the page."},
+                status=409,
+            )
+        logger.exception("Failed to update guild_settings for guild_id=%s", guild_id)
+        return web.json_response(
+            {"error": "Database write failed."},
+            status=503,
+        )
+
+    matched = int(getattr(res, "matched_count", 0) or 0)
+    upserted = getattr(res, "upserted_id", None) is not None
+    if matched == 0 and not upserted:
+        return web.json_response(
+            {"error": "Someone else changed these settings, please reload the page."},
+            status=409,
+        )
+
+    new_rev = expected_rev + 1
+    _invalidate_guild_caches(request, int(guild_id))
+
+    audit_logger: AuditLogger | None = request.app.get(AUDIT_LOGGER_KEY)
+    if audit_logger is not None:
+        before_map = copy.deepcopy(before_doc) if isinstance(before_doc, dict) else {}
+        after_map = copy.deepcopy(before_map)
+        after_map.update(copy.deepcopy(updates))
+        changes = compute_diff(before_map, after_map, keys=list(updates.keys()))
+        if not changes:
+            changes = {
+                k: {
+                    "old": copy.deepcopy(before_map.get(k)),
+                    "new": copy.deepcopy(v),
+                }
+                for k, v in updates.items()
+            }
+        await audit_logger.record(
+            guild_id=int(guild_id),
+            actor_id=int(user_id),
+            actor_name=actor_name,
+            module=audit_module,
+            action=audit_action,
+            changes=changes,
+            before_snapshot=before_map,
+            client_ip=request.get(CLIENT_IP_KEY, "invalid"),
+        )
+
+    return web.json_response(
+        {
+            "status": "ok",
+            "dashboard_rev": new_rev,
+        },
+        status=200,
+    )
+
+
+async def handle_api_settings(request: web.Request) -> web.Response:
+    """
+    POST /api/settings/{guild_id}
+    Checkpoint 3C Batch 1 mutation endpoint supporting:
+    1. `type == "update_automod"` (requires `automod.edit`, webdash/permissions.py:34):
+       writes `banned_words` (`list[str]` of lowercased strings, max 500 entries of <=64 chars,
+       read at bot.py:191-193, cogs/ai.py:593-595, cogs/admin.py:907; refuses save if stored
+       list has >500 entries so display cap cannot cause truncation).
+    2. `type == "update_ai_model"` (requires `ai.edit`, webdash/permissions.py:47):
+       writes `default_ai_model` (`str` in {"auto", "deepseek", "groq", "gemini"},
+       read at cogs/ai.py:77-91, 291-299, 401-411, 657, cogs/admin.py:256, 842).
+    3. `type == "toggle"` with `module == "toggleMisc"` (requires `settings.edit`, webdash/permissions.py:17):
+       writes `misc_enabled` (`bool`, read at cogs/misc.py:174, 538, cogs/admin.py:246).
+    4. `type == "toggle_lockdown"` (requires `lockdown.execute`, webdash/permissions.py:38):
+       returns HTTP 501 Not Implemented with zero DB writes.
+    """
+    session_doc = request.get(SESSION_DATA_KEY)
+    if not session_doc:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    try:
+        user_id = int(session_doc["discord_id"])
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    actor_name = str(session_doc.get("username") or "User")
+
+    raw_guild_id = request.match_info.get("guild_id", "")
+    try:
+        guild_id = int(raw_guild_id)
+        if guild_id <= 0:
+            raise ValueError("non-positive guild_id")
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Invalid server ID."}, status=400)
+
+    content_len = request.content_length
+    if content_len is not None and content_len > MAX_JSON_BODY_BYTES:
+        return web.json_response({"error": "Payload too large."}, status=400)
+
+    try:
+        raw_bytes = await request.read()
+    except Exception:
+        return web.json_response({"error": "Failed to read request body."}, status=400)
+
+    if len(raw_bytes) > MAX_JSON_BODY_BYTES:
+        return web.json_response({"error": "Payload too large."}, status=400)
+
+    try:
+        body = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return web.json_response({"error": "Invalid JSON payload."}, status=400)
+
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON payload must be an object."}, status=400)
+
+    action_type = body.get("type")
+    if not isinstance(action_type, str) or action_type not in (
+        "update_automod",
+        "update_ai_model",
+        "toggle",
+        "toggle_lockdown",
+    ):
+        return web.json_response({"error": "Unsupported or missing settings action type."}, status=400)
+
+    # 1. Lockdown -> 501 Not Implemented
+    if action_type == "toggle_lockdown":
+        access = await resolve_guild_access(request, guild_id, user_id, "lockdown.execute")
+        if access.guild is None:
+            return web.json_response({"error": "Bot is not in this server."}, status=404)
+        if not access.allowed:
+            return web.json_response(
+                {"error": "Forbidden: Missing lockdown.execute permission."},
+                status=403,
+            )
+        return web.json_response(
+            {
+                "error": "Lockdown execution is disabled in Checkpoint 3C pending safe permission backup/restore parity."
+            },
+            status=501,
+        )
+
+    # Validate dashboard_rev for all write actions
+    raw_rev = body.get("dashboard_rev")
+    if not isinstance(raw_rev, int) or isinstance(raw_rev, bool) or raw_rev < 0:
+        return web.json_response(
+            {"error": "Invalid or missing dashboard_rev (must be a non-negative integer)."},
+            status=400,
+        )
+    expected_rev = int(raw_rev)
+
+    # 2. AutoMod banned_words
+    if action_type == "update_automod":
+        allowed_keys = {"type", "banned_words", "dashboard_rev", "csrf_token"}
+        if any(k not in allowed_keys for k in body):
+            return web.json_response({"error": "Unexpected fields in update_automod payload."}, status=400)
+
+        access = await resolve_guild_access(
+            request,
+            guild_id,
+            user_id,
+            "automod.edit",
+            fresh_settings=True,
+            strict_settings_read=True,
+        )
+        if access.guild is None:
+            return web.json_response({"error": "Bot is not in this server."}, status=404)
+        if access.settings_read_failed or access.status_code == 503:
+            return web.json_response(
+                {"error": "Database temporarily unavailable, please retry"},
+                status=503,
+            )
+        if not access.allowed:
+            return web.json_response(
+                {"error": "Forbidden: Missing automod.edit permission."},
+                status=403,
+            )
+
+        raw_words = body.get("banned_words")
+        if not isinstance(raw_words, list):
+            return web.json_response({"error": "banned_words must be a list of strings."}, status=400)
+        if len(raw_words) > MAX_BANNED_WORDS_ENTRIES:
+            return web.json_response(
+                {"error": f"banned_words cannot exceed {MAX_BANNED_WORDS_ENTRIES} entries."},
+                status=400,
+            )
+
+        cleaned_words: list[str] = []
+        seen_words: set[str] = set()
+        for item in raw_words:
+            if not isinstance(item, str):
+                return web.json_response(
+                    {"error": "Every banned_words entry must be a string."},
+                    status=400,
+                )
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in item):
+                return web.json_response(
+                    {"error": "Banned words cannot contain control characters."},
+                    status=400,
+                )
+            cleaned = item.strip().lower()
+            if not cleaned:
+                return web.json_response(
+                    {"error": "Banned words cannot contain empty entries."},
+                    status=400,
+                )
+            if len(cleaned) > MAX_BANNED_WORD_LENGTH:
+                return web.json_response(
+                    {"error": f"Each banned word must be at most {MAX_BANNED_WORD_LENGTH} characters."},
+                    status=400,
+                )
+            if cleaned not in seen_words:
+                seen_words.add(cleaned)
+                cleaned_words.append(cleaned)
+
+        before_doc = access.settings_doc
+        if isinstance(before_doc, dict):
+            stored_raw = before_doc.get("banned_words", [])
+            if isinstance(stored_raw, list):
+                stored_non_empty = [
+                    str(x).strip()
+                    for x in stored_raw
+                    if isinstance(x, (str, int, float)) and str(x).strip()
+                ]
+                if len(stored_non_empty) > MAX_BANNED_WORDS_DISPLAY:
+                    return web.json_response(
+                        {
+                            "error": "Stored banned_words exceeds 500 entries; web editing is disabled so saving cannot truncate unseen entries."
+                        },
+                        status=400,
+                    )
+
+        return await _apply_guild_settings_mutation(
+            request,
+            guild_id=guild_id,
+            user_id=user_id,
+            actor_name=actor_name,
+            expected_rev=expected_rev,
+            before_doc=before_doc,
+            updates={"banned_words": cleaned_words},
+            audit_module="automod",
+            audit_action="update_banned_words",
+        )
+
+    # 3. Default AI Model
+    if action_type == "update_ai_model":
+        allowed_keys = {"type", "model", "dashboard_rev", "csrf_token"}
+        if any(k not in allowed_keys for k in body):
+            return web.json_response(
+                {"error": "Unexpected fields in update_ai_model payload."},
+                status=400,
+            )
+
+        access = await resolve_guild_access(
+            request,
+            guild_id,
+            user_id,
+            "ai.edit",
+            fresh_settings=True,
+            strict_settings_read=True,
+        )
+        if access.guild is None:
+            return web.json_response({"error": "Bot is not in this server."}, status=404)
+        if access.settings_read_failed or access.status_code == 503:
+            return web.json_response(
+                {"error": "Database temporarily unavailable, please retry"},
+                status=503,
+            )
+        if not access.allowed:
+            return web.json_response(
+                {"error": "Forbidden: Missing ai.edit permission."},
+                status=403,
+            )
+
+        model_val = body.get("model")
+        if not isinstance(model_val, str) or model_val not in VALID_AI_MODELS:
+            return web.json_response(
+                {"error": "Invalid AI model. Allowed values: auto, deepseek, groq, gemini."},
+                status=400,
+            )
+
+        before_doc = access.settings_doc
+        return await _apply_guild_settings_mutation(
+            request,
+            guild_id=guild_id,
+            user_id=user_id,
+            actor_name=actor_name,
+            expected_rev=expected_rev,
+            before_doc=before_doc,
+            updates={"default_ai_model": model_val},
+            audit_module="ai",
+            audit_action="update_ai_model",
+        )
+
+    # 4. Toggle Misc (`module == "toggleMisc"`)
+    allowed_keys = {"type", "module", "enabled", "dashboard_rev", "csrf_token"}
+    if any(k not in allowed_keys for k in body):
+        return web.json_response({"error": "Unexpected fields in toggle payload."}, status=400)
+
+    module_name = body.get("module")
+    if not isinstance(module_name, str) or module_name != "toggleMisc":
+        return web.json_response({"error": "Unsupported toggle module."}, status=400)
+
+    access = await resolve_guild_access(
+        request,
+        guild_id,
+        user_id,
+        "settings.edit",
+        fresh_settings=True,
+        strict_settings_read=True,
+    )
+    if access.guild is None:
+        return web.json_response({"error": "Bot is not in this server."}, status=404)
+    if access.settings_read_failed or access.status_code == 503:
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+    if not access.allowed:
+        return web.json_response(
+            {"error": "Forbidden: Missing settings.edit permission."},
+            status=403,
+        )
+
+    enabled_val = body.get("enabled")
+    if not isinstance(enabled_val, bool):
+        return web.json_response({"error": "enabled must be a boolean."}, status=400)
+
+    before_doc = access.settings_doc
+    return await _apply_guild_settings_mutation(
+        request,
+        guild_id=guild_id,
+        user_id=user_id,
+        actor_name=actor_name,
+        expected_rev=expected_rev,
+        before_doc=before_doc,
+        updates={"misc_enabled": enabled_val},
+        audit_module="misc",
+        audit_action="toggle_misc",
+    )
+
+
+async def handle_api_modules(request: web.Request) -> web.Response:
+    """
+    POST /api/modules/{guild_id}
+    Checkpoint 3C Batch 2 mutation endpoint supporting:
+    1. `disabled_cogs` (requires `modules.edit`, webdash/permissions.py:22):
+       - `list[str]` of exact-case loaded cog names (`bot.cogs`, read at bot.py:107, 110
+         and cogs/core.py:745, 803) or already-stored non-protected disabled_cogs entries.
+       - Protected cogs (`core`, `database`, `dashboard`, `owner`, `jishaku` —
+         `PROTECTED_COGS_LOWER`) can NEVER be added to `disabled_cogs` (only kept if
+         already present in canonical form or removed to re-enable).
+    2. `command_settings` (requires `commands.edit`, webdash/permissions.py:24):
+       - Per-command merge into stored `command_settings` (`dict[str, dict[str, list[str]]]`,
+         read at cogs/core.py:749-777, 806-829) — never replaces the whole dict.
+       - Commands absent from the payload keep their stored settings (including commands
+         from protected/hidden cogs and stale/unloaded ones).
+       - An entry in the payload whose 5 lists (`disabled_subcommands`, `allowed_channels`,
+         `ignored_channels`, `allowed_roles`, `ignored_roles`) are all empty removes ONLY
+         that command from `command_settings`.
+       - Channel IDs and Role IDs are validated against live guild channels/roles (excluding
+         `@everyone`) and stored as STRINGS (`cogs/core.py:761-764, 815-818`).
+       - Never writes a non-dict.
+    3. Enforces strict fresh MongoDB read (`503` on read failure before any write),
+       `dashboard_rev` optimistic concurrency (`409` on mismatch), `GuildConfigCache` +
+       `ai_cog._invalidate_guild_cfg` invalidation, and `AuditLogger.record` with non-empty `changes`.
+    """
+    session_doc = request.get(SESSION_DATA_KEY)
+    if not session_doc:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    try:
+        user_id = int(session_doc["discord_id"])
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    actor_name = str(session_doc.get("username") or "User")
+
+    raw_guild_id = request.match_info.get("guild_id", "")
+    try:
+        guild_id = int(raw_guild_id)
+        if guild_id <= 0:
+            raise ValueError("non-positive guild_id")
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Invalid server ID."}, status=400)
+
+    content_len = request.content_length
+    if content_len is not None and content_len > MAX_JSON_BODY_BYTES:
+        return web.json_response({"error": "Payload too large."}, status=400)
+
+    try:
+        raw_bytes = await request.read()
+    except Exception:
+        return web.json_response({"error": "Failed to read request body."}, status=400)
+
+    if len(raw_bytes) > MAX_JSON_BODY_BYTES:
+        return web.json_response({"error": "Payload too large."}, status=400)
+
+    try:
+        body = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return web.json_response({"error": "Invalid JSON payload."}, status=400)
+
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON payload must be an object."}, status=400)
+
+    allowed_top_keys = {"disabled_cogs", "command_settings", "dashboard_rev", "csrf_token"}
+    if any(k not in allowed_top_keys for k in body):
+        return web.json_response(
+            {"error": "Unexpected fields in modules payload."},
+            status=400,
+        )
+
+    has_disabled_cogs = "disabled_cogs" in body
+    has_command_settings = "command_settings" in body
+    if not has_disabled_cogs and not has_command_settings:
+        return web.json_response(
+            {"error": "Payload must include disabled_cogs and/or command_settings."},
+            status=400,
+        )
+
+    raw_rev = body.get("dashboard_rev")
+    if not isinstance(raw_rev, int) or isinstance(raw_rev, bool) or raw_rev < 0:
+        return web.json_response(
+            {"error": "Invalid or missing dashboard_rev (must be a non-negative integer)."},
+            status=400,
+        )
+    expected_rev = int(raw_rev)
+
+    primary_perm = "modules.edit" if has_disabled_cogs else "commands.edit"
+    access = await resolve_guild_access(
+        request,
+        guild_id,
+        user_id,
+        primary_perm,
+        fresh_settings=True,
+        strict_settings_read=True,
+    )
+    if access.guild is None:
+        return web.json_response({"error": "Bot is not in this server."}, status=404)
+    if access.settings_read_failed or access.status_code == 503:
+        return web.json_response(
+            {"error": "Database temporarily unavailable, please retry"},
+            status=503,
+        )
+    if has_disabled_cogs and "modules.edit" not in access.granted_permissions:
+        return web.json_response(
+            {"error": "Forbidden: Missing modules.edit permission."},
+            status=403,
+        )
+    if has_command_settings and "commands.edit" not in access.granted_permissions:
+        return web.json_response(
+            {"error": "Forbidden: Missing commands.edit permission."},
+            status=403,
+        )
+
+    before_doc = access.settings_doc
+    guild = access.guild
+    bot = request.app.get(BOT_KEY)
+    bot_cogs_dict: dict[str, Any] = {}
+    if bot is not None and isinstance(getattr(bot, "cogs", None), dict):
+        bot_cogs_dict = dict(bot.cogs)
+
+    updates: dict[str, Any] = {}
+
+    # 1. Validate `disabled_cogs`
+    if has_disabled_cogs:
+        raw_disabled_cogs = body.get("disabled_cogs")
+        if not isinstance(raw_disabled_cogs, list):
+            return web.json_response(
+                {"error": "disabled_cogs must be a list of strings."},
+                status=400,
+            )
+        if len(raw_disabled_cogs) > MAX_DISABLED_COGS_ENTRIES:
+            return web.json_response(
+                {"error": f"disabled_cogs cannot exceed {MAX_DISABLED_COGS_ENTRIES} entries."},
+                status=400,
+            )
+
+        loaded_cog_names: set[str] = {
+            str(k).strip() for k in bot_cogs_dict.keys() if str(k).strip()
+        }
+        loaded_cog_names_lower: set[str] = {n.lower() for n in loaded_cog_names}
+
+        stored_disabled_raw = (
+            before_doc.get("disabled_cogs", []) if isinstance(before_doc, dict) else []
+        )
+        existing_disabled_set: set[str] = (
+            {str(x).strip() for x in stored_disabled_raw if isinstance(x, str) and x.strip()}
+            if isinstance(stored_disabled_raw, list)
+            else set()
+        )
+
+        cleaned_disabled_cogs: list[str] = []
+        seen_disabled: set[str] = set()
+        for item in raw_disabled_cogs:
+            if not isinstance(item, str):
+                return web.json_response(
+                    {"error": "Every disabled_cogs entry must be a string."},
+                    status=400,
+                )
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in item):
+                return web.json_response(
+                    {"error": "Cog names cannot contain control characters."},
+                    status=400,
+                )
+            cleaned_cog = item.strip()
+            if not cleaned_cog or len(cleaned_cog) > 64:
+                return web.json_response(
+                    {"error": "Each cog name must be 1 to 64 characters."},
+                    status=400,
+                )
+
+            # Protected cogs can NEVER be added to disabled_cogs
+            if cleaned_cog.lower() in PROTECTED_COGS_LOWER:
+                if (
+                    cleaned_cog not in existing_disabled_set
+                    or cleaned_cog not in PROTECTED_COG_CANONICAL_NAMES
+                ):
+                    return web.json_response(
+                        {"error": f"Protected module '{cleaned_cog}' cannot be added to disabled_cogs."},
+                        status=400,
+                    )
+            elif cleaned_cog in loaded_cog_names:
+                pass
+            elif (
+                cleaned_cog in existing_disabled_set
+                and cleaned_cog.lower() not in loaded_cog_names_lower
+            ):
+                pass
+            else:
+                return web.json_response(
+                    {
+                        "error": f"Unknown or wrong-case module '{cleaned_cog}' (module names are exact-case)."
+                    },
+                    status=400,
+                )
+
+            if cleaned_cog not in seen_disabled:
+                seen_disabled.add(cleaned_cog)
+                cleaned_disabled_cogs.append(cleaned_cog)
+
+        updates["disabled_cogs"] = cleaned_disabled_cogs
+
+    # 2. Validate & per-command merge `command_settings`
+    if has_command_settings:
+        raw_cmd_settings = body.get("command_settings")
+        if not isinstance(raw_cmd_settings, dict):
+            return web.json_response(
+                {"error": "command_settings must be a JSON object."},
+                status=400,
+            )
+        if len(raw_cmd_settings) > MAX_COMMAND_SETTINGS_ENTRIES:
+            return web.json_response(
+                {"error": f"command_settings cannot exceed {MAX_COMMAND_SETTINGS_ENTRIES} commands."},
+                status=400,
+            )
+
+        # Build configurable command -> valid subcommands catalog from non-protected loaded cogs
+        configurable_commands: dict[str, set[str]] = {}
+        for cog_name, cog_obj in bot_cogs_dict.items():
+            cog_name_str = str(cog_name).strip()
+            if not cog_name_str or cog_name_str.lower() in PROTECTED_COGS_LOWER:
+                continue
+            cmds_dict = _extract_cog_commands(cog_obj)
+            for cname, cmeta in cmds_dict.items():
+                subs_list = cmeta.get("subs", [])
+                configurable_commands.setdefault(cname, set()).update(
+                    str(s).strip()
+                    for s in subs_list
+                    if isinstance(s, str) and str(s).strip()
+                )
+
+        # Build live guild channel IDs and role IDs (excluding @everyone) as STRINGS
+        raw_channels = getattr(guild, "text_channels", None)
+        if raw_channels is None:
+            raw_channels = getattr(guild, "channels", None) or []
+        valid_channel_ids: set[str] = set()
+        for ch in raw_channels:
+            cid = getattr(ch, "id", None)
+            cname = getattr(ch, "name", None)
+            if cid is not None and cname is not None:
+                valid_channel_ids.add(str(cid).strip())
+
+        raw_roles = getattr(guild, "roles", None) or []
+        valid_role_ids: set[str] = set()
+        for role in raw_roles:
+            rid = getattr(role, "id", None)
+            rname = getattr(role, "name", None)
+            if (
+                rid is not None
+                and rname is not None
+                and str(rname) != "@everyone"
+                and str(rid).strip() != str(guild_id)
+            ):
+                valid_role_ids.add(str(rid).strip())
+
+        # Start from stored command_settings so commands absent from the payload
+        # (including protected/hidden cog commands and stale ones) keep their stored settings!
+        stored_cmd_raw = (
+            before_doc.get("command_settings", {}) if isinstance(before_doc, dict) else {}
+        )
+        merged_cmd_settings: dict[str, dict[str, Any]] = {}
+        if isinstance(stored_cmd_raw, dict):
+            for existing_k, existing_v in stored_cmd_raw.items():
+                if (
+                    isinstance(existing_k, str)
+                    and existing_k.strip()
+                    and isinstance(existing_v, dict)
+                ):
+                    merged_cmd_settings[existing_k.strip()] = copy.deepcopy(existing_v)
+
+        for raw_cmd_name, raw_cmd_cfg in raw_cmd_settings.items():
+            if not isinstance(raw_cmd_name, str):
+                return web.json_response(
+                    {"error": "Command names in command_settings must be strings."},
+                    status=400,
+                )
+            cmd_name = raw_cmd_name.strip()
+            if not cmd_name or cmd_name not in configurable_commands:
+                return web.json_response(
+                    {"error": f"Unknown or protected command: '{raw_cmd_name}'."},
+                    status=400,
+                )
+            if not isinstance(raw_cmd_cfg, dict):
+                return web.json_response(
+                    {"error": f"Settings for command '{cmd_name}' must be a JSON object."},
+                    status=400,
+                )
+            if not raw_cmd_cfg or any(k not in VALID_COMMAND_SETTING_KEYS for k in raw_cmd_cfg):
+                return web.json_response(
+                    {"error": f"Invalid or unsupported keys in command_settings for '{cmd_name}'."},
+                    status=400,
+                )
+
+            existing_entry = merged_cmd_settings.get(cmd_name)
+            existing_dict = existing_entry if isinstance(existing_entry, dict) else {}
+
+            valid_subs_for_cmd = set(configurable_commands.get(cmd_name, set()))
+            # Also permit keeping an already-stored disabled_subcommand on this command
+            prev_dis_subs = existing_dict.get("disabled_subcommands", [])
+            if isinstance(prev_dis_subs, list):
+                for s in prev_dis_subs:
+                    if isinstance(s, str) and s.strip():
+                        valid_subs_for_cmd.add(s.strip())
+
+            normalized_entry: dict[str, list[str]] = {}
+            for list_key in VALID_COMMAND_SETTING_KEYS:
+                if list_key in raw_cmd_cfg:
+                    raw_list = raw_cmd_cfg[list_key]
+                    if not isinstance(raw_list, list):
+                        return web.json_response(
+                            {"error": f"'{list_key}' for command '{cmd_name}' must be a list of strings."},
+                            status=400,
+                        )
+                    if len(raw_list) > MAX_COMMAND_LIST_ITEMS:
+                        return web.json_response(
+                            {
+                                "error": f"'{list_key}' for command '{cmd_name}' cannot exceed {MAX_COMMAND_LIST_ITEMS} items."
+                            },
+                            status=400,
+                        )
+                    cleaned_items: list[str] = []
+                    seen_items: set[str] = set()
+                    for item in raw_list:
+                        if not isinstance(item, str):
+                            return web.json_response(
+                                {
+                                    "error": f"Every entry in '{list_key}' for command '{cmd_name}' must be a string."
+                                },
+                                status=400,
+                            )
+                        if any(ord(ch) < 32 or ord(ch) == 127 for ch in item):
+                            return web.json_response(
+                                {
+                                    "error": f"Entries in '{list_key}' for command '{cmd_name}' cannot contain control characters."
+                                },
+                                status=400,
+                            )
+                        cleaned_str = item.strip()
+                        if not cleaned_str or len(cleaned_str) > 64:
+                            return web.json_response(
+                                {
+                                    "error": f"Entries in '{list_key}' for command '{cmd_name}' must be 1 to 64 characters."
+                                },
+                                status=400,
+                            )
+                        if list_key == "disabled_subcommands":
+                            if cleaned_str not in valid_subs_for_cmd:
+                                return web.json_response(
+                                    {
+                                        "error": f"Unknown subcommand '{cleaned_str}' for command '{cmd_name}'."
+                                    },
+                                    status=400,
+                                )
+                        elif list_key in ("allowed_channels", "ignored_channels"):
+                            if cleaned_str not in valid_channel_ids:
+                                return web.json_response(
+                                    {
+                                        "error": f"Channel ID '{cleaned_str}' does not belong to this server."
+                                    },
+                                    status=400,
+                                )
+                        elif list_key in ("allowed_roles", "ignored_roles"):
+                            if cleaned_str not in valid_role_ids:
+                                return web.json_response(
+                                    {
+                                        "error": f"Role ID '{cleaned_str}' does not belong to this server or is @everyone."
+                                    },
+                                    status=400,
+                                )
+                        if cleaned_str not in seen_items:
+                            seen_items.add(cleaned_str)
+                            cleaned_items.append(cleaned_str)
+                    normalized_entry[list_key] = cleaned_items
+                else:
+                    prev_list = existing_dict.get(list_key, [])
+                    if isinstance(prev_list, list):
+                        normalized_entry[list_key] = [
+                            str(x).strip()
+                            for x in prev_list
+                            if isinstance(x, (str, int))
+                            and not isinstance(x, bool)
+                            and str(x).strip()
+                        ]
+                    else:
+                        normalized_entry[list_key] = []
+
+            # Amendment #4: an entry whose lists are all empty removes ONLY that command
+            if all(len(v) == 0 for v in normalized_entry.values()):
+                merged_cmd_settings.pop(cmd_name, None)
+            else:
+                merged_cmd_settings[cmd_name] = normalized_entry
+
+        updates["command_settings"] = merged_cmd_settings
+
+    if has_disabled_cogs and has_command_settings:
+        audit_action = "update_modules_and_commands"
+    elif has_disabled_cogs:
+        audit_action = "update_disabled_cogs"
+    else:
+        audit_action = "update_command_settings"
+
+    return await _apply_guild_settings_mutation(
+        request,
+        guild_id=guild_id,
+        user_id=user_id,
+        actor_name=actor_name,
+        expected_rev=expected_rev,
+        before_doc=before_doc,
+        updates=updates,
+        audit_module="modules",
+        audit_action=audit_action,
+    )
+
+
 def register_routes(
     app: web.Application,
     *,
     enable_debug_ip: bool | None = None,
 ) -> None:
-    """Register Checkpoint 3A + 3B (Batches 1, 2 & 3) routes on `app`."""
+    """Register Checkpoint 3A + 3B + 3C-1 + 3C-2 + 3C-3 routes on `app`."""
     debug_ip_enabled = (
         enable_debug_ip
         if enable_debug_ip is not None
@@ -1768,7 +3174,7 @@ def register_routes(
         web.get("/callback", handle_callback),
         web.post("/logout", handle_logout),
         web.get("/manage/{guild_id}", handle_guild_overview),
-        # Checkpoint 3B (Batches 1, 2 & 3) read-only Jinja2 routes
+        # Checkpoint 3B (Batches 1, 2 & 3) Jinja2 routes
         web.get("/modules/{guild_id}", handle_guild_modules),
         web.get("/automod/{guild_id}", handle_guild_automod),
         web.get("/lockdown/{guild_id}", handle_guild_lockdown),
@@ -1776,10 +3182,16 @@ def register_routes(
         web.get("/wizard/{guild_id}", handle_guild_wizard),
         web.get("/logs/{guild_id}", handle_guild_logs),
         web.get("/owner_panel", handle_owner_panel),
+        # Checkpoint 3C Batch 1, Batch 2 & Batch 3 mutation routes
+        web.post("/api/settings/{guild_id}", handle_api_settings),
+        web.post("/api/modules/{guild_id}", handle_api_modules),
+        web.post("/api/owner/action", handle_owner_action),
+        web.post("/api/owner/ip_action", handle_owner_ip_action),
     ]
     if debug_ip_enabled:
         routes.append(web.get("/debug/ip", handle_debug_ip))
 
     app.add_routes(routes)
+
 
 

@@ -4,7 +4,10 @@
 {% block page_heading %}Automated Content Filtration{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-8">
+<div id="automodRoot"
+     data-guild-id="{{ guild_id }}"
+     data-dashboard-rev="{{ dashboard_rev }}"
+     class="max-w-4xl mx-auto space-y-8">
     <!-- Banned Lexicon Card (Legacy Parity: banned_words) -->
     <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -13,7 +16,7 @@
                     <i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon
                 </h2>
                 <p class="text-sm text-zinc-400 mt-1">
-                    Exact words or phrases filtered automatically when AutoMod is active. Separate items with commas.
+                    Exact words or phrases filtered automatically when AutoMod is active. Separate items with commas (max 500 words, 64 chars each).
                 </p>
             </div>
             <span class="px-3.5 py-1.5 rounded-xl text-xs font-bold border self-start sm:self-auto {% if automod_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
@@ -21,29 +24,53 @@
             </span>
         </div>
 
+        {% if over_display_cap %}
+        <div id="overCapNotice" class="mb-4 px-4 py-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-start gap-2.5">
+            <i class="fa-solid fa-triangle-exclamation text-amber-400 mt-0.5"></i>
+            <span>
+                Read-only mode: this server has {{ total_banned_words }} stored banned words, exceeding the 500-word display cap (+{{ extra_banned_words_count }} more). Editing in the web dashboard is disabled so saving cannot truncate unseen entries.
+            </span>
+        </div>
+        {% endif %}
+
         <label for="bannedWords" class="sr-only">Banned Words</label>
         <textarea id="bannedWords"
                   rows="5"
-                  readonly
-                  class="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-sm font-mono text-zinc-200 focus:outline-none transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] leading-relaxed cursor-default">{{ words_string }}</textarea>
+                  {% if not can_edit_automod %}readonly{% endif %}
+                  class="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-sm font-mono text-zinc-200 focus:outline-none transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] leading-relaxed {% if can_edit_automod %}focus:border-blue-500/60{% else %}cursor-default opacity-80{% endif %}">{{ words_string }}</textarea>
+
+        <div id="automodStatus" role="status" aria-live="polite" class="hidden mt-4 px-4 py-3 rounded-xl text-xs font-bold border"></div>
 
         <div class="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div class="space-y-1">
-                <p class="text-xs text-zinc-400">
-                    <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Read-only preview in Checkpoint 3B. Saving changes lands in Checkpoint 3C.
-                </p>
-                {% if extra_banned_words_count > 0 %}
+                {% if over_display_cap %}
                 <p class="text-xs text-amber-300 font-semibold">
                     Showing first {{ banned_words|length }} of {{ total_banned_words }} entries (+{{ extra_banned_words_count }} more).
                 </p>
+                {% elif can_edit_automod %}
+                <p class="text-xs text-zinc-400">
+                    <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Entries are trimmed, lowercased, and deduplicated on save.
+                </p>
+                {% else %}
+                <p class="text-xs text-zinc-400">
+                    <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">automod.edit</code> required to modify filters).
+                </p>
                 {% endif %}
             </div>
+            {% if can_edit_automod %}
+            <button type="button"
+                    id="saveWordsBtn"
+                    class="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-400/30 text-white font-bold text-sm transition cursor-pointer shadow-lg">
+                Update Filters
+            </button>
+            {% else %}
             <button type="button"
                     id="saveWordsBtn"
                     disabled
                     class="px-6 py-3 rounded-xl bg-white/5 border border-white/10 text-zinc-400 font-bold text-sm cursor-not-allowed">
                 Update Filters (Read-Only)
             </button>
+            {% endif %}
         </div>
     </div>
 
@@ -51,11 +78,11 @@
     <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_8px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-3xl p-8">
         <div class="flex items-center justify-between mb-5">
             <h3 class="font-extrabold text-white text-lg tracking-wide">Active Filters Loaded</h3>
-            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10">
+            <span id="bannedWordsCountBadge" class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10">
                 {{ total_banned_words }} word{% if total_banned_words != 1 %}s{% endif %}
             </span>
         </div>
-        <div class="flex flex-wrap gap-3">
+        <div id="bannedWordsPills" class="flex flex-wrap gap-3">
             {% if banned_words %}
                 {% for word in banned_words %}
                 <span class="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-sm font-bold text-red-300 shadow-sm">{{ word }}</span>
@@ -69,4 +96,96 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if can_edit_automod %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var rootEl = document.getElementById("automodRoot");
+    var saveBtn = document.getElementById("saveWordsBtn");
+    var wordsInput = document.getElementById("bannedWords");
+    var statusBox = document.getElementById("automodStatus");
+    if (!rootEl || !saveBtn || !wordsInput || !statusBox) {
+        return;
+    }
+
+    function showStatus(msg, isError) {
+        statusBox.textContent = msg;
+        statusBox.className = "mt-4 px-4 py-3 rounded-xl text-xs font-bold border " + (
+            isError
+                ? "bg-red-500/15 border-red-500/40 text-red-300"
+                : "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+        );
+    }
+
+    saveBtn.addEventListener("click", function () {
+        if (saveBtn.disabled) {
+            return;
+        }
+        var rawParts = wordsInput.value.split(",");
+        var seen = {};
+        var cleanedWords = [];
+        for (var i = 0; i < rawParts.length; i++) {
+            var token = rawParts[i].trim().toLowerCase();
+            if (!token) {
+                continue;
+            }
+            if (token.length > 64) {
+                showStatus("Each banned word must be at most 64 characters.", true);
+                return;
+            }
+            if (!seen[token]) {
+                seen[token] = true;
+                cleanedWords.push(token);
+            }
+        }
+        if (cleanedWords.length > 500) {
+            showStatus("Maximum of 500 banned words allowed.", true);
+            return;
+        }
+
+        var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
+        if (isNaN(rev) || rev < 0) {
+            rev = 0;
+        }
+
+        saveBtn.disabled = true;
+        fetch("/api/settings/{{ guild_id }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": getCsrfToken()
+            },
+            body: JSON.stringify({
+                type: "update_automod",
+                banned_words: cleanedWords,
+                dashboard_rev: rev
+            })
+        })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { status: resp.status, ok: resp.ok, data: data };
+            });
+        })
+        .then(function (res) {
+            saveBtn.disabled = false;
+            if (res.ok && res.data && res.data.status === "ok") {
+                if (typeof res.data.dashboard_rev === "number") {
+                    rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
+                }
+                showStatus("Banned words updated (" + cleanedWords.length + " entries).", false);
+            } else {
+                var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update banned words.";
+                showStatus(errMsg, true);
+            }
+        })
+        .catch(function () {
+            saveBtn.disabled = false;
+            showStatus("Network error while saving banned words.", true);
+        });
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

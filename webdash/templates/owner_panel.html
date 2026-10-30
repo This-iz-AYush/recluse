@@ -101,6 +101,14 @@
             </div>
         </section>
 
+        <!-- Inline Action Feedback Banner -->
+        <div
+            id="ownerActionStatus"
+            role="status"
+            aria-live="polite"
+            class="hidden px-5 py-3.5 rounded-2xl text-sm font-bold border transition-all"
+        ></div>
+
         <!-- Main 2-Column Grid: Hot-Reload Cogs + Ingress Telemetry -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <!-- Column 1: Loaded Extensions (cogs/dashboard.py:1762) -->
@@ -113,15 +121,27 @@
                         {% for item in extensions %}
                         <div class="flex items-center justify-between py-3.5 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm font-bold text-zinc-300">
                             <span class="font-mono">{{ item.full_name }}</span>
+                            {% if item.short_name in ('dashboard', 'database') %}
                             <button
                                 type="button"
                                 data-action="reload-cog"
                                 data-cog="{{ item.short_name }}"
-                                class="reload-cog-btn px-5 py-2 rounded-xl bg-black/50 border border-white/10 text-zinc-400 font-bold shadow-inner cursor-not-allowed opacity-75"
+                                title="Use the Discord owner command to reload {{ item.full_name }}"
+                                class="reload-cog-btn px-5 py-2 rounded-xl bg-black/50 border border-white/10 text-zinc-500 font-bold shadow-inner cursor-not-allowed opacity-60"
                                 disabled
+                            >
+                                Discord Only
+                            </button>
+                            {% else %}
+                            <button
+                                type="button"
+                                data-action="reload-cog"
+                                data-cog="{{ item.short_name }}"
+                                class="reload-cog-btn px-5 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/40 text-blue-200 font-bold shadow-inner transition cursor-pointer"
                             >
                                 Reload
                             </button>
+                            {% endif %}
                         </div>
                         {% endfor %}
                     {% else %}
@@ -137,12 +157,29 @@
                 <h2 class="font-extrabold text-white text-xl mb-6 drop-shadow-md flex items-center gap-3">
                     <i class="fa-solid fa-radar text-emerald-400"></i> Ingress Telemetry
                 </h2>
-                <input
-                    type="text"
-                    id="ipSearch"
-                    placeholder="Search IP or Discord Username..."
-                    class="w-full bg-black/50 border border-white/10 backdrop-blur-2xl rounded-2xl p-4 text-sm font-bold text-white mb-6 focus:outline-none focus:border-blue-500/70 focus:bg-black/70 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] tracking-wide"
-                >
+                <div class="flex flex-col sm:flex-row gap-3 mb-4">
+                    <input
+                        type="text"
+                        id="ipSearch"
+                        placeholder="Search IP or Discord Username..."
+                        class="flex-1 bg-black/50 border border-white/10 backdrop-blur-2xl rounded-2xl p-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500/70 focus:bg-black/70 transition shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] tracking-wide"
+                    >
+                    <div class="flex gap-2">
+                        <input
+                            type="text"
+                            id="manualBanIpInput"
+                            placeholder="IP to ban..."
+                            class="w-40 bg-black/50 border border-white/10 backdrop-blur-2xl rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white focus:outline-none focus:border-red-500/70 transition"
+                        >
+                        <button
+                            type="button"
+                            id="manualBanIpBtn"
+                            class="px-4 py-3 rounded-2xl bg-red-600/30 hover:bg-red-600/50 text-red-200 border border-red-500/50 text-xs font-extrabold uppercase tracking-wider transition cursor-pointer shrink-0"
+                        >
+                            Ban IP
+                        </button>
+                    </div>
+                </div>
                 <div class="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-1" id="ipContainer">
                     {% if visit_logs %}
                         {% for visit in visit_logs %}
@@ -154,15 +191,26 @@
                                     Hits: {{ visit.hits }}
                                 </div>
                             </div>
+                            {% if visit.ip == 'invalid' or (current_ip and visit.ip == current_ip) %}
                             <button
                                 type="button"
                                 data-action="ban"
                                 data-ip="{{ visit.ip }}"
-                                class="ip-action-btn px-5 py-2.5 rounded-xl bg-red-600/30 text-red-200 border border-red-500/50 font-bold shadow-sm cursor-not-allowed opacity-75"
+                                class="ip-action-btn px-5 py-2.5 rounded-xl bg-zinc-800/60 text-zinc-500 border border-white/10 font-bold shadow-sm cursor-not-allowed opacity-60"
                                 disabled
+                            >
+                                {% if current_ip and visit.ip == current_ip %}Your IP{% else %}Invalid IP{% endif %}
+                            </button>
+                            {% else %}
+                            <button
+                                type="button"
+                                data-action="ban"
+                                data-ip="{{ visit.ip }}"
+                                class="ip-action-btn px-5 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600/50 text-red-200 border border-red-500/50 font-bold shadow-sm transition cursor-pointer"
                             >
                                 Ban IP
                             </button>
+                            {% endif %}
                         </div>
                         {% endfor %}
                     {% else %}
@@ -184,8 +232,7 @@
                                 type="button"
                                 data-action="unban"
                                 data-ip="{{ ban.ip }}"
-                                class="ip-action-btn px-4 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 border border-white/10 text-xs font-bold cursor-not-allowed opacity-75"
-                                disabled
+                                class="ip-action-btn px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/10 text-xs font-bold transition cursor-pointer"
                             >
                                 Unban IP
                             </button>
@@ -199,23 +246,162 @@
     </div>
 
     <script>
+    function getCsrfToken() {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? (meta.getAttribute("content") || "") : "";
+    }
+
     (function () {
-        const searchInput = document.getElementById("ipSearch");
-        if (!searchInput) return;
-        searchInput.addEventListener("input", function (event) {
-            const query = (event.target.value || "").toLowerCase();
-            document.querySelectorAll(".filter-row").forEach(function (rowEl) {
-                const ipEl = rowEl.querySelector(".ip-text");
-                const userEl = rowEl.querySelector(".user-text");
-                const ipText = ipEl ? ipEl.textContent.toLowerCase() : "";
-                const userText = userEl ? userEl.textContent.toLowerCase() : "";
-                if (ipText.includes(query) || userText.includes(query)) {
-                    rowEl.style.display = "flex";
-                } else {
-                    rowEl.style.display = "none";
+        var statusBanner = document.getElementById("ownerActionStatus");
+
+        function setStatus(message, kind) {
+            if (!statusBanner) return;
+            statusBanner.textContent = message;
+            statusBanner.classList.remove(
+                "hidden",
+                "bg-emerald-500/15",
+                "border-emerald-500/40",
+                "text-emerald-200",
+                "bg-red-500/15",
+                "border-red-500/40",
+                "text-red-200",
+                "bg-blue-500/15",
+                "border-blue-500/40",
+                "text-blue-200"
+            );
+            if (kind === "ok") {
+                statusBanner.classList.add("bg-emerald-500/15", "border-emerald-500/40", "text-emerald-200");
+            } else if (kind === "error") {
+                statusBanner.classList.add("bg-red-500/15", "border-red-500/40", "text-red-200");
+            } else {
+                statusBanner.classList.add("bg-blue-500/15", "border-blue-500/40", "text-blue-200");
+            }
+        }
+
+        var searchInput = document.getElementById("ipSearch");
+        if (searchInput) {
+            searchInput.addEventListener("input", function (event) {
+                var query = (event.target.value || "").toLowerCase();
+                document.querySelectorAll(".filter-row").forEach(function (rowEl) {
+                    var ipEl = rowEl.querySelector(".ip-text");
+                    var userEl = rowEl.querySelector(".user-text");
+                    var ipText = ipEl ? ipEl.textContent.toLowerCase() : "";
+                    var userText = userEl ? userEl.textContent.toLowerCase() : "";
+                    if (ipText.includes(query) || userText.includes(query)) {
+                        rowEl.style.display = "flex";
+                    } else {
+                        rowEl.style.display = "none";
+                    }
+                });
+            });
+        }
+
+        document.querySelectorAll(".reload-cog-btn").forEach(function (btn) {
+            if (btn.disabled) return;
+            btn.addEventListener("click", async function () {
+                var cogName = btn.getAttribute("data-cog") || "";
+                if (!cogName) return;
+                btn.disabled = true;
+                setStatus("Reloading cogs." + cogName + "...", "info");
+                try {
+                    var response = await fetch("/api/owner/action", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRF-Token": getCsrfToken()
+                        },
+                        body: JSON.stringify({
+                            action: "reload_cog",
+                            cog: cogName
+                        })
+                    });
+                    var payload = {};
+                    try {
+                        payload = await response.json();
+                    } catch (_e) {
+                        payload = {};
+                    }
+                    if (response.ok && payload.status === "ok") {
+                        setStatus("Reloaded " + (payload.reloaded || ("cogs." + cogName)) + " successfully.", "ok");
+                    } else if (response.ok && payload.status === "still running") {
+                        setStatus(
+                            "Reload of " + (payload.reloaded || ("cogs." + cogName)) + " is still running in the background.",
+                            "info"
+                        );
+                    } else {
+                        setStatus(payload.error || ("Failed to reload cogs." + cogName + "."), "error");
+                    }
+                } catch (_err) {
+                    setStatus("Network error while reloading extension.", "error");
+                } finally {
+                    btn.disabled = false;
                 }
             });
         });
+
+        async function submitIpAction(actionType, ipValue, triggerBtn) {
+            var trimmedIp = (ipValue || "").trim();
+            if (!trimmedIp) {
+                setStatus("Please provide a valid IP address.", "error");
+                return;
+            }
+            if (triggerBtn) triggerBtn.disabled = true;
+            setStatus((actionType === "ban" ? "Banning " : "Unbanning ") + trimmedIp + "...", "info");
+            try {
+                var response = await fetch("/api/owner/ip_action", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRF-Token": getCsrfToken()
+                    },
+                    body: JSON.stringify({
+                        action: actionType,
+                        ip: trimmedIp
+                    })
+                });
+                var payload = {};
+                try {
+                    payload = await response.json();
+                } catch (_e) {
+                    payload = {};
+                }
+                if (response.ok && payload.status === "ok") {
+                    setStatus(
+                        (actionType === "ban" ? "Restricted IP " : "Removed restriction for IP ") +
+                            (payload.ip || trimmedIp) +
+                            ".",
+                        "ok"
+                    );
+                } else if (response.ok && payload.status === "noop") {
+                    setStatus(payload.message || "No change needed.", "info");
+                } else {
+                    setStatus(payload.error || "IP action failed.", "error");
+                }
+            } catch (_err) {
+                setStatus("Network error while performing IP action.", "error");
+            } finally {
+                if (triggerBtn) triggerBtn.disabled = false;
+            }
+        }
+
+        document.querySelectorAll(".ip-action-btn").forEach(function (btn) {
+            if (btn.disabled) return;
+            btn.addEventListener("click", function () {
+                var actionType = btn.getAttribute("data-action") || "";
+                var ipAddr = btn.getAttribute("data-ip") || "";
+                if (actionType === "ban" || actionType === "unban") {
+                    submitIpAction(actionType, ipAddr, btn);
+                }
+            });
+        });
+
+        var manualBanBtn = document.getElementById("manualBanIpBtn");
+        var manualBanInput = document.getElementById("manualBanIpInput");
+        if (manualBanBtn && manualBanInput) {
+            manualBanBtn.addEventListener("click", function () {
+                submitIpAction("ban", manualBanInput.value, manualBanBtn);
+            });
+        }
     })();
     </script>
 </body>

@@ -2,33 +2,34 @@
 
 ## 1. Executive Summary & Runtime Constraints
 
-This document captures the final architecture, verified codebase audit, current implementation state (through **Phase A1 Checkpoint 3A**), configuration reference, schema format, and remaining roadmap (**Checkpoints 3B & 3C**, **Phase A2**, **Phase B**, and **Later Cog Wire-Up**) for Recluse's modular web dashboard (`webdash/`).
+This document captures the final architecture, verified codebase audit, current implementation state (**Phase A1 Complete: Checkpoints 3A, 3B, and 3C**), configuration reference, schema format, and remaining roadmap (**Phase A2 Command-Check Consolidation & Permission Matrix UI**, **Checkpoint 3D Expanded Wired Fields**, **Phase B**, and **Later Cog Wire-Up**) for Recluse's modular web dashboard (`webdash/`).
 
 - **Target Environment**: Render Free Tier (`512 MB` RAM, `0.1 vCPU`, ephemeral disk, Python `3.14`, MongoDB Atlas via `motor`) fronted by a Cloudflare Worker (`workers.dev` -> `recluse-1.onrender.com`).
-- **Stack**: `discord.py>=2.4.0`, `aiohttp>=3.11.0`, `aiohttp-jinja2>=1.6`, `jinja2>=3.1.0` (`autoescape=True`), `motor>=3.3.2`. No Quart/Flask/FastAPI; no Node/npm build pipeline.
+- **Stack**: `discord.py>=2.4.0`, `aiohttp>=3.11.0`, `aiohttp-jinja2>=1.6`, `jinja2>=3.1.0` (`autoescape=True`), `motor>=3.3.2`. No Quart/Flask/FastAPI (`quart` and `quart-cors` removed from `requirements.txt` after repo-wide grep confirmed zero imports); no Node/npm build pipeline.
 - **Instant Zero-Downtime Rollback**: Controlled by `WEBDASH_ENABLED=1` (default `"0"`).
   - `cogs/dashboard.py` imports only `from webdash import is_webdash_enabled` (pure Python stdlib) at module top level and lazily imports `webdash.app` / `webdash.router` inside the `if is_webdash_enabled():` branch.
   - If `WEBDASH_ENABLED` is unset/`"0"` (or if `webdash` initialization fails), `cogs/dashboard.py` runs the legacy dashboard code path untouched, and legacy `db.sessions`, `db.visit_logs`, `db.ip_bans`, and `db.guild_settings` remain intact.
 
 ---
 
-## 2. Current Implementation State (Done Through Phase A1 Checkpoint 3A)
+## 2. Current Implementation State (Phase A1 Complete — Checkpoints 3A, 3B & 3C)
 
 ### 2.1 Completed Modules & Files
 | File | Status | Responsibility |
 | :--- | :--- | :--- |
 | `webdash/__init__.py` | **Done (Piece 1 + 3A)** | `is_webdash_enabled()` flag reader; `get_ready_db(bot)` helper that checks `getattr(bot, "db_ready", False)` and logs `"webdash: bot.db_ready is False, sessions disabled"` once if `False`. |
-| `webdash/security.py` | **Done (Piece 1 + 2 + 3A)** | `safe_compare` (`utf-8` + `errors="surrogateescape"` + `secrets.compare_digest`), `normalize_ip`, `resolve_client_ip_details` (`ORIGIN_SHARED_SECRET` + right-most `X-Forwarded-For` via `TRUSTED_PROXY_HOPS=1`), `REQUIRE_ORIGIN_SHARED_SECRET` enforcement, one-time missing/empty secret warnings/errors, `is_plausible_session_token` (`^[A-Za-z0-9_-]{43}$`), dual-pool `InMemoryRateLimiter` (`_auth_buckets` / `_anon_buckets` + `pre_session` limit before DB lookup), CSRF verification, and `apply_security_headers` (including on raised `web.HTTPException` responses like `404` and `405`). |
+| `webdash/security.py` | **Done (Piece 1 + 2 + 3A + 3C-3)** | `safe_compare` (`utf-8` + `errors="surrogateescape"` + `secrets.compare_digest`), `normalize_ip`, `resolve_client_ip_details` (`ORIGIN_SHARED_SECRET` + right-most `X-Forwarded-For` via `TRUSTED_PROXY_HOPS=1`), `REQUIRE_ORIGIN_SHARED_SECRET` enforcement, trusted-IP-only `IpBanCache` enforcement (never blocking `GET /health` or unauthenticated `GET /`, failing open on error), one-time missing/empty secret warnings/errors, `is_plausible_session_token` (`^[A-Za-z0-9_-]{43}$`), dual-pool `InMemoryRateLimiter` (`_auth_buckets` / `_anon_buckets` + `pre_session` limit before DB lookup), CSRF verification, and `apply_security_headers` (including on raised `web.HTTPException` responses like `404` and `405`). |
 | `webdash/auth.py` | **Done (Piece 1 + 2)** | `SessionManager` on `db.webdash_sessions`: SHA-256 `session_id_hash` (`secrets.token_urlsafe(32)` raw cookie `recluse_sid`), timezone-aware UTC `expires_at` (`TTL` index `expireAfterSeconds=0`), `last_seen` write-throttled to `300s`, `verify_oauth_state`, session rotation on login. |
 | `webdash/permissions.py` | **Done (Piece 1)** | `PERMISSION_CATALOG` (35 nodes), `PRESETS` (`Admin`, `ModManager`, `Support`, `Viewer`, `ManageGuildDefault`), `expand_entries` (handles bare strings and skips non-`str` items), deterministic `evaluate_permission` with non-lockable-out Bot Owner, Server Owner, and Discord Administrator (`0x8`). |
-| `webdash/cache.py` | **Done (Piece 1)** | `ShortTTLCache` (`OrderedDict` LRU + TTL) and `GuildConfigCache` (`max_size=200`, `ttl_seconds=120.0`, `db_timeout=2.0s`, fails open on DB error/timeout, invalidates `AI._invalidate_guild_cfg(guild_id)`). |
+| `webdash/cache.py` | **Done (Piece 1 + 3C-3)** | `ShortTTLCache` (`OrderedDict` LRU + TTL), `GuildConfigCache` (`max_size=200`, `ttl_seconds=120.0`, `db_timeout=2.0s`, fails open on DB error/timeout, invalidates `AI._invalidate_guild_cfg(guild_id)`), and `IpBanCache` (`max_size=2000`, `ttl_seconds=60.0`, `db_timeout=2.0s`, single-flight `asyncio.Lock` refresh serving the previous set while refreshing, fails open with backoff on DB error). |
 | `webdash/audit.py` | **Done (Piece 1)** | `AuditLogger` on `db.dashboard_audit` (`created_at` 30-day TTL index `expireAfterSeconds=2592000`, compound index `[("guild_id", 1), ("created_at", -1)]`, field-level `compute_diff` + `before_snapshot`). |
-| `webdash/app.py` | **Done (Piece 2 + 3A)** | `create_webdash_app(bot, ...)` wiring `aiohttp-jinja2` (`autoescape=True`), middlewares, caches, and routes. |
-| `webdash/router.py` | **Done (Piece 2 + 3A + 3B Batches 1, 2 & 3)** | Implemented routes: `GET /health`, `GET /debug/ip` (owner-only when `WEBDASH_DEBUG_IP=1`), `GET /`, `GET /servers`, `GET /login`, `GET /callback`, `POST /logout` (`GET /logout` removed -> `405`), `GET /manage/{guild_id}`, `GET /modules/{guild_id}` (protected-cog recovery rule, 5 wired `command_settings` keys, read-only `disabled_cmds`), `GET /automod/{guild_id}` (capped at 500 displayed entries with `+N more` note), `GET /lockdown/{guild_id}`, `GET /misc/{guild_id}`, `GET /wizard/{guild_id}`, `GET /logs/{guild_id}` (`security_logs` truncated at 300 chars with ellipsis for `logging.view`, `dashboard_audit` gated behind `audit.view`, `"Could not load logs (database unavailable)"` shown on query failure/timeout), and `GET /owner_panel` (Bot Owner only; `bot.global_lockdown` and `bot.dashboard_maintenance` shown separately read-only; normalized & escaped IPs with `data-*` attributes only). |
-| `webdash/templates/` | **Done (Piece 2 + 3A + 3B Batches 1, 2 & 3)** | `base.html` (responsive `hidden md:flex` sidebar, `POST /logout` form with CSRF token), `landing.html`, `servers.html`, `overview.html` (`Disabled: being rebuilt` Lockdown card), `modules.html`, `automod.html`, `lockdown.html`, `misc.html`, `wizard.html`, `logs.html`, `owner_panel.html`, `error.html`, `not_available.html`. |
+| `webdash/app.py` | **Done (Piece 2 + 3A + 3C-3)** | `create_webdash_app(bot, ...)` wiring `aiohttp-jinja2` (`autoescape=True`), `IpBanCache`, security middleware, caches, and routes. |
+| `webdash/router.py` | **Done (Piece 2 + 3A + 3B + 3C)** | Read routes (`GET /health`, `GET /debug/ip`, `GET /`, `GET /servers`, `GET /login`, `GET /callback`, `POST /logout`, `GET /manage/{guild_id}`, `GET /modules/{guild_id}`, `GET /automod/{guild_id}`, `GET /lockdown/{guild_id}`, `GET /misc/{guild_id}`, `GET /wizard/{guild_id}`, `GET /logs/{guild_id}`, `GET /owner_panel`) and mutation routes (`POST /api/settings/{guild_id}`, `POST /api/modules/{guild_id}`, `POST /api/owner/action`, `POST /api/owner/ip_action`) with strict pre-write reads (`503` on read failure), `dashboard_rev` optimistic concurrency (`409` on conflict), cache invalidation, and non-empty audit trail rows. |
+| `webdash/templates/` | **Done (Piece 2 + 3A + 3B + 3C)** | `base.html` (responsive `hidden md:flex` sidebar, `POST /logout` form, `<meta name="csrf-token">`, `getCsrfToken()`, `{% block scripts %}`), `landing.html`, `servers.html`, `overview.html`, `modules.html`, `automod.html`, `lockdown.html`, `misc.html`, `wizard.html`, `logs.html`, `owner_panel.html`, `error.html`, `not_available.html`. |
 | `cogs/database.py` | **Done (Applied by User)** | Sets `self.bot.db_ready = False` in `__init__`, configures `serverSelectionTimeoutMS=5000, connectTimeoutMS=5000`, and sets `self.bot.db_ready = True` after `ping`. |
 | `cogs/dashboard.py` | **Done (Checkpoint 3A)** | Lazy `WEBDASH_ENABLED=1` wiring in `Dashboard.__init__` with automatic fallback to legacy on import/init error; `Dashboard.start_server` starts HTTP immediately and polls `bot.db_ready` every `2s` for up to `120s` in a background task to run `ensure_indexes()`. |
-| `tests/` | **Done (Passing on 3.14)** | `tests/test_webdash_core.py`, `tests/test_webdash_routes.py`, and legacy `tests/test_dashboard_routes.py`. |
+| `requirements.txt` | **Done (Post-3C Cleanup)** | Removed unused `quart` and `quart-cors` after repo-wide grep confirmed zero references across `bot.py`, `cogs/`, and `webdash/`. |
+| `tests/` | **Done (67/67 Passing)** | `tests/test_webdash_core.py`, `tests/test_webdash_routes.py`, and legacy `tests/test_dashboard_routes.py`. |
 
 ---
 
@@ -257,79 +258,57 @@ These fields are **not rendered in the UI** until the separate later wire-up pha
    - Rate-limit keys use `user:<discord_id>` or `sid:<session_id_hash[:16]>` **only** after `session_doc` is validated in MongoDB.
    - Unauthenticated requests are keyed by trusted client IP (`ip:<client_ip>`) or `shared:<scope>` in a separate `_anon_buckets` `OrderedDict`, so junk-cookie floods or IP rotation can never evict authenticated users' buckets (`_auth_buckets`).
    - `is_plausible_session_token` (`^[A-Za-z0-9_-]{43}$`) and the `pre_session` rate limit run **before** `session_loader` to bound MongoDB queries under cookie floods.
-3. **Known Leftovers Tracked for Subsequent Checkpoints**:
-   - **Legacy `cogs/dashboard.py` Inline `onclick` / DOM ID XSS**: Legacy `/modules/{guild_id}` (`cogs/dashboard.py:641-761`) interpolates `cog_name`/`cmd_name` into inline `onclick` attributes. Replaced in **Checkpoint 3B (Batch 3)** using Jinja2 `autoescape=True` and `data-*` event delegation.
-   - **Legacy `quart` / `quart-cors` in `requirements.txt`**: Kept temporarily during Phase A1; to be removed after Checkpoint 3C once `grep` confirms nothing imports them.
+3. **Completed & Remaining Items**:
+   - **Legacy `cogs/dashboard.py` Inline `onclick` / DOM ID XSS**: Replaced in **Checkpoint 3B (Batch 3)** & **Checkpoint 3C** using Jinja2 `autoescape=True` and `data-*` event delegation.
+   - **Legacy `quart` / `quart-cors` in `requirements.txt`**: Removed after repo-wide grep across `bot.py`, `cogs/`, and `webdash/` confirmed zero imports.
    - **`cogs/info.py` Unused `cog_check` (lines 46–55)**: References undefined `interaction` on a slash-only cog; user will delete lines 46–55 in a separate commit.
-   - **Duplicate Uncached MongoDB Queries in `bot.py` & `cogs/core.py`**: Consolidated in **Phase A2**.
+   - **Duplicate Uncached MongoDB Queries in `bot.py` & `cogs/core.py`**: Scheduled for **Phase A2**.
    - **Lockdown**: Disabled (`501`) until **Phase B** implements `db.lockdown_snapshots` channel overwrite backup and restore.
 
 ---
 
-## 8. Scope for Checkpoints 3B, 3C, 3D & Subsequent Phases
+## 8. Completed Phase A1 Checkpoints (3B & 3C) and Remaining Roadmap (Phase A2, Checkpoint 3D, Phase B)
 
-### 8.1 Checkpoint 3B — Read-Only Port of Existing Guild & Owner Pages onto Jinja2 (Legacy Parity First)
-Port the read views of the existing dashboard pages from `cogs/dashboard.py` into `webdash/router.py` and `webdash/templates/` (all with `autoescape=True`, zero inline `on*=` event handlers, and live `resolve_guild_access` permission checks), adding each link to `build_sidebar_nav(guild_id, granted)` only as its handler and template land, delivered in three small reviewable batches:
+### 8.1 Checkpoint 3B — Read-Only Port of Existing Guild & Owner Pages onto Jinja2 (Done & Verified)
+Ported all read views of the existing dashboard pages from `cogs/dashboard.py` into `webdash/router.py` and `webdash/templates/` with `autoescape=True`, zero inline `on*=` event handlers, and live `resolve_guild_access` permission checks:
+- **Batch 1 (`automod`, `lockdown`, `misc`)**: `GET /automod/{guild_id}` (`automod.view`, capped at 500 displayed words), `GET /lockdown/{guild_id}` (`antinuke.view`, disabled rebuild notice), `GET /misc/{guild_id}` (`settings.view`, `misc_enabled`).
+- **Batch 2 (`wizard`, `logs`)**: `GET /wizard/{guild_id}` (`settings.view`, 4 real AI models `auto`, `deepseek`, `groq`, `gemini`), `GET /logs/{guild_id}` (`logging.view` for `security_logs` truncated at 300 chars; `dashboard_audit` gated behind `audit.view`; `"Could not load logs (database unavailable)"` on query error/timeout).
+- **Batch 3 (`modules`, `owner_panel` + Batch 0 Exact-Case Fix)**: `GET /modules/{guild_id}` (`modules.view`, exact-case `cog_name_str in disabled_cogs`, protected-cog recovery badge, 5 wired `command_settings` keys, read-only `disabled_cmds`), `GET /owner_panel` (Bot Owner only, separate read-only `bot.global_lockdown` and `bot.dashboard_maintenance` cards, normalized & escaped IPs).
 
-#### Batch 1: `automod` + `lockdown` + `misc` (Done & Verified)
-1. **`GET /automod/{guild_id}` (`automod.html`, requires `automod.view`)**:
-   - Matches legacy `cogs/dashboard.py:1243-1285` parity: renders the `banned_words` (`bot.py:191`, `cogs/ai.py:593`, `cogs/admin.py:907`, `cogs/dashboard.py:1243`, default `[]`) read-only comma-separated editor and active filter badge pills (capped at 500 displayed entries with a `+N more` indicator when >500 words exist), plus a read-only status indicator for `automod_enabled` (`bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`, default `False`).
-2. **`GET /lockdown/{guild_id}` (`lockdown.html`, requires `antinuke.view`)**:
-   - Renders the Emergency Lockdown status panel (`cogs/dashboard.py:1365-1378`) with the `Disabled: being rebuilt` banner and disabled button explaining that lockdown is disabled until Phase B's `db.lockdown_snapshots` lands.
-3. **`GET /misc/{guild_id}` (`misc.html`, requires `settings.view`)**:
-   - Matches legacy `cogs/dashboard.py:1663-1708` parity: renders only the `misc_enabled` (`cogs/misc.py:174, 538`, `cogs/admin.py:246`, `cogs/dashboard.py:1663`, default `True`) status toggle card for `/afk`, `/whois`, and `/serverinfo`.
+### 8.2 Checkpoint 3C — Mutation Endpoints, Strict Reads, Concurrency, Cache Invalidation & Audit Trail (Done & Verified)
+1. **Strict Pre-Write Reads (`503` on Read Failure) & Optimistic Concurrency (`dashboard_rev`)**:
+   - All guild mutation endpoints call `resolve_guild_access(request, guild_id, ..., fresh_settings=True)`, which uses `_fetch_fresh_guild_settings_strict` to distinguish a genuinely missing document (`None` -> upsert path with `expected_rev == 0`) from a MongoDB read error/timeout (returns HTTP `503` `"Database temporarily unavailable, please retry"` **before** any write).
+   - Conditional updates check `dashboard_rev` (missing = `0`), `$set` only whitelisted fields, `$inc` `dashboard_rev` by `1`, and return HTTP `409` on revision mismatch.
+2. **Batch 3C-1 (`POST /api/settings/{guild_id}`)**:
+   - `update_automod` (requires `automod.edit`): validates `banned_words` (list of strings, max 500 entries of `<=64` chars, lowercased & deduplicated); refuses save (`400`) and locks the editor read-only if the stored list has `>500` entries so display truncation can never occur.
+   - `update_ai_model` (requires `ai.edit`): validates `model` in `{"auto", "deepseek", "groq", "gemini"}` and writes `default_ai_model` (`wizard.html` save controls shown only when `can_edit_ai` is true).
+   - `toggle` with `module == "toggleMisc"` (requires `settings.edit`): validates `enabled` (`bool`) and writes `misc_enabled`.
+   - `toggle_lockdown` (requires `lockdown.execute`): returns HTTP `501` `{"error": "Lockdown is being rebuilt and is temporarily disabled"}`.
+3. **Batch 3C-2 (`POST /api/modules/{guild_id}`)**:
+   - `disabled_cogs` (requires `modules.edit`): exact-case loaded cog names; protected cogs (`core`, `database`, `dashboard`, `owner`, `jishaku`) can never be added to `disabled_cogs`, while allowing removal if previously stored.
+   - `command_settings` (requires `commands.edit`): per-command merge onto stored `command_settings` (never replaces the whole dict; commands absent from payload—including protected-cog and stale commands—keep their stored settings; an entry whose 5 lists are all empty removes only that command; channel and role IDs are validated against live `guild` and stored as **strings** matching `cogs/core.py:761-764`).
+4. **Batch 3C-3 (`POST /api/owner/action`, `POST /api/owner/ip_action` & `IpBanCache`)**:
+   - `POST /api/owner/action` (`reload_cog`, Bot Owner only): restricts `cog` to `^[a-z0-9_]{1,32}$`, rejects `dashboard` and `database` (instructing the operator to use the Discord owner command), verifies `"cogs.<name>" in bot.extensions`, runs `bot.reload_extension(ext_name)` as a task wrapped in `asyncio.shield(task)` so a slow reload (`>10s`) returns `202 {"status": "still running"}` **without cancelling** the reload, and writes a non-empty audit row.
+   - `POST /api/owner/ip_action` (`ban` / `unban`, Bot Owner only): validates IP with `normalize_ip` (rejecting `'invalid'`), refuses banning the requester's own current IP (`request[CLIENT_IP_KEY]`), performs a strict pre-write `db.ip_bans.find_one` (`503` on failure), skips the audit row and returns `200 {"status": "noop", "message": ...}` when nothing changes (already banned or not banned), immediately updates & refreshes `IpBanCache`, and writes a non-empty audit row on change.
+   - `IpBanCache` (`webdash/cache.py:171-320`): single-flight `asyncio.Lock` refresh (`2.0s` timeout), serves the previous set while refreshing, fails open on DB error, enforced in `create_security_middleware` against the **trusted** client IP only and never blocking `GET /health` or unauthenticated `GET /`.
 
-#### Batch 2: `wizard` + `logs` (Done & Verified)
-4. **`GET /wizard/{guild_id}` (`wizard.html`, requires `settings.view`)**:
-   - Matches legacy `cogs/dashboard.py:1535-1606` parity (AI model selector only), updated from obsolete `nexusify`/`gemini`/`sarvam` to the 4 real models wired in `cogs/ai.py:77-91, 291-299, 401-411, 657, 743-754` (`auto`, `deepseek`, `groq`, `gemini`).
-5. **`GET /logs/{guild_id}` (`logs.html`, requires `logging.view`)**:
-   - Queries `db.security_logs` (sorted by float `timestamp` descending per `cogs/dashboard.py:1425`, `bot.py:208, 266`) for any user with `logging.view`, truncating displayed `content` at 300 characters with an ellipsis (`…`).
-   - **Permission-Gated Audit History**: Queries and renders the `db.dashboard_audit` section (sorted by UTC `created_at` descending per `webdash/audit.py:83, 138`) **ONLY** when `"audit.view" in access.granted_permissions` (`webdash/permissions.py:62-63`). Users with `logging.view` alone (such as the `Support` preset at `webdash/permissions.py:90-95`) see only `security_logs` and never `dashboard_audit`.
-   - **Database Unavailable / Timeout Banner**: If the `security_logs` or `dashboard_audit` query fails or times out (2.0s timeout), renders `"Could not load logs (database unavailable)"` in that section instead of `"No security events logged yet."` / `"No configuration changes recorded yet."`.
+### 8.3 Remaining Roadmap
 
-#### Batch 3: `modules` + `owner_panel` (Done)
-6. **`GET /modules/{guild_id}` (`modules.html`, requires `modules.view`)**:
-   - Renders toggleable cog cards (`disabled_cogs` read at `bot.py:107`, `cogs/core.py:745, 803`) and per-command override drawers exposing only the keys `cogs/core.py:749-777, 806-829` actually reads (`disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`).
-   - **Protected Cogs & Recovery Rule**: Hides protected cogs `core`, `database`, `dashboard`, `owner`, and `jishaku` (`cogs/dashboard.py:620` + `core`) from normal disabling. However, if a guild already has any of those 5 protected cogs in `disabled_cogs` (because the legacy UI allowed disabling `Core`), still renders that cog in `/modules/{guild_id}` with a clear `Protected` badge so the admin can switch it back on.
-   - Displays legacy `disabled_cmds` (`bot.py:108, 113`) as a read-only badge list if non-empty.
-   - Uses `data-cog`, `data-cmd`, and `addEventListener` delegation (zero inline `on*=` attributes).
-7. **`GET /owner_panel` (`owner_panel.html`, Bot Owner only)**:
-   - Renders loaded cog extensions (`bot.extensions`, `cogs/dashboard.py:1762`), recent `db.visit_logs` (`cogs/dashboard.py:1777`), and `db.ip_bans` (`cogs/dashboard.py:2024`).
-   - **Accurate Read-Only Maintenance Flags**: Separately displays and labels both distinct flags read-only:
-     1. `bot.global_lockdown` (`bot.py:33, 82` — blocks bot commands for non-owners), and
-     2. `bot.dashboard_maintenance` (`cogs/dashboard.py:43, 122` — blocks web dashboard access for non-owners),
-     explicitly noting in the UI and docs that the legacy `/owner_panel` (`cogs/dashboard.py:1761-1881`) showed neither flag.
+#### 1. Phase A2 — Command-Check Consolidation & Permission Matrix UI
+- **Command-Check Consolidation (`bot.py` & `cogs/core.py`)**:
+  - Consolidate duplicate uncached MongoDB reads across `bot.py` (`_core_security_check`, `on_message`) and `cogs/core.py` (`Core.bot_check` at `cogs/core.py:718-778` and `Core.global_slash_check` at `cogs/core.py:780-833`) into one shared access-check helper backed by `bot.guild_config` (`GuildConfigCache`) and short-TTL caches for `global_blacklist` and `co_owners`.
+  - Preserve `self._original_interaction_check` chaining (`cogs/core.py:707-708, 714, 831-832`) and provide clear ephemeral/short-TTL user feedback when a command or module is disabled or restricted.
+- **Permission Matrix UI (`permissions.manage`)**:
+  - Dedicated dashboard page (`GET /permissions/{guild_id}` and `POST /api/permissions/{guild_id}`, gated behind `permissions.manage`) for viewing and editing `dashboard_permissions` in `db.guild_settings`:
+    - Assign built-in presets (`Admin`, `ModManager`, `Support`, `Viewer`) or custom `allow`/`deny` node lists to Discord roles (`role_mappings`).
+    - Configure `user_overrides`, `user_denies`, and `manage_guild_permissions` (`ManageGuildDefault`), while enforcing in both UI and backend that Bot Owner, Server Owner, and Discord Administrator (`0x8`) can never be locked out and `permissions.manage` cannot be self-revoked by non-owners.
 
-### 8.2 Checkpoint 3C — Mutation Endpoints, Strict Validation, Cache Invalidation & Audit Trail (Legacy Parity)
-Port the POST mutation endpoints into `webdash/router.py` matching legacy parity (all protected by the CSRF middleware, `mutation` rate-limit scope, and live `resolve_guild_access` / Bot Owner checks):
-
-1. **`POST /api/settings/{guild_id}`**:
-   - Actions matching `cogs/dashboard.py:1928-1962`:
-     - `update_automod` (requires `automod.edit`): validates `banned_words` (`words` string or list, max 200 words, max 64 chars each, lowercased & deduplicated).
-     - `update_ai_model` (requires `settings.edit` or `ai.edit`): validates `model` against `{"auto", "deepseek", "groq", "gemini"}` and writes `default_ai_model`.
-     - `toggle` with `module == "toggleMisc"` (requires `settings.edit`): validates `enabled` (`bool`) and writes `misc_enabled`.
-     - `toggle_lockdown` (requires `lockdown.execute`): returns HTTP `501` JSON `{"error": "Lockdown is being rebuilt and is temporarily disabled"}` (`cogs/dashboard.py:1960-1961`).
-   - On every write:
-     - Reads current cached settings for `before_snapshot`.
-     - Updates `db.guild_settings` with `asyncio.wait_for(..., timeout=2.0)`.
-     - Calls `cfg_cache.invalidate(guild_id)` (which also calls `AI._invalidate_guild_cfg(guild_id)` per `webdash/cache.py:177-181` and `cogs/ai.py:267-269`).
-     - Records field-level diff in `db.dashboard_audit` via `AuditLogger.record(...)` (`webdash/audit.py:95-146`).
-2. **`POST /api/modules/{guild_id}` (requires `modules.edit` / `commands.edit`)**:
-   - Validates `disabled_cogs` against real loaded cog names: forbids adding any protected cog (`core`, `database`, `dashboard`, `owner`, `jishaku`) to `disabled_cogs`, while allowing removal of a previously disabled protected cog so a server can recover.
-   - Validates `command_settings` structure (`disabled_subcommands`, `allowed_channels`, `ignored_channels`, `allowed_roles`, `ignored_roles`, verifying channel and role snowflakes belong to `guild`).
-   - Writes to `db.guild_settings`, invalidates `GuildConfigCache`, and records an audit log entry in `db.dashboard_audit`.
-3. **`POST /api/owner_action` & `POST /api/ip_action` (Bot Owner only)**:
-   - Validates owner identity via `resolve_bot_owner_id(request)` and executes `reload_cog` (`cogs/dashboard.py:1985-1995`) and IP `ban`/`unban` (`cogs/dashboard.py:2023-2032`) with CSRF protection.
-4. **Post-3C Dependency Cleanup**:
-   - Grep the repository for `quart` and `quart_cors` / `quart-cors`; once confirmed unused, remove `quart` and `quart-cors` from `requirements.txt` in a dedicated commit.
-
-### 8.3 Checkpoint 3D — Expanded Wired-Field Scope (After 3C Sign-Off)
-Once Checkpoints 3B and 3C are live and verified with 100% legacy parity, expand the existing pages to expose the additional settings that cogs already read in production:
-- **`/automod/{guild_id}`**: Add interactive `automod_enabled` toggle (`bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`, default `False`).
+#### 2. Checkpoint 3D — Expanded Wired-Field Scope
+Expand the existing guild pages to expose the additional settings that cogs already read in production (using the same `dashboard_rev` concurrency, strict pre-write reads, `GuildConfigCache` invalidation, and `AuditLogger` trail):
+- **`/automod/{guild_id}`**: Interactive `automod_enabled` toggle (`bot.py:189`, `cogs/ai.py:591`, `cogs/admin.py:247, 843`, default `False`), plus anti-spam thresholds (`antispam_threshold`, `antispam_window`, `antispam_action`, `antispam_mute_mins`, read at `bot.py:219-222`).
 - **`/wizard/{guild_id}`**: Expand the guided quick-setup wizard to configure wired setup fields (`welcome_enabled`, `welcome_channel`, `log_channel`, `auto_role`, `automod_enabled`, `leveling_enabled`, `ai_enabled`, `default_ai_model`), validating channel/role snowflakes against live `guild.channels` / `guild.roles`.
 - **`/misc/{guild_id}`**: Add `ai_enabled` (`cogs/ai.py:607`), `default_ai_model` (`cogs/ai.py:657`), and `sports_enabled` (`cogs/sports.py:35`, `cogs/admin.py:244`) toggles/selectors alongside `misc_enabled`.
 
-### 8.4 Subsequent Phases (After Phase A1 Sign-Off)
-- **Phase A2**: Consolidate `bot.py` and `cogs/core.py` command/module/blacklist checks into one shared access-check helper backed by `bot.guild_config` (`GuildConfigCache`) and short-TTL caches for `global_blacklist` and `co_owners`, preserving `_original_interaction_check` (`cogs/core.py:707, 714, 831`) and adding ephemeral/short-TTL feedback on blocked commands.
-- **Phase B**: Declarative schema engine (`webdash/schema.py` + `webdash/modules/*.py`), full MEE6/Dyno/Carl-bot module editors for all wired fields in §6.2, RBAC role-mapping UI (`permissions.manage`), Audit Log viewer with one-click revision rollback (`audit.restore`), JSON export/import (`settings.export` / `settings.import`), and Lockdown v2 (`db.lockdown_snapshots`).
+#### 3. Phase B & Later Per-Cog Wire-Up Phase
+- **Phase B**: Declarative schema engine (`webdash/schema.py` + `webdash/modules/*.py`), full module editors for all wired fields in §6.2 (Welcome, Auto-Role & Reaction Roles, Moderation & Logs, Anti-Nuke, Auto-Responder, Leveling, Tickets, Starboard, Birthdays), Audit Log viewer with one-click revision rollback (`audit.restore`), JSON export/import (`settings.export` / `settings.import`), and Lockdown v2 (`db.lockdown_snapshots`).
 - **Later Wire-Up Phase**: One cog per change for the unwired fields in §6.3, with defaults matching current hardcoded behavior and explicit approval before touching any cog.
