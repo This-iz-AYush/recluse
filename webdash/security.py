@@ -449,6 +449,7 @@ def create_security_middleware(
     *,
     session_loader: Callable[[web.Request], Awaitable[dict[str, Any] | None]] | None = None,
     ip_ban_cache: Any | None = None,
+    visit_tracker: Any | None = None,
     csrf_exempt_paths: set[str] | None = None,
     trusted_hops: int | None = None,
     origin_secret: str | None = None,
@@ -465,6 +466,7 @@ def create_security_middleware(
     - Cheap pre-check: skips session_loader when `recluse_sid` does not match `^[A-Za-z0-9_-]{43}$`
     - Applies an IP-keyed (or shared 'unidentified') pre-limit BEFORE calling session_loader
     - Enforces dual-pool bounded in-memory rate limits
+    - Records throttled fire-and-forget visits in `db.visit_logs` for trusted client IPs on non-fast-path requests
     - Enforces CSRF on state-changing methods (POST/PUT/PATCH/DELETE)
     - Applies security headers to every response AND to raised web.HTTPException responses
     """
@@ -636,6 +638,26 @@ def create_security_middleware(
             )
             if not allowed:
                 return _rate_limit_response(retry_after)
+
+        # 5b. Record throttled visit in db.visit_logs for trusted client IPs on non-fast-path
+        #     requests (never on /health or unauthenticated /). Fire-and-forget with 2s timeout.
+        if (
+            visit_tracker is not None
+            and ip_trusted
+            and client_ip != "invalid"
+            and not (
+                method in ("GET", "HEAD")
+                and (path == "/health" or (path == "/" and not session_doc))
+            )
+        ):
+            try:
+                visit_tracker.record_visit(
+                    client_ip,
+                    ip_trusted=ip_trusted,
+                    session_doc=session_doc if isinstance(session_doc, dict) else None,
+                )
+            except Exception:
+                pass
 
         # 6. Enforce CSRF on unsafe methods unless path is explicitly exempt
         if method not in SAFE_HTTP_METHODS and path not in exempt_paths:

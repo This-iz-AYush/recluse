@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import copy
+import datetime
 import logging
 import time
 from typing import Any, Awaitable, Callable, Generic, TypeVar
@@ -15,6 +16,8 @@ from typing import Any, Awaitable, Callable, Generic, TypeVar
 from webdash import get_ready_db
 
 logger = logging.getLogger("recluse.webdash.cache")
+
+VISIT_LOGS_TTL_SECONDS = 30 * 86400  # 30 days (2,592,000 seconds)
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -320,6 +323,181 @@ class IpBanCache:
         return len(self._banned_ips)
 
 
+class VisitTracker:
+    """
+    Bounded in-memory throttled writer for `db.visit_logs`.
+    - Records visits from the TRUSTED client IP only (`ip_trusted=True` and `norm_ip != "invalid"`).
+    - Throttles writes to at most once per IP per `throttle_seconds` (default 300s = 5 minutes).
+    - Fire-and-forget (`asyncio.create_task`) with a short `db_timeout` (default 2.0s),
+      never blocking or failing any HTTP request.
+    - Preserves legacy fields (`ip`, `last_visit` float, `last_user`, `hits`) and sets
+      `last_visit_at` (UTC `datetime`) backed by a 30-day TTL index (`expireAfterSeconds=2592000`).
+    """
+
+    def __init__(
+        self,
+        bot: Any,
+        *,
+        max_size: int = 5000,
+        throttle_seconds: float = 300.0,
+        db_timeout: float = 2.0,
+    ) -> None:
+        self.bot = bot
+        self.max_size = max(1, int(max_size))
+        self.throttle_seconds = max(0.1, float(throttle_seconds))
+        self.db_timeout = max(0.1, float(db_timeout))
+        self._last_recorded: collections.OrderedDict[str, float] = collections.OrderedDict()
+        self._pending_tasks: set[asyncio.Task[Any]] = set()
+        self._index_ensured: bool = False
+
+    async def ensure_indexes(self) -> bool:
+        """Ensure a 30-day TTL index on `db.visit_logs.last_visit_at`."""
+        db = get_ready_db(self.bot)
+        if db is None or getattr(db, "visit_logs", None) is None:
+            return False
+        try:
+            await asyncio.wait_for(
+                db.visit_logs.create_index(
+                    "last_visit_at",
+                    expireAfterSeconds=VISIT_LOGS_TTL_SECONDS,
+                ),
+                timeout=self.db_timeout,
+            )
+            self._index_ensured = True
+            return True
+        except Exception as exc:
+            logger.warning(
+                "VisitTracker failed to create TTL index on db.visit_logs (%s)",
+                type(exc).__name__,
+            )
+            return False
+
+    def should_record(self, ip: str, *, now: float | None = None) -> bool:
+        """
+        Return True and record timestamp if `ip` has not been logged within `throttle_seconds`.
+        """
+        from webdash.security import normalize_ip
+
+        norm_ip = normalize_ip(ip)
+        if norm_ip == "invalid":
+            return False
+
+        current = time.monotonic() if now is None else float(now)
+        prev_ts = self._last_recorded.get(norm_ip)
+        if prev_ts is not None and (current - prev_ts) < self.throttle_seconds:
+            return False
+
+        if norm_ip in self._last_recorded:
+            self._last_recorded.move_to_end(norm_ip)
+        elif len(self._last_recorded) >= self.max_size:
+            self._last_recorded.popitem(last=False)
+        self._last_recorded[norm_ip] = current
+        return True
+
+    async def _write_visit(
+        self,
+        norm_ip: str,
+        last_user: str,
+        *,
+        now_dt: datetime.datetime | None = None,
+    ) -> bool:
+        db = get_ready_db(self.bot)
+        if db is None or getattr(db, "visit_logs", None) is None:
+            return False
+
+        if not self._index_ensured:
+            await self.ensure_indexes()
+
+        visit_dt = now_dt if now_dt is not None else datetime.datetime.now(datetime.timezone.utc)
+        if visit_dt.tzinfo is None:
+            visit_dt = visit_dt.replace(tzinfo=datetime.timezone.utc)
+        visit_ts = float(visit_dt.timestamp())
+        clean_user = str(last_user or "Guest").strip()[:100] or "Guest"
+
+        try:
+            await asyncio.wait_for(
+                db.visit_logs.update_one(
+                    {"ip": norm_ip},
+                    {
+                        "$set": {
+                            "ip": norm_ip,
+                            "last_visit": visit_ts,
+                            "last_visit_at": visit_dt,
+                            "last_user": clean_user,
+                        },
+                        "$inc": {"hits": 1},
+                    },
+                    upsert=True,
+                ),
+                timeout=self.db_timeout,
+            )
+            return True
+        except Exception as exc:
+            logger.debug(
+                "VisitTracker background write failed/timed out for ip=%s (%s)",
+                norm_ip,
+                type(exc).__name__,
+            )
+            return False
+
+    def record_visit(
+        self,
+        client_ip: str | None,
+        *,
+        ip_trusted: bool,
+        session_doc: dict[str, Any] | None = None,
+        now: float | None = None,
+        now_dt: datetime.datetime | None = None,
+    ) -> asyncio.Task[bool] | None:
+        """
+        Schedule a fire-and-forget `db.visit_logs` upsert if `ip_trusted` is True,
+        `client_ip` normalizes to a valid IP, and the 5-minute per-IP throttle allows it.
+        Never raises or blocks the caller.
+        """
+        if not ip_trusted:
+            return None
+
+        from webdash.security import normalize_ip
+
+        norm_ip = normalize_ip(client_ip)
+        if norm_ip == "invalid":
+            return None
+
+        if not self.should_record(norm_ip, now=now):
+            return None
+
+        if isinstance(session_doc, dict) and session_doc:
+            raw_username = session_doc.get("username")
+            last_user = (
+                str(raw_username).strip()
+                if isinstance(raw_username, str) and raw_username.strip()
+                else "Guest"
+            )
+        else:
+            last_user = "Guest"
+
+        try:
+            task = asyncio.create_task(
+                self._write_visit(norm_ip, last_user, now_dt=now_dt)
+            )
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+            return task
+        except Exception:
+            return None
+
+    async def flush(self) -> None:
+        """Wait for any currently pending background visit writes (useful in tests)."""
+        if self._pending_tasks:
+            await asyncio.gather(*list(self._pending_tasks), return_exceptions=True)
+
+    def clear(self) -> None:
+        self._last_recorded.clear()
+
+    def __len__(self) -> int:
+        return len(self._last_recorded)
+
+
 async def fetch_with_fail_open(
     coro_factory: Callable[[], Awaitable[V]],
     default: V,
@@ -331,3 +509,4 @@ async def fetch_with_fail_open(
         return await asyncio.wait_for(coro_factory(), timeout=timeout)
     except Exception:
         return default
+

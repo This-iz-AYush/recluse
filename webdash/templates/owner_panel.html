@@ -154,9 +154,14 @@
 
             <!-- Column 2: Ingress Telemetry & IP Bans (cogs/dashboard.py:1777, 2024) -->
             <div class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 shadow-[0_15px_40px_0_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-[2.5rem] p-8 sm:p-10 flex flex-col h-[700px]">
-                <h2 class="font-extrabold text-white text-xl mb-6 drop-shadow-md flex items-center gap-3">
-                    <i class="fa-solid fa-radar text-emerald-400"></i> Ingress Telemetry
-                </h2>
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-6">
+                    <h2 class="font-extrabold text-white text-xl drop-shadow-md flex items-center gap-3">
+                        <i class="fa-solid fa-radar text-emerald-400"></i> Ingress Telemetry
+                    </h2>
+                    <div class="text-xs font-mono font-bold px-3.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300" id="currentIpBanner">
+                        Your current IP: {{ current_ip }}
+                    </div>
+                </div>
                 <div class="flex flex-col sm:flex-row gap-3 mb-4">
                     <input
                         type="text"
@@ -183,9 +188,12 @@
                 <div class="overflow-y-auto flex-1 pr-2 custom-scrollbar space-y-1" id="ipContainer">
                     {% if visit_logs %}
                         {% for visit in visit_logs %}
-                        <div class="flex items-center justify-between py-4 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm filter-row" data-ip="{{ visit.ip }}">
+                        <div class="flex items-center justify-between py-4 border-b border-white/5 hover:bg-white/5 transition-colors px-4 rounded-xl text-sm filter-row" data-ip="{{ visit.ip }}" {% if current_ip and current_ip != 'invalid' and visit.ip == current_ip %}data-your-ip="true"{% endif %}>
                             <div>
                                 <span class="font-mono font-extrabold text-white ip-text drop-shadow-sm">{{ visit.ip }}</span>
+                                {% if current_ip and current_ip != 'invalid' and visit.ip == current_ip %}
+                                <span class="ml-2 text-xs px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-extrabold uppercase tracking-wider">Your IP</span>
+                                {% endif %}
                                 <span class="ml-4 text-xs px-3 py-1.5 rounded-lg border {% if visit.last_user != 'Guest' %}bg-violet-500/20 text-violet-300 border-violet-500/40{% else %}bg-black/60 text-zinc-400 border-white/10{% endif %} user-text backdrop-blur-md font-bold tracking-wide">{{ visit.last_user }}</span>
                                 <div class="text-xs text-zinc-400 mt-2 font-bold bg-black/40 inline-block px-3 py-1 rounded-lg border border-white/5 shadow-inner">
                                     Hits: {{ visit.hits }}

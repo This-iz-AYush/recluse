@@ -74,8 +74,9 @@ class AuditLogger:
         return db.dashboard_audit
 
     async def ensure_indexes(self) -> bool:
-        """Create compound query index and 30-day TTL index on db.dashboard_audit."""
-        coll = self._collection()
+        """Create compound query index and 30-day TTL index on db.dashboard_audit (and db.visit_logs)."""
+        db = get_ready_db(self.bot)
+        coll = db.dashboard_audit if db is not None else None
         if coll is None:
             return False
         try:
@@ -87,6 +88,18 @@ class AuditLogger:
                 coll.create_index("created_at", expireAfterSeconds=AUDIT_TTL_SECONDS),
                 timeout=self.db_timeout,
             )
+            visit_coll = getattr(db, "visit_logs", None)
+            if visit_coll is not None and hasattr(visit_coll, "create_index"):
+                try:
+                    await asyncio.wait_for(
+                        visit_coll.create_index(
+                            "last_visit_at",
+                            expireAfterSeconds=AUDIT_TTL_SECONDS,
+                        ),
+                        timeout=self.db_timeout,
+                    )
+                except Exception:
+                    logger.warning("Failed to create 30-day TTL index on db.visit_logs", exc_info=True)
             return True
         except Exception:
             logger.exception("Failed to create indexes on db.dashboard_audit")

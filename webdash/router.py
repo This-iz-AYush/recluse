@@ -23,6 +23,7 @@ import math
 import os
 import re
 import urllib.parse
+from collections.abc import Mapping, Sequence
 from typing import Any, Awaitable, Callable
 
 import aiohttp
@@ -39,7 +40,7 @@ from webdash.auth import (
     generate_oauth_state,
     verify_oauth_state,
 )
-from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache
+from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache, VisitTracker
 from webdash.permissions import (
     DISCORD_PERM_ADMINISTRATOR,
     DISCORD_PERM_MANAGE_GUILD,
@@ -68,6 +69,7 @@ OWNER_ID_CACHE_KEY = _AppKey("owner_id_cache", ShortTTLCache)
 AUDIT_LOGGER_KEY = _AppKey("audit_logger", AuditLogger)
 RATE_LIMITER_KEY = _AppKey("rate_limiter", InMemoryRateLimiter)
 IP_BAN_CACHE_KEY = _AppKey("ip_ban_cache", IpBanCache)
+VISIT_TRACKER_KEY = _AppKey("visit_tracker", VisitTracker)
 OAUTH_CLIENT_KEY = _AppKey("oauth_client", Any)
 
 _MISSING_MEMBER_SENTINEL = object()
@@ -314,7 +316,7 @@ def _extract_member_perm_bits_and_roles(member: Any) -> tuple[int, bool, bool, l
 
     role_ids: list[int] = []
     raw_roles = getattr(member, "roles", None)
-    if isinstance(raw_roles, (list, tuple, set)):
+    if isinstance(raw_roles, (Sequence, set)) and not isinstance(raw_roles, (str, bytes)):
         for r in raw_roles:
             rid = getattr(r, "id", None)
             if rid is not None:
@@ -1177,7 +1179,12 @@ async def handle_guild_overview(request: web.Request) -> web.Response:
     member_count_val = getattr(guild, "member_count", None)
     if member_count_val is None:
         members_list = getattr(guild, "members", None)
-        member_count_val = len(members_list) if isinstance(members_list, (list, tuple, set)) else 0
+        member_count_val = (
+            len(members_list)
+            if isinstance(members_list, (Sequence, set))
+            and not isinstance(members_list, (str, bytes))
+            else 0
+        )
 
     channels_list = getattr(guild, "channels", None) or getattr(guild, "text_channels", None) or []
     roles_list = getattr(guild, "roles", None) or []
@@ -1575,7 +1582,9 @@ def _extract_cog_commands(cog: Any) -> dict[str, dict[str, Any]]:
                     desc = getattr(cmd, "help", None) or getattr(cmd, "description", None) or "No description"
                     cmds_dict[cmd_name] = {"desc": str(desc), "subs": []}
                 sub_commands = getattr(cmd, "commands", None)
-                if isinstance(sub_commands, (list, tuple, set)):
+                if isinstance(sub_commands, (Sequence, set)) and not isinstance(
+                    sub_commands, (str, bytes)
+                ):
                     for sub in sub_commands:
                         sub_name = str(getattr(sub, "name", "") or "").strip()
                         if sub_name and sub_name not in cmds_dict[cmd_name]["subs"]:
@@ -1589,8 +1598,9 @@ def _extract_cog_commands(cog: Any) -> dict[str, dict[str, Any]]:
             for app_cmd in walk_app_fn() or []:
                 parent_obj = getattr(app_cmd, "parent", None)
                 if parent_obj is not None:
-                    # Handled via parent's .commands below or attached to root
-                    root_name = str(getattr(parent_obj, "name", "") or "").strip()
+                    # Handled via parent's .commands below or attached to root (matches cogs/core.py:797 root_parent.name)
+                    root_obj = getattr(app_cmd, "root_parent", None) or parent_obj
+                    root_name = str(getattr(root_obj, "name", "") or "").strip()
                     sub_name = str(getattr(app_cmd, "name", "") or "").strip()
                     if root_name and sub_name:
                         if root_name not in cmds_dict:
@@ -1606,7 +1616,9 @@ def _extract_cog_commands(cog: Any) -> dict[str, dict[str, Any]]:
                     desc = getattr(app_cmd, "description", None) or "No description"
                     cmds_dict[cmd_name] = {"desc": str(desc), "subs": []}
                 sub_commands = getattr(app_cmd, "commands", None)
-                if isinstance(sub_commands, (list, tuple, set)):
+                if isinstance(sub_commands, (Sequence, set)) and not isinstance(
+                    sub_commands, (str, bytes)
+                ):
                     for sub in sub_commands:
                         sub_name = str(getattr(sub, "name", "") or "").strip()
                         if sub_name and sub_name not in cmds_dict[cmd_name]["subs"]:
@@ -1707,7 +1719,7 @@ async def handle_guild_modules(request: web.Request) -> web.Response:
             role_map[str(rid)] = str(rname)
 
     bot_cogs_dict: dict[str, Any] = {}
-    if bot is not None and isinstance(getattr(bot, "cogs", None), dict):
+    if bot is not None and isinstance(getattr(bot, "cogs", None), Mapping):
         bot_cogs_dict = dict(bot.cogs)
 
     # Build ordered list of (cog_name, cog_obj). Include unloaded disabled_cogs entries
@@ -1857,14 +1869,18 @@ async def handle_owner_panel(request: web.Request) -> web.Response:
     )
 
     raw_guilds = getattr(bot, "guilds", None) if bot is not None else None
-    guild_count = len(raw_guilds) if isinstance(raw_guilds, (list, tuple, set)) else 0
+    guild_count = (
+        len(raw_guilds)
+        if isinstance(raw_guilds, (Sequence, set)) and not isinstance(raw_guilds, (str, bytes))
+        else 0
+    )
 
     raw_cogs = getattr(bot, "cogs", None) if bot is not None else None
-    cog_count = len(raw_cogs) if isinstance(raw_cogs, dict) else 0
+    cog_count = len(raw_cogs) if isinstance(raw_cogs, Mapping) else 0
 
     raw_extensions = getattr(bot, "extensions", None) if bot is not None else None
     extensions_list: list[dict[str, str]] = []
-    if isinstance(raw_extensions, dict):
+    if isinstance(raw_extensions, Mapping):
         for ext_key in list(raw_extensions.keys()):
             ext_str = str(ext_key)
             short_str = ext_str[5:] if ext_str.startswith("cogs.") else ext_str
@@ -2023,7 +2039,7 @@ async def handle_owner_action(request: web.Request) -> web.Response:
     ext_name = f"cogs.{short_cog}"
     bot = request.app.get(BOT_KEY)
     raw_extensions = getattr(bot, "extensions", None) if bot is not None else None
-    if not isinstance(raw_extensions, dict) or ext_name not in raw_extensions:
+    if not isinstance(raw_extensions, Mapping) or ext_name not in raw_extensions:
         return web.json_response(
             {"error": f"Extension '{ext_name}' is not currently loaded."},
             status=400,
@@ -2804,7 +2820,13 @@ async def handle_api_modules(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON payload must be an object."}, status=400)
 
-    allowed_top_keys = {"disabled_cogs", "command_settings", "dashboard_rev", "csrf_token"}
+    allowed_top_keys = {
+        "disabled_cogs",
+        "command_settings",
+        "reenable_cmds",
+        "dashboard_rev",
+        "csrf_token",
+    }
     if any(k not in allowed_top_keys for k in body):
         return web.json_response(
             {"error": "Unexpected fields in modules payload."},
@@ -2813,9 +2835,12 @@ async def handle_api_modules(request: web.Request) -> web.Response:
 
     has_disabled_cogs = "disabled_cogs" in body
     has_command_settings = "command_settings" in body
-    if not has_disabled_cogs and not has_command_settings:
+    has_reenable_cmds = "reenable_cmds" in body
+    if not has_disabled_cogs and not has_command_settings and not has_reenable_cmds:
         return web.json_response(
-            {"error": "Payload must include disabled_cogs and/or command_settings."},
+            {
+                "error": "Payload must include disabled_cogs, command_settings, and/or reenable_cmds."
+            },
             status=400,
         )
 
@@ -2848,7 +2873,7 @@ async def handle_api_modules(request: web.Request) -> web.Response:
             {"error": "Forbidden: Missing modules.edit permission."},
             status=403,
         )
-    if has_command_settings and "commands.edit" not in access.granted_permissions:
+    if (has_command_settings or has_reenable_cmds) and "commands.edit" not in access.granted_permissions:
         return web.json_response(
             {"error": "Forbidden: Missing commands.edit permission."},
             status=403,
@@ -2858,7 +2883,7 @@ async def handle_api_modules(request: web.Request) -> web.Response:
     guild = access.guild
     bot = request.app.get(BOT_KEY)
     bot_cogs_dict: dict[str, Any] = {}
-    if bot is not None and isinstance(getattr(bot, "cogs", None), dict):
+    if bot is not None and isinstance(getattr(bot, "cogs", None), Mapping):
         bot_cogs_dict = dict(bot.cogs)
 
     updates: dict[str, Any] = {}
@@ -3134,10 +3159,68 @@ async def handle_api_modules(request: web.Request) -> web.Response:
 
         updates["command_settings"] = merged_cmd_settings
 
-    if has_disabled_cogs and has_command_settings:
+    # 3. Validate & apply `reenable_cmds` (re-enable legacy `disabled_cmds` entries only)
+    if has_reenable_cmds:
+        raw_reenable = body.get("reenable_cmds")
+        if not isinstance(raw_reenable, list):
+            return web.json_response(
+                {"error": "reenable_cmds must be a list of strings."},
+                status=400,
+            )
+        if len(raw_reenable) > MAX_COMMAND_LIST_ITEMS:
+            return web.json_response(
+                {"error": f"reenable_cmds cannot exceed {MAX_COMMAND_LIST_ITEMS} entries."},
+                status=400,
+            )
+
+        stored_disabled_cmds_raw = (
+            before_doc.get("disabled_cmds", []) if isinstance(before_doc, dict) else []
+        )
+        stored_disabled_cmds_list: list[str] = (
+            [str(x).strip() for x in stored_disabled_cmds_raw if isinstance(x, str) and x.strip()]
+            if isinstance(stored_disabled_cmds_raw, list)
+            else []
+        )
+        stored_disabled_cmds_set: set[str] = set(stored_disabled_cmds_list)
+
+        reenable_set: set[str] = set()
+        for item in raw_reenable:
+            if not isinstance(item, str):
+                return web.json_response(
+                    {"error": "Every reenable_cmds entry must be a string."},
+                    status=400,
+                )
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in item):
+                return web.json_response(
+                    {"error": "Command names in reenable_cmds cannot contain control characters."},
+                    status=400,
+                )
+            cleaned_cmd = item.strip()
+            if not cleaned_cmd or len(cleaned_cmd) > 64:
+                return web.json_response(
+                    {"error": "Each command name in reenable_cmds must be 1 to 64 characters."},
+                    status=400,
+                )
+            if cleaned_cmd not in stored_disabled_cmds_set:
+                return web.json_response(
+                    {
+                        "error": f"Command '{cleaned_cmd}' is not currently in disabled_cmds (re-enable only)."
+                    },
+                    status=400,
+                )
+            reenable_set.add(cleaned_cmd)
+
+        if reenable_set or (not has_disabled_cogs and not has_command_settings):
+            updates["disabled_cmds"] = [
+                cmd for cmd in stored_disabled_cmds_list if cmd not in reenable_set
+            ]
+
+    if has_disabled_cogs and (has_command_settings or has_reenable_cmds):
         audit_action = "update_modules_and_commands"
     elif has_disabled_cogs:
         audit_action = "update_disabled_cogs"
+    elif has_reenable_cmds and not has_command_settings:
+        audit_action = "reenable_disabled_cmds"
     else:
         audit_action = "update_command_settings"
 

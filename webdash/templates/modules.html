@@ -48,32 +48,48 @@
     </div>
     {% endif %}
 
-    <!-- Read-Only Legacy disabled_cmds Notice (bot.py:108, 113) -->
-    <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 shadow-lg">
+    <!-- Legacy disabled_cmds Section (bot.py:108, 113 — Re-enable Only) -->
+    <section class="bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 shadow-lg" id="legacyDisabledCmdsSection">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
                 <h2 class="text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
                     <i class="fa-solid fa-ban text-amber-400"></i>
-                    Legacy Disabled Commands (<code class="font-mono text-zinc-300">disabled_cmds</code> — Read-Only)
+                    Legacy Disabled Commands (<code class="font-mono text-zinc-300">disabled_cmds</code> — Re-enable Only)
                 </h2>
                 <p class="text-xs text-zinc-400 mt-1">
-                    Enforced by <code class="font-mono text-zinc-300">bot.py</code> (<code class="font-mono text-zinc-300">_dashboard_module_check</code>). Displayed read-only for visibility.
+                    Enforced by <code class="font-mono text-zinc-300">bot.py</code> (<code class="font-mono text-zinc-300">_dashboard_module_check</code>).
+                    {% if can_edit_commands %}Click remove on any entry to re-enable it.{% else %}Displayed read-only (<code class="font-mono text-zinc-300">commands.edit</code> required to re-enable).{% endif %}
                 </p>
             </div>
-            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10 self-start sm:self-auto">
+            <span class="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-lg border border-white/10 self-start sm:self-auto" id="legacyDisabledCmdsCount">
                 {{ disabled_cmds|length }} command{% if disabled_cmds|length != 1 %}s{% endif %}
             </span>
         </div>
         {% if disabled_cmds %}
-        <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-white/5">
+        <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-white/5" id="legacyDisabledCmdsList">
             {% for cmd_entry in disabled_cmds %}
-            <span class="px-3 py-1 rounded-lg bg-red-500/15 border border-red-500/30 text-xs font-mono font-bold text-red-300">
-                /{{ cmd_entry }}
+            <span
+                class="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-red-500/15 border border-red-500/30 text-xs font-mono font-bold text-red-300"
+                data-legacy-cmd-badge="{{ cmd_entry }}"
+            >
+                <span>/{{ cmd_entry }}</span>
+                {% if can_edit_commands %}
+                <button
+                    type="button"
+                    data-action="reenable-legacy-cmd"
+                    data-reenable-cmd="{{ cmd_entry }}"
+                    title="Re-enable /{{ cmd_entry }}"
+                    aria-label="Re-enable /{{ cmd_entry }}"
+                    class="ml-1 px-2 py-0.5 rounded bg-red-500/20 hover:bg-emerald-500/30 text-red-200 hover:text-emerald-200 border border-red-400/30 hover:border-emerald-400/40 text-[10px] font-sans font-extrabold uppercase tracking-wider transition cursor-pointer"
+                >
+                    &times; Remove
+                </button>
+                {% endif %}
             </span>
             {% endfor %}
         </div>
         {% else %}
-        <p class="text-xs text-zinc-500 italic mt-3">No top-level commands in <code class="font-mono">disabled_cmds</code>.</p>
+        <p class="text-xs text-zinc-500 italic mt-3" id="legacyDisabledCmdsEmpty">No top-level commands in <code class="font-mono">disabled_cmds</code>.</p>
         {% endif %}
     </section>
 
@@ -463,6 +479,48 @@ document.addEventListener("click", function (event) {
         } finally {
             saveBtn.disabled = false;
         }
+    });
+
+    rootEl.querySelectorAll("[data-action='reenable-legacy-cmd']").forEach(function (removeBtn) {
+        removeBtn.addEventListener("click", async function () {
+            const cmdName = removeBtn.getAttribute("data-reenable-cmd") || "";
+            if (!cmdName) return;
+            const rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10) || 0;
+            removeBtn.disabled = true;
+            try {
+                const resp = await fetch("/api/modules/{{ guild_id }}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRF-Token": getCsrfToken()
+                    },
+                    body: JSON.stringify({
+                        dashboard_rev: rev,
+                        reenable_cmds: [cmdName]
+                    })
+                });
+                const respData = await resp.json().catch(function () { return {}; });
+                if (resp.ok && typeof respData.dashboard_rev === "number") {
+                    rootEl.setAttribute("data-dashboard-rev", String(respData.dashboard_rev));
+                    const badgeEl = removeBtn.closest("[data-legacy-cmd-badge]");
+                    if (badgeEl) {
+                        badgeEl.remove();
+                    }
+                    const remaining = rootEl.querySelectorAll("[data-legacy-cmd-badge]").length;
+                    const countEl = document.getElementById("legacyDisabledCmdsCount");
+                    if (countEl) {
+                        countEl.textContent = remaining + " command" + (remaining === 1 ? "" : "s");
+                    }
+                    showStatus("Re-enabled /" + cmdName + " (rev " + respData.dashboard_rev + ").", false);
+                } else {
+                    removeBtn.disabled = false;
+                    showStatus(respData.error || ("Failed to re-enable /" + cmdName + "."), true);
+                }
+            } catch (_err) {
+                removeBtn.disabled = false;
+                showStatus("Network error while re-enabling command.", true);
+            }
+        });
     });
 })();
 {% endif %}

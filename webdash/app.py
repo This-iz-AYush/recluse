@@ -15,7 +15,7 @@ from aiohttp import web
 
 from webdash.audit import AuditLogger
 from webdash.auth import SESSION_COOKIE_NAME, SessionManager
-from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache
+from webdash.cache import GuildConfigCache, IpBanCache, ShortTTLCache, VisitTracker
 from webdash.router import (
     AUDIT_LOGGER_KEY,
     BOT_KEY,
@@ -26,6 +26,7 @@ from webdash.router import (
     OWNER_ID_CACHE_KEY,
     RATE_LIMITER_KEY,
     SESSION_MANAGER_KEY,
+    VISIT_TRACKER_KEY,
     register_routes,
 )
 from webdash.security import InMemoryRateLimiter, create_security_middleware
@@ -40,6 +41,7 @@ def create_webdash_app(
     session_manager: SessionManager | None = None,
     guild_config_cache: GuildConfigCache | None = None,
     ip_ban_cache: IpBanCache | None = None,
+    visit_tracker: VisitTracker | None = None,
     member_cache: ShortTTLCache | None = None,
     owner_id_cache: ShortTTLCache | None = None,
     audit_logger: AuditLogger | None = None,
@@ -55,6 +57,7 @@ def create_webdash_app(
     limiter = rate_limiter if rate_limiter is not None else InMemoryRateLimiter()
     sessions = session_manager if session_manager is not None else SessionManager(bot)
     ban_cache = ip_ban_cache if ip_ban_cache is not None else IpBanCache(bot)
+    visits = visit_tracker if visit_tracker is not None else VisitTracker(bot)
 
     existing_cfg_cache = getattr(bot, "guild_config", None) if bot is not None else None
     if guild_config_cache is not None:
@@ -90,6 +93,7 @@ def create_webdash_app(
         limiter,
         session_loader=_load_session,
         ip_ban_cache=ban_cache,
+        visit_tracker=visits,
         trusted_hops=trusted_hops,
         origin_secret=origin_secret,
         require_origin_secret=require_origin_secret,
@@ -101,6 +105,7 @@ def create_webdash_app(
     app[SESSION_MANAGER_KEY] = sessions
     app[GUILD_CONFIG_CACHE_KEY] = cfg_cache
     app[IP_BAN_CACHE_KEY] = ban_cache
+    app[VISIT_TRACKER_KEY] = visits
     app[MEMBER_CACHE_KEY] = mem_cache
     app[OWNER_ID_CACHE_KEY] = own_cache
     app[AUDIT_LOGGER_KEY] = auditor
