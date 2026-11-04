@@ -1704,7 +1704,9 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
             {"misc_enabled": {"old": True, "new": False}},
         )
 
-        # 4. Saving the exact same value ("groq") still produces an audit row with non-empty changes (3 -> 4)
+        # 4. Saving the exact same value ("groq") is a no-op: returns status="noop", no DB write, no rev bump, no audit row
+        self.fake_db.guild_settings.update_one.reset_mock()
+        self.fake_ai_cog._invalidate_guild_cfg.reset_mock()
         r4 = await self.client.post(
             f"/api/settings/{self.guild_id}",
             json={
@@ -1716,14 +1718,14 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
             cookies={SESSION_COOKIE_NAME: admin_sid},
         )
         self.assertEqual(r4.status, 200)
-        self.assertEqual((await r4.json())["dashboard_rev"], 4)
-        self.assertEqual(len(self.audit_rows), 4)
-        self.assertEqual(
-            self.audit_rows[-1]["changes"],
-            {"default_ai_model": {"old": "groq", "new": "groq"}},
-        )
+        d4 = await r4.json()
+        self.assertEqual(d4, {"status": "noop", "dashboard_rev": 3})
+        self.fake_db.guild_settings.update_one.assert_not_awaited()
+        self.fake_ai_cog._invalidate_guild_cfg.assert_not_called()
+        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 3)
+        self.assertEqual(len(self.audit_rows), 3)
 
-        # 5. Stale dashboard_rev (sending rev=2 when DB is at 4) -> 409 Conflict, no mutation, no audit row
+        # 5. Stale dashboard_rev (sending rev=2 when DB is at 3) -> 409 Conflict, no mutation, no audit row
         r_conflict = await self.client.post(
             f"/api/settings/{self.guild_id}",
             json={
@@ -1738,8 +1740,8 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
         conflict_data = await r_conflict.json()
         self.assertIn("reload", conflict_data.get("error", "").lower())
         self.assertEqual(self.guild_settings_doc["default_ai_model"], "groq")
-        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 4)
-        self.assertEqual(len(self.audit_rows), 4)
+        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 3)
+        self.assertEqual(len(self.audit_rows), 3)
 
         # 6. toggle_lockdown -> 501 Not Implemented, no DB mutation, no audit row
         r_lock = await self.client.post(
@@ -1749,8 +1751,8 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
             cookies={SESSION_COOKIE_NAME: admin_sid},
         )
         self.assertEqual(r_lock.status, 501)
-        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 4)
-        self.assertEqual(len(self.audit_rows), 4)
+        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 3)
+        self.assertEqual(len(self.audit_rows), 3)
 
     async def test_checkpoint_3c_batch1_settings_attack_vectors(self):
         """
@@ -3149,6 +3151,223 @@ class TestWebdashRoutesPiece2(AioHTTPTestCase):
         self.assertIn("not currently banned", unban_noop2_json.get("message", ""))
         self.assertEqual(len(self.audit_rows), 2)
 
+    async def test_toggle_ai_chat_and_toggle_automod_permissions_noop_audit_and_ui(self):
+        """
+        Verify `toggleAiChat` and `toggleAutomod` end-to-end:
+        - Permission checks (`ai.edit` required for `toggleAiChat`, `automod.edit` required for `toggleAutomod`).
+        - Strict boolean validation (reject `"true"`, `"false"`, `1`, `0`, `None`).
+        - No-op handling when key is absent in DB (`ai_enabled` effective default True,
+          `automod_enabled` effective default False): returns 200 `{"status": "noop"}` with
+          NO DB write, NO revision bump, and NO audit row.
+        - Real change writes ONLY `{"ai_enabled": ...}` or `{"automod_enabled": ...}`, bumps `dashboard_rev`,
+          invalidates `GuildConfigCache` + `ai_cog._invalidate_guild_cfg`, and records an audit row
+          whose `"old"` value is the effective boolean default (not `None`) when the key was absent.
+        - UI rendering on `/wizard` and `/automod`: toggle switches, badges, anti-spam warning with
+          effective values (`5 messages in 5 s -> mute 10 min` by default), `/antispam` note, and
+          case-insensitive substring matching copy.
+        """
+        from webdash.router import GUILD_CONFIG_CACHE_KEY
+
+        # Start with a guild_settings document where `ai_enabled` and `automod_enabled` are ABSENT
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "banned_words": ["spamword"],
+            "default_ai_model": "auto",
+            "misc_enabled": True,
+            "dashboard_permissions": {
+                "role_mappings": {
+                    "555": {
+                        "allow": ["overview.view", "ai.view", "automod.view", "settings.view", "settings.edit"],
+                        "deny": [],
+                    },
+                }
+            },
+        }
+        self.audit_rows.clear()
+        self.fake_db.guild_settings.update_one.reset_mock()
+        self.fake_ai_cog._invalidate_guild_cfg.reset_mock()
+
+        admin_sid, admin_doc = await self._create_test_session(self.admin_user_id, "AdminActor")
+        mod_sid, mod_doc = await self._create_test_session(self.mod_user_id, "ViewerMod")
+        admin_headers = {
+            "X-CSRF-Token": admin_doc["csrf_token"],
+            "X-Recluse-Origin-Secret": "test_worker_secret",
+            "X-Recluse-Client-IP": "198.51.100.42",
+        }
+        mod_headers = {"X-CSRF-Token": mod_doc["csrf_token"]}
+
+        # 1. Permission denials: ViewerMod has settings.edit + ai.view + automod.view, but lacks ai.edit & automod.edit
+        r_mod_ai = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": False, "dashboard_rev": 0},
+            headers=mod_headers,
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_mod_ai.status, 403)
+
+        r_mod_auto = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAutomod", "enabled": True, "dashboard_rev": 0},
+            headers=mod_headers,
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_mod_auto.status, 403)
+
+        # 2. Strict boolean validation for toggleAiChat and toggleAutomod
+        for bad_enabled in ("true", "false", 1, 0, None, ["true"], {"enabled": True}):
+            self.limiter.reset()
+            for mod_name in ("toggleAiChat", "toggleAutomod"):
+                r_bad = await self.client.post(
+                    f"/api/settings/{self.guild_id}",
+                    json={"type": "toggle", "module": mod_name, "enabled": bad_enabled, "dashboard_rev": 0},
+                    headers=admin_headers,
+                    cookies={SESSION_COOKIE_NAME: admin_sid},
+                )
+                self.assertEqual(r_bad.status, 400, f"Expected 400 for {mod_name} enabled={bad_enabled!r}")
+
+        # 3. No-op when key is absent and requested value equals effective default:
+        #    ai_enabled absent -> effective True; automod_enabled absent -> effective False
+        self.limiter.reset()
+        r_noop_ai = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": True, "dashboard_rev": 0},
+            headers=admin_headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_noop_ai.status, 200)
+        self.assertEqual(await r_noop_ai.json(), {"status": "noop", "dashboard_rev": 0})
+        self.assertNotIn("ai_enabled", self.guild_settings_doc)
+        self.assertNotIn("dashboard_rev", self.guild_settings_doc)
+        self.fake_db.guild_settings.update_one.assert_not_awaited()
+        self.fake_ai_cog._invalidate_guild_cfg.assert_not_called()
+        self.assertEqual(len(self.audit_rows), 0)
+
+        r_noop_auto = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAutomod", "enabled": False, "dashboard_rev": 0},
+            headers=admin_headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_noop_auto.status, 200)
+        self.assertEqual(await r_noop_auto.json(), {"status": "noop", "dashboard_rev": 0})
+        self.assertNotIn("automod_enabled", self.guild_settings_doc)
+        self.fake_db.guild_settings.update_one.assert_not_awaited()
+        self.assertEqual(len(self.audit_rows), 0)
+
+        # 4. Real change on toggleAiChat (absent True -> False, rev 0 -> 1):
+        #    writes ONLY {"ai_enabled": False}, bumps rev to 1, invalidates caches, audits old=True -> new=False
+        await self.app[GUILD_CONFIG_CACHE_KEY].get(self.guild_id)
+        r_ai_off = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": False, "dashboard_rev": 0},
+            headers=admin_headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_ai_off.status, 200)
+        self.assertEqual(await r_ai_off.json(), {"status": "ok", "dashboard_rev": 1})
+        self.assertIs(self.guild_settings_doc["ai_enabled"], False)
+        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 1)
+        self.assertEqual(self.guild_settings_doc["banned_words"], ["spamword"])
+        self.assertEqual(self.guild_settings_doc["default_ai_model"], "auto")
+        self.fake_ai_cog._invalidate_guild_cfg.assert_called_once_with(self.guild_id)
+        self.assertEqual(len(self.audit_rows), 1)
+        self.assertEqual(self.audit_rows[-1]["module"], "ai")
+        self.assertEqual(self.audit_rows[-1]["action"], "toggle_ai_chat")
+        self.assertEqual(
+            self.audit_rows[-1]["changes"],
+            {"ai_enabled": {"old": True, "new": False}},
+        )
+
+        # Repeat same False at rev 1 -> noop
+        self.fake_db.guild_settings.update_one.reset_mock()
+        r_ai_off_again = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": False, "dashboard_rev": 1},
+            headers=admin_headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_ai_off_again.status, 200)
+        self.assertEqual(await r_ai_off_again.json(), {"status": "noop", "dashboard_rev": 1})
+        self.fake_db.guild_settings.update_one.assert_not_awaited()
+        self.assertEqual(len(self.audit_rows), 1)
+
+        # 5. Real change on toggleAutomod (absent False -> True, rev 1 -> 2):
+        #    writes ONLY {"automod_enabled": True}, bumps rev to 2, invalidates caches, audits old=False -> new=True
+        self.fake_ai_cog._invalidate_guild_cfg.reset_mock()
+        r_auto_on = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAutomod", "enabled": True, "dashboard_rev": 1},
+            headers=admin_headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_auto_on.status, 200)
+        self.assertEqual(await r_auto_on.json(), {"status": "ok", "dashboard_rev": 2})
+        self.assertIs(self.guild_settings_doc["automod_enabled"], True)
+        self.assertEqual(self.guild_settings_doc["dashboard_rev"], 2)
+        self.fake_ai_cog._invalidate_guild_cfg.assert_called_once_with(self.guild_id)
+        self.assertEqual(len(self.audit_rows), 2)
+        self.assertEqual(self.audit_rows[-1]["module"], "automod")
+        self.assertEqual(self.audit_rows[-1]["action"], "toggle_automod")
+        self.assertEqual(
+            self.audit_rows[-1]["changes"],
+            {"automod_enabled": {"old": False, "new": True}},
+        )
+
+        # 6. Verify Wizard and AutoMod HTML rendering (toggle switches, anti-spam summary, substring copy)
+        r_wiz_admin = await self.client.get(
+            f"/wizard/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_wiz_admin.status, 200)
+        wiz_admin_page = await r_wiz_admin.text()
+        self.assertIn('id="toggleAiChat"', wiz_admin_page)
+        self.assertIn('id="aiChatStatusBadge"', wiz_admin_page)
+        self.assertIn("AI Chat: Disabled", wiz_admin_page)
+        self.assertIn('"toggleAiChat"', wiz_admin_page)
+        self.assertIn("/imagine", wiz_admin_page)
+        self.assertIn("/describe", wiz_admin_page)
+        self.assertIn("/choose_ai", wiz_admin_page)
+        self.assertIn("Modules &amp; Commands", wiz_admin_page)
+        self.assertIsNone(INLINE_HANDLER_RE.search(wiz_admin_page))
+
+        r_wiz_mod = await self.client.get(
+            f"/wizard/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: mod_sid},
+        )
+        self.assertEqual(r_wiz_mod.status, 200)
+        wiz_mod_page = await r_wiz_mod.text()
+        self.assertIn('id="toggleAiChat"', wiz_mod_page)
+        self.assertNotIn('module: "toggleAiChat"', wiz_mod_page)
+
+        # AutoMod page with default anti-spam settings ("5 messages in 5 s -> mute 10 min")
+        r_auto_default = await self.client.get(
+            f"/automod/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_auto_default.status, 200)
+        auto_default_page = await r_auto_default.text()
+        self.assertIn('id="toggleAutomod"', auto_default_page)
+        self.assertIn('id="automodStatusBadge"', auto_default_page)
+        self.assertIn("AutoMod: Active", auto_default_page)
+        self.assertIn('"toggleAutomod"', auto_default_page)
+        self.assertIn("5 messages in 5 s -&gt; mute 10 min", auto_default_page)
+        self.assertIn("/antispam", auto_default_page)
+        self.assertIn("no administrator or moderator exemption", auto_default_page)
+        self.assertIn("case-insensitive substring", auto_default_page.lower())
+        self.assertNotIn("Exact words or phrases", auto_default_page)
+        self.assertIsNone(INLINE_HANDLER_RE.search(auto_default_page))
+
+        # AutoMod page with custom anti-spam settings ("8 messages in 12 s -> kick")
+        self.guild_settings_doc["antispam_threshold"] = 8
+        self.guild_settings_doc["antispam_window"] = 12
+        self.guild_settings_doc["antispam_action"] = "kick"
+        r_auto_custom = await self.client.get(
+            f"/automod/{self.guild_id}",
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_auto_custom.status, 200)
+        auto_custom_page = await r_auto_custom.text()
+        self.assertIn("8 messages in 12 s -&gt; kick", auto_custom_page)
 
 
 class TestDashboardCogWebdashWiring(unittest.IsolatedAsyncioTestCase):

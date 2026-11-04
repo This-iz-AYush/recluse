@@ -9,21 +9,39 @@
      data-dashboard-rev="{{ dashboard_rev }}"
      class="min-h-[65vh] flex items-center justify-center">
     <div class="max-w-4xl w-full bg-[#14151c]/80 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-10 shadow-[0_15px_50px_0_rgba(0,0,0,0.6),inset_0_1px_1px_rgba(255,255,255,0.05)]">
-        <div class="mb-10 border-b border-white/10 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
-            <div class="flex items-center gap-5">
-                <div class="p-4 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400 text-2xl shadow-inner shrink-0">
-                    <i class="fa-solid fa-microchip"></i>
+        <div class="mb-6 pb-6 border-b border-white/10 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+                <div class="flex items-center gap-5">
+                    <div class="p-4 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400 text-2xl shadow-inner shrink-0">
+                        <i class="fa-solid fa-microchip"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
+                        <p class="text-sm text-zinc-400 mt-1">
+                            Choose the primary generative model for chat interactions in this server (<code class="font-mono text-xs text-zinc-300">default_ai_model</code>).
+                        </p>
+                    </div>
                 </div>
-                <div>
-                    <h2 class="text-2xl font-extrabold text-white drop-shadow-md tracking-tight">Select Default AI Core</h2>
-                    <p class="text-sm text-zinc-400 mt-1">
-                        Choose the primary generative model for chat interactions in this server (<code class="font-mono text-xs text-zinc-300">default_ai_model</code>).
-                    </p>
+                <div class="flex items-center gap-3 self-start sm:self-auto">
+                    <span id="aiChatStatusBadge"
+                          class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border {% if ai_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                        <i class="fa-solid fa-robot mr-1.5"></i>AI Chat: {% if ai_enabled %}Enabled{% else %}Disabled{% endif %}
+                    </span>
+                    <label for="toggleAiChat"
+                           class="relative inline-flex items-center {% if can_edit_ai %}cursor-pointer{% else %}cursor-not-allowed opacity-70{% endif %}">
+                        <span class="sr-only">Toggle AI Chat</span>
+                        <input type="checkbox"
+                               id="toggleAiChat"
+                               {% if not can_edit_ai %}disabled{% endif %}
+                               {% if ai_enabled %}checked{% endif %}
+                               class="sr-only peer">
+                        <div class="w-12 h-6 bg-black/60 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-400 peer-checked:after:bg-white after:border-zinc-500 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 border border-white/15 shadow-inner"></div>
+                    </label>
                 </div>
             </div>
-            <span class="px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border self-start sm:self-auto {% if ai_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
-                <i class="fa-solid fa-robot mr-1.5"></i>AI Chat: {% if ai_enabled %}Enabled{% else %}Disabled{% endif %}
-            </span>
+            <p class="text-xs text-zinc-400 leading-relaxed bg-black/30 border border-white/5 rounded-xl px-4 py-3">
+                <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Turning AI Chat off stops <code class="font-mono text-zinc-300">@Recluse</code> mention replies in channels, but does not disable slash commands like <code class="font-mono text-zinc-300">/imagine</code>, <code class="font-mono text-zinc-300">/describe</code>, <code class="font-mono text-zinc-300">/choose_ai</code>, or <code class="font-mono text-zinc-300">/clear_memory</code> (disable the <code class="font-mono text-zinc-300">AI</code> module under <strong>Modules &amp; Commands</strong> to block those too).
+            </p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
@@ -69,7 +87,7 @@
             </button>
             {% else %}
             <p class="text-xs text-zinc-400">
-                <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">ai.edit</code> permission required to change the default AI model).
+                <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">ai.edit</code> permission required to toggle AI chat or change the default AI model).
             </p>
             {% endif %}
         </div>
@@ -83,8 +101,10 @@
 document.addEventListener("DOMContentLoaded", function () {
     var rootEl = document.getElementById("wizardRoot");
     var saveBtn = document.getElementById("saveBtn");
+    var toggleEl = document.getElementById("toggleAiChat");
+    var badgeEl = document.getElementById("aiChatStatusBadge");
     var statusBox = document.getElementById("wizardStatus");
-    if (!rootEl || !saveBtn || !statusBox) {
+    if (!rootEl || !statusBox) {
         return;
     }
 
@@ -97,56 +117,127 @@ document.addEventListener("DOMContentLoaded", function () {
         );
     }
 
-    saveBtn.addEventListener("click", function () {
-        if (saveBtn.disabled) {
+    function renderAiBadge(enabled) {
+        if (!badgeEl) {
             return;
         }
-        var checkedRadio = rootEl.querySelector('input[name="ai_model"]:checked');
-        if (!checkedRadio) {
-            showStatus("Please select an AI model.", true);
-            return;
-        }
-        var selectedModel = checkedRadio.value;
-        var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
-        if (isNaN(rev) || rev < 0) {
-            rev = 0;
-        }
+        badgeEl.className = "px-3.5 py-1.5 rounded-xl text-xs font-extrabold uppercase tracking-wider border " + (
+            enabled
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                : "bg-zinc-800/80 border-white/10 text-zinc-400"
+        );
+        badgeEl.textContent = "";
+        var icon = document.createElement("i");
+        icon.className = "fa-solid fa-robot mr-1.5";
+        badgeEl.appendChild(icon);
+        badgeEl.appendChild(document.createTextNode("AI Chat: " + (enabled ? "Enabled" : "Disabled")));
+    }
 
-        saveBtn.disabled = true;
-        fetch("/api/settings/{{ guild_id }}", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-Token": getCsrfToken()
-            },
-            body: JSON.stringify({
-                type: "update_ai_model",
-                model: selectedModel,
-                dashboard_rev: rev
-            })
-        })
-        .then(function (resp) {
-            return resp.json().then(function (data) {
-                return { status: resp.status, ok: resp.ok, data: data };
-            });
-        })
-        .then(function (res) {
-            saveBtn.disabled = false;
-            if (res.ok && res.data && res.data.status === "ok") {
-                if (typeof res.data.dashboard_rev === "number") {
-                    rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
-                }
-                showStatus("Default AI model updated to " + selectedModel + ".", false);
-            } else {
-                var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update AI model.";
-                showStatus(errMsg, true);
+    if (toggleEl) {
+        toggleEl.addEventListener("change", function () {
+            if (toggleEl.disabled) {
+                return;
             }
-        })
-        .catch(function () {
-            saveBtn.disabled = false;
-            showStatus("Network error while saving AI model.", true);
+            var desiredState = Boolean(toggleEl.checked);
+            var previousState = !desiredState;
+            var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
+            if (isNaN(rev) || rev < 0) {
+                rev = 0;
+            }
+
+            toggleEl.disabled = true;
+            fetch("/api/settings/{{ guild_id }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": getCsrfToken()
+                },
+                body: JSON.stringify({
+                    type: "toggle",
+                    module: "toggleAiChat",
+                    enabled: desiredState,
+                    dashboard_rev: rev
+                })
+            })
+            .then(function (resp) {
+                return resp.json().then(function (data) {
+                    return { status: resp.status, ok: resp.ok, data: data };
+                });
+            })
+            .then(function (res) {
+                toggleEl.disabled = false;
+                if (res.ok && res.data && (res.data.status === "ok" || res.data.status === "noop")) {
+                    if (typeof res.data.dashboard_rev === "number") {
+                        rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
+                    }
+                    renderAiBadge(desiredState);
+                    showStatus("AI Chat " + (desiredState ? "enabled." : "disabled."), false);
+                } else {
+                    toggleEl.checked = previousState;
+                    var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update AI Chat toggle.";
+                    showStatus(errMsg, true);
+                }
+            })
+            .catch(function () {
+                toggleEl.disabled = false;
+                toggleEl.checked = previousState;
+                showStatus("Network error while updating AI Chat toggle.", true);
+            });
         });
-    });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener("click", function () {
+            if (saveBtn.disabled) {
+                return;
+            }
+            var checkedRadio = rootEl.querySelector('input[name="ai_model"]:checked');
+            if (!checkedRadio) {
+                showStatus("Please select an AI model.", true);
+                return;
+            }
+            var selectedModel = checkedRadio.value;
+            var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
+            if (isNaN(rev) || rev < 0) {
+                rev = 0;
+            }
+
+            saveBtn.disabled = true;
+            fetch("/api/settings/{{ guild_id }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": getCsrfToken()
+                },
+                body: JSON.stringify({
+                    type: "update_ai_model",
+                    model: selectedModel,
+                    dashboard_rev: rev
+                })
+            })
+            .then(function (resp) {
+                return resp.json().then(function (data) {
+                    return { status: resp.status, ok: resp.ok, data: data };
+                });
+            })
+            .then(function (res) {
+                saveBtn.disabled = false;
+                if (res.ok && res.data && (res.data.status === "ok" || res.data.status === "noop")) {
+                    if (typeof res.data.dashboard_rev === "number") {
+                        rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
+                    }
+                    showStatus("Default AI model updated to " + selectedModel + ".", false);
+                } else {
+                    var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update AI model.";
+                    showStatus(errMsg, true);
+                }
+            })
+            .catch(function () {
+                saveBtn.disabled = false;
+                showStatus("Network error while saving AI model.", true);
+            });
+        });
+    }
 });
 </script>
 {% endif %}

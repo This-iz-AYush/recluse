@@ -1,183 +1,109 @@
-# Implementation Plan — Pre-3C Fix & Checkpoint 3C (Mutation Endpoints)
+# Implementation Plan — AI Chat Toggle (`wizard.html`) & AutoMod Toggle (`automod.html`)
 
-## 1. Architecture & Global Rules for Checkpoint 3C
+Interactive toggle switches for **AI Chat** (`ai_enabled`) on the Setup Wizard page and **AutoMod** (`automod_enabled`) on the AutoMod page, backed by `POST /api/settings/{guild_id}` with strict boolean validation, optimistic concurrency (`dashboard_rev`), immediate cache invalidation, and audit logging.
 
-1. **Zero Cog Changes & Legacy Parity**:
-   - Do **not** modify `bot.py` or any file in `cogs/` (`cogs/dashboard.py` legacy path when `WEBDASH_ENABLED=0` and lazy `webdash` imports remain untouched).
-   - Ignore AI Studio web preview / dev server messages; never alter project configs for web preview.
-2. **Optimistic Concurrency via `dashboard_rev`**:
-   - `dashboard_rev` is an integer field on `db.guild_settings` read and mutated **exclusively** by `webdash`. Missing or non-`int` (or `bool`) values are treated as `0`.
-   - **Fresh Read on Edit Pages**: `GET /automod/{guild_id}`, `GET /wizard/{guild_id}`, `GET /misc/{guild_id}`, and `GET /modules/{guild_id}` fetch `db.guild_settings.find_one({"guild_id": gid})` **directly from Mongo** (bypassing `GuildConfigCache`) so the rendered controls and `data-dashboard-rev="{{ dashboard_rev }}"` always reflect the latest persisted state. Read-only pages (`/overview/{guild_id}`, `/lockdown/{guild_id}`, `/logs/{guild_id}`) continue using `GuildConfigCache`.
-   - **Delta Payloads + Conditional Write**:
-     - Client sends `dashboard_rev` (must be `int` and not `bool`, `>= 0`) plus only the changed fields.
-     - Server reads the current document (`before_doc = await db.guild_settings.find_one({"guild_id": gid})`) for `before` audit snapshot and validation (such as checking existing `disabled_cogs`).
-     - Conditional Mongo update:
-       - If `expected_rev == 0`:
-         - If `before_doc is None`: `update_one({"guild_id": gid, "dashboard_rev": {"$exists": False}}, {"$set": {**updates, "guild_id": gid}, "$inc": {"dashboard_rev": 1}}, upsert=True)` (catching `DuplicateKeyError` as a `409 Conflict`).
-         - If `before_doc is not None`: `update_one({"guild_id": gid, "$or": [{"dashboard_rev": 0}, {"dashboard_rev": {"$exists": False}}]}, {"$set": updates, "$inc": {"dashboard_rev": 1}}, upsert=False)`.
-       - If `expected_rev > 0`:
-         - `update_one({"guild_id": gid, "dashboard_rev": expected_rev}, {"$set": updates, "$inc": {"dashboard_rev": 1}}, upsert=False)`.
-     - If `matched_count == 0` (and not upserted), return HTTP `409 Conflict` with `{"error": "Someone else changed these settings. Please reload the page and try again."}` and perform no audit write.
-     - On success, return `{"status": "ok", "dashboard_rev": expected_rev + 1, ...}` so the client updates its local `dashboard_rev` for subsequent saves without reloading.
-3. **Cache Invalidation After Every Guild Write**:
-   - Call `GuildConfigCache.invalidate(gid)` (`webdash/cache.py:42`).
-   - Call `ai_cog = bot.get_cog("AI")` and if `ai_cog and hasattr(ai_cog, "_invalidate_guild_cfg"): ai_cog._invalidate_guild_cfg(gid)` (`cogs/ai.py:589-590`).
-4. **Audit Logging (`AuditLogger.record`)**:
-   - Every successful mutation records an entry in `db.dashboard_audit` (`webdash/audit.py:58-120`) with `guild_id`, `actor_id`, `actor_tag`, `action`, `before`, `after`, and trusted `ip`.
-5. **Template & JS Safety**:
-   - Jinja2 `autoescape=True` stays enabled; zero inline event handlers (`on*=`); zero `window.alert` / `window.confirm` / `window.open`; never name any local variable `html`.
+## User Review & Critical Decisions
 
----
+> [!IMPORTANT]
+> Both the **AI Chat toggle** (`toggleAiChat` → `ai_enabled`, default `True`) and the optional **AutoMod toggle** (`toggleAutomod` → `automod_enabled`, default `False`) are included in this plan. Neither `bot.py` nor any file under `cogs/` will be modified.
 
-## 2. Small-Batch Slicing
-
-### Batch 0 — Pre-3C Fix: Exact-Case `is_disabled` in `/modules/{guild_id}`
-
-- **Files**:
-  - `webdash/router.py` (around lines 1514–1585)
-  - `tests/test_webdash_routes.py`
-- **Changes**:
-  - Remove `disabled_cogs_lower` from the `is_disabled` calculation in `GET /modules/{guild_id}`.
-  - Compute `is_disabled = cog_name_str in disabled_cogs` using **exact, case-sensitive** string matching to match `bot.py:110` (`if cog_name and cog_name in disabled_cogs:`) and `cogs/core.py:745, 803` (`if cog_name and cog_name in settings.get("disabled_cogs", []):`).
-  - Keep `PROTECTED_COGS_LOWER` (`webdash/router.py:57-66`) case-insensitive **only** for deciding whether a cog is protected (`is_protected = cog_lower in PROTECTED_COGS_LOWER`) and therefore hidden when `not is_disabled`.
-  - Track seen cog names by exact string (`seen_cog_names: set[str]`) when appending unloaded/extra `disabled_cogs` entries (`webdash/router.py:1557-1561`) so that a bogus lowercase entry like `"core"` in `disabled_cogs` does **not** mark the loaded `"Core"` cog as disabled (and does not expose `"Core"` via the recovery rule). Also filter extra unloaded entries so any entry matching `PROTECTED_COGS_LOWER` with wrong case (like `"core"`) is not rendered as a disabled protected cog.
-- **Tests (`tests/test_webdash_routes.py`)**:
-  - Update fixture `disabled_cogs` from `["sports"]` to `["Sports"]` where testing a legitimately disabled cog.
-  - Add `test_modules_lowercase_core_not_shown_as_disabled`: seed `disabled_cogs: ["core"]` in `db.guild_settings`, load `GET /modules/{guild_id}`, and assert `"Core"` is **not** rendered as disabled (and is hidden as an enabled protected cog).
+- **Exact `ai_enabled` Behavior Verified from `cogs/ai.py` & `cogs/admin.py`**:
+  - **`cogs/ai.py:607-609` (`AI.on_message`)**: After ignoring bots (`line 571`), globally blacklisted users (`line 575`), running the AI-cog banned-word check if `automod_enabled` is truthy (`lines 591-599`), and checking `if self.bot.user not in message.mentions: return` (`lines 603-605`), `AI.on_message` checks `if not cfg.get("ai_enabled", True): return` (`lines 607-609`). Missing `ai_enabled` defaults to `True`.
+  - **Slash commands in `cogs/ai.py` do NOT check `ai_enabled`**:
+    - `/choose_ai` (`cogs/ai.py:399-423`) — sets `self._model_pref[interaction.user.id]`; never reads `ai_enabled`.
+    - `/clear_memory` (`cogs/ai.py:427-437`) — clears `self._memory[interaction.user.id]`; never reads `ai_enabled`.
+    - `/imagine` (`cogs/ai.py:441-523`) — checks `self._blacklisted` (`line 445`) and generates images via Pollinations.ai; never reads `ai_enabled`.
+    - `/describe` (`cogs/ai.py:527-563`) — analyzes an attached image via `self._gemini`; never reads `ai_enabled`.
+  - **`cogs/admin.py` readers & writers of `ai_enabled`**:
+    - `cogs/admin.py:66-77` (`_save_settings`) — updates `db.guild_settings` and calls `ai_cog._invalidate_guild_cfg(guild_id)` (`lines 75-77`, matching `cogs/ai.py:243-269`).
+    - `cogs/admin.py:240` (`/config`) — displays `"AI": cfg.get("ai_enabled", True)`.
+    - `cogs/admin.py:278, 297, 306` (`/modules`) — maps choice `"ai"` ("AI Chat") to `"ai_enabled"`.
+    - `cogs/admin.py:797, 812, 822-823, 837, 841` (`/aiconfig`) — updates `update["ai_enabled"] = ai_enabled` and displays `"✅" if cfg.get("ai_enabled", True) else "❌"`.
+  - **UI Copy for `wizard.html`**:
+    > *"Turning AI Chat off stops `@Recluse` mention replies in channels, but does not disable slash commands like `/imagine`, `/describe`, `/choose_ai`, or `/clear_memory` (disable the `AI` module under Modules & Commands to block all AI commands)."*
+- **Exact `automod_enabled` Behavior Verified from `bot.py`, `cogs/ai.py`, & `cogs/admin.py`**:
+  - **`bot.py:189` (`Recluse.on_message`)**: Checks `if cfg.get("automod_enabled"):` (default `False` when missing) to gate both banned-word deletion/strikes (`bot.py:191-216`) and anti-spam rate tracking/punishments (`bot.py:219-268`).
+  - **`cogs/ai.py:591` (`AI.on_message`)**: Checks `if cfg.get("automod_enabled") and message.guild:` (cached in `AI._guild_cfg`, invalidated via `AI._invalidate_guild_cfg` at `cogs/ai.py:267-269`) to gate `AI._automod_strike` on `banned_words` (`cogs/ai.py:593-599`).
+  - **`cogs/admin.py:247, 285, 304, 556, 798, 824-825, 843`**: Reads `cfg.get("automod_enabled", False)` in `/config` (`line 247`) and `/aiconfig` (`line 843`), toggles `"automod_enabled"` in `/modules` (`lines 285, 304`) and `/aiconfig` (`lines 824-825`), and sets `"automod_enabled": True` in `/antispam` (`line 556`).
 
 ---
 
-### Batch 3C-1 — `POST /api/settings/{guild_id}` + Lockdown 501 + Edit Page Fresh Reads & UI Wiring
+## 1. Overview & Core Concept
 
-- **Files**:
-  - `webdash/router.py`
-  - `webdash/templates/automod.html`
-  - `webdash/templates/wizard.html`
-  - `webdash/templates/misc.html`
-  - `tests/test_webdash_routes.py`
-- **Changes**:
-  1. **Fresh Mongo Reads on Edit Pages**:
-     - Update `GET /automod/{guild_id}` (`webdash/router.py:1138`), `GET /misc/{guild_id}` (`webdash/router.py:1209`), and `GET /wizard/{guild_id}` (`webdash/router.py:1232`) to read `db.guild_settings.find_one({"guild_id": gid})` directly (bypassing `GuildConfigCache`) and pass `dashboard_rev` (`int`, default `0`) to the templates.
-  2. **Endpoint `POST /api/settings/{guild_id}`**:
-     - Requires valid session, guild presence (`bot.get_guild(gid)`), and guild membership (`member`). CSRF is already enforced by `SecurityMiddleware` (`webdash/security.py:551-579`).
-     - Parses JSON object body (rejects non-dict, oversized bodies `> 64 KB`).
-     - Dispatches strictly on `body.get("type")`:
-       - **`"toggle_lockdown"`**:
-         - Checks `PermissionService.has_permission(..., "lockdown.execute")`.
-         - Returns HTTP `501 Not Implemented` (`{"error": "Lockdown execution is disabled in Checkpoint 3C pending safe permission backup/restore parity."}`) with zero DB writes.
-       - **`"update_automod"`**:
-         - Checks `PermissionService.has_permission(..., "automod.edit")`.
-         - Validates `dashboard_rev` (`isinstance(rev, int) and not isinstance(rev, bool) and rev >= 0`).
-         - Validates `banned_words`: must be a `list` of at most `200` items; every item must be `str` (`not isinstance(..., str)` -> `400`), stripped & lowercased, `1 <= len(w) <= 64`, no control characters (`ord(c) < 32`), deduplicated preserving order.
-         - Writes `{"banned_words": cleaned_words}` (exact shape read by `bot.py:191-193` and `cogs/ai.py:593-595`) with `dashboard_rev` conditional update.
-         - Invalidates `GuildConfigCache.invalidate(gid)` + `ai_cog._invalidate_guild_cfg(gid)`.
-         - Records `AuditLogger.record(..., action="automod.update_banned_words", before={"banned_words": ...}, after={"banned_words": ...})`.
-       - **`"update_ai_model"`**:
-         - Checks `PermissionService.has_permission(..., "settings.edit")`.
-         - Validates `dashboard_rev` and `model` (`isinstance(model, str)` and `model in {"auto", "deepseek", "groq", "gemini"}`).
-         - Writes `{"default_ai_model": model}` (exact shape read by `cogs/ai.py:77-91, 291-299, 401-411, 657`) with `dashboard_rev` conditional update.
-         - Invalidates `GuildConfigCache.invalidate(gid)` + `ai_cog._invalidate_guild_cfg(gid)`.
-         - Records `AuditLogger.record(..., action="settings.update_ai_model", before={"default_ai_model": ...}, after={"default_ai_model": ...})`.
-       - **`"toggle"`**:
-         - Validates `body.get("module") == "toggleMisc"` (any other module returns `400`).
-         - Checks `PermissionService.has_permission(..., "settings.edit")`.
-         - Validates `dashboard_rev` and `enabled` (`isinstance(enabled, bool)`).
-         - Writes `{"misc_enabled": enabled}` (exact shape read by `cogs/misc.py:174, 538`) with `dashboard_rev` conditional update.
-         - Invalidates `GuildConfigCache.invalidate(gid)` + `ai_cog._invalidate_guild_cfg(gid)`.
-         - Records `AuditLogger.record(..., action="settings.toggle_misc", before={"misc_enabled": ...}, after={"misc_enabled": ...})`.
-       - Any unknown `type` returns `400 Bad Request`.
-  3. **Template & External Event Listener Wiring (`automod.html`, `wizard.html`, `misc.html`)**:
-     - Store `data-dashboard-rev="{{ dashboard_rev }}"` and `data-guild-id="{{ guild_id_str }}"`.
-     - Enable controls when `can_edit` is `True` and attach event listeners via `addEventListener` in `{% block extra_scripts %}` using `fetch` with `X-CSRF-Token: getCsrfToken()`, updating `dataset.dashboardRev` on `200` and displaying inline status banners on `200`/`400`/`409`.
-- **Tests (`tests/test_webdash_routes.py`)**:
-  - Happy-path + DB shape + cache invalidation + `ai_cog._invalidate_guild_cfg` + `AuditLogger` diff tests for `update_automod`, `update_ai_model`, `toggleMisc`, and `toggle_lockdown` (`501`).
-  - Optimistic concurrency tests: missing `dashboard_rev` in DB (`0` -> `1`), subsequent save (`1` -> `2`), stale `dashboard_rev` returning `409 Conflict`, and verifying edit pages bypass `GuildConfigCache`.
-  - Attack tests: missing/wrong CSRF (`403`), non-member outsider (`403`), member with `*.view` only (`403`), wrong types (`banned_words: "bad"`, `banned_words: [123]`, `enabled: "true"`, `dashboard_rev: True`), oversized list (`201` words, `65`-char word), invalid AI model (`"gpt-4"`), control characters/hostile strings (`"<script>"`, `"\x00"`).
+- **What It Does**:
+  1. Converts the read-only `AI Chat: Enabled/Disabled` badge on `/wizard/{guild_id}` into an interactive toggle control paired with the live status badge and accurate scope explanation.
+  2. Converts the read-only `AutoMod: Active/Disabled` badge on `/automod/{guild_id}` into an interactive toggle control paired with the live status badge.
+- **Target Audience / Persona**: Server owners, Discord administrators, and delegated staff holding `ai.edit` or `automod.edit` dashboard permissions.
+- **Key Value**: Lets administrators immediately pause or resume `@Recluse` AI chat responses (`ai_enabled`) or server-wide AutoMod filtering (`automod_enabled`) from the web dashboard with optimistic concurrency protection and full audit visibility.
 
 ---
 
-### Batch 3C-2 — `POST /api/modules/{guild_id}` + `modules.html` Interactive Wiring
+## 2. User Experience & Visual Design
 
-- **Files**:
-  - `webdash/router.py`
-  - `webdash/templates/modules.html`
-  - `tests/test_webdash_routes.py`
-- **Changes**:
-  1. **Fresh Mongo Read on `GET /modules/{guild_id}`**:
-     - Read `db.guild_settings.find_one({"guild_id": gid})` directly (bypassing `GuildConfigCache`) and pass `dashboard_rev` (`int`, default `0`) into `modules.html`.
-  2. **Endpoint `POST /api/modules/{guild_id}`**:
-     - Requires valid session, guild presence, and guild membership.
-     - Accepts a delta JSON payload containing `dashboard_rev` (`int`, not `bool`, `>= 0`) and at least one of `disabled_cogs` or `command_settings` (rejects any unknown top-level keys).
-     - **Permission enforcement per field**:
-       - If `"disabled_cogs"` is in payload: requires `PermissionService.has_permission(..., "modules.edit")`.
-       - If `"command_settings"` is in payload: requires `PermissionService.has_permission(..., "commands.edit")`.
-     - **`disabled_cogs` Validation (Exact Shape for `bot.py:107, 110` and `cogs/core.py:745, 803`)**:
-       - Must be `list[str]` (max `50` entries, deduplicated preserving order).
-       - Loaded cog names set: `loaded_cogs = set(getattr(bot, "cogs", {}).keys())` (exact case).
-       - Existing disabled cogs in DB: `existing_disabled = set(before_doc.get("disabled_cogs", []))` (if list of str).
-       - For each `cog_name` in submitted `disabled_cogs`:
-         - Must be `isinstance(cog_name, str)` and `1 <= len(cog_name) <= 64`.
-         - **Protected cog rule**: if `cog_name.lower() in PROTECTED_COGS_LOWER`:
-           - If `cog_name not in existing_disabled`: reject with `400 Bad Request` (*protected cogs can never be added to `disabled_cogs`, only kept if already present or removed*).
-         - **Exact-case loaded cog rule**: `cog_name` must be in `loaded_cogs` or in `existing_disabled` (otherwise reject with `400 Bad Request`).
-     - **`command_settings` Validation (Exact Shape for `cogs/core.py:749-777, 806-829`)**:
-       - Must be `dict` (max `100` command entries).
-       - Build catalog of valid top-level commands and their valid subcommand names from `bot.commands` and `bot.tree.get_commands()` (same discovery logic as `_collect_guild_commands` in `webdash/router.py:1430-1499`).
-       - Build live guild channel ID set (`valid_channel_ids = {str(ch.id) for ch in guild.channels if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel))}`) and live guild role ID set (`valid_role_ids = {str(r.id) for r in guild.roles if not r.is_default()}`).
-       - For each `cmd_name, cfg` in submitted `command_settings.items()`:
-         - `cmd_name` must exist in the discovered top-level command catalog (`400` otherwise).
-         - `cfg` must be a `dict` whose keys are a subset of `{"disabled_subcommands", "allowed_channels", "ignored_channels", "allowed_roles", "ignored_roles"}` (`400` on any extra key).
-         - Each value list must be `list[str]` (max `100` items, deduplicated):
-           - `disabled_subcommands`: every item must exist in that command's valid subcommands set (`400` otherwise).
-           - `allowed_channels`, `ignored_channels`: every item must be in `valid_channel_ids` (`400` otherwise).
-           - `allowed_roles`, `ignored_roles`: every item must be in `valid_role_ids` (`400` otherwise).
-     - Writes only the changed whitelisted field(s) (`disabled_cogs` and/or `command_settings`) using the `dashboard_rev` conditional update (`409` on mismatch).
-     - Invalidates `GuildConfigCache.invalidate(gid)` + `ai_cog._invalidate_guild_cfg(gid)`.
-     - Records `AuditLogger.record(...)` with `before` and `after` snapshots of the modified field(s).
-  3. **Template & JS Wiring (`modules.html`)**:
-     - Enable module toggles when `can_edit_modules` is `True` and command override controls/save button when `can_edit_commands` is `True`.
-     - Send only the modified section (`disabled_cogs` or `command_settings`) + `dashboard_rev` to `POST /api/modules/{guild_id}`, update `dataset.dashboardRev` on success, and show inline feedback.
-- **Tests (`tests/test_webdash_routes.py`)**:
-  - Happy-path tests for `disabled_cogs` (disabling `"Sports"`, re-enabling a previously disabled protected cog `"Core"` via recovery) and `command_settings` (subcommands, channels, roles).
-  - Attack & validation tests: attempting to add `"Core"` or `"core"` to `disabled_cogs` (`400`), wrong-case `"sports"` (`400`), unloaded cog `"FakeCog"` (`400`), user with `modules.edit` trying to write `command_settings` (`403`), user with `commands.edit` trying to write `disabled_cogs` (`403`), non-existent command or subcommand (`400`), channel/role ID from another guild or `@everyone` role (`400`), extra keys inside `command_settings[cmd]` (`400`), stale `dashboard_rev` (`409`).
+- **Key User Flows**:
+  1. **Setup Wizard (`/wizard/{guild_id}`)**:
+     - Header displays the `AI Chat: Enabled` / `AI Chat: Disabled` badge (`#aiChatStatusBadge`) alongside the `#toggleAiChat` switch (enabled when `can_edit_ai` is `True`, disabled/read-only otherwise).
+     - Below the header description, the accurate explanation sentence clarifies that turning AI Chat off stops `@Recluse` mention replies while `/imagine`, `/describe`, `/choose_ai`, and `/clear_memory` remain available unless the `AI` module is disabled under Modules & Commands.
+     - Toggling `#toggleAiChat` sends `POST /api/settings/{guild_id}` with `{"type": "toggle", "module": "toggleAiChat", "enabled": <bool>, "dashboard_rev": N}`, updates `data-dashboard-rev` and `#aiChatStatusBadge` live on `200 OK`, or reverts the checkbox and displays the error in `#wizardStatus` on `409`/`503`/network failure.
+  2. **AutoMod (`/automod/{guild_id}`)**:
+     - Header displays the `AutoMod: Active` / `AutoMod: Disabled` badge (`#automodStatusBadge`) alongside the `#toggleAutomod` switch (enabled when `can_toggle_automod` / `automod.edit` is granted, disabled/read-only otherwise).
+     - Toggling `#toggleAutomod` sends `POST /api/settings/{guild_id}` with `{"type": "toggle", "module": "toggleAutomod", "enabled": <bool>, "dashboard_rev": N}`, updates `data-dashboard-rev` and `#automodStatusBadge` live on `200 OK`, or reverts the checkbox and displays the error in `#automodStatus` on `409`/`503`/network failure.
+- **Visual Identity & Theme**:
+  - Matches the existing glassmorphism dark theme (`bg-[#14151c]/80`, `border-white/10`) and the exact toggle switch styling used in `misc.html` (`w-14 h-7` pill switch with `peer-checked:bg-blue-600/80`).
+  - Zero inline event handlers (`on*=`); all listeners attach in `DOMContentLoaded` inside `{% block scripts %}`.
 
 ---
 
-### Batch 3C-3 — Owner Actions (`POST /api/owner_action`, `POST /api/ip_action`), 60s Cached IP Ban Enforcement & Post-3C Check
+## 3. Key Product Decisions & Trade-Offs
 
-- **Files**:
-  - `webdash/cache.py`
-  - `webdash/security.py`
-  - `webdash/router.py`
-  - `webdash/templates/owner_panel.html`
-  - `tests/test_webdash_routes.py`
-  - `tests/test_webdash_core.py`
-- **Changes**:
-  1. **Bounded 60s In-Memory IP Ban Cache (`IpBanCache` in `webdash/cache.py` + `SecurityMiddleware` in `webdash/security.py`)**:
-     - Add `IpBanCache` holding a bounded `frozenset[str]` (up to `2,000` normalized IP strings) with `ttl_seconds = 60.0`.
-     - Refresh lazily at most once per 60 seconds via `db.ip_bans.find({}, {"ip": 1}).limit(2000)`. If `db` is `None` or Mongo raises an exception, **fail open** (keep previous cached set or empty set and set retry timestamp so it never hammers Mongo).
-     - Provide `IpBanCache.refresh_now(db)` / `IpBanCache.add_local(ip)` / `IpBanCache.remove_local(ip)` so `ban`/`unban` updates the in-memory set immediately.
-     - In `SecurityMiddleware` (`webdash/security.py`):
-       - **Never block** `GET /health` or unauthenticated `GET /` (cron pinger: if `request.method == "GET"` and `request.path == "/"` and there is no valid authenticated session cookie, bypass IP ban check).
-       - For all other requests, check the trusted client IP (`get_client_ip(request)`) against `IpBanCache`. If banned, return `403 Forbidden`.
-  2. **Endpoint `POST /api/owner_action`**:
-     - Enforces `_is_bot_owner(bot, user_id)` (`403` for non-owners, including guild owners/admins).
-     - Validates `action == "reload_cog"` and `cog` (`isinstance(cog, str)`, regex `^[a-z0-9_]{1,32}$`, and `f"cogs.{cog}" in getattr(bot, "extensions", {})`).
-     - Calls `await bot.reload_extension(f"cogs.{cog}")` (`cogs/dashboard.py:1989`).
-     - Records `AuditLogger.record(..., guild_id=0, action="owner.reload_cog", before={"cog": cog}, after={"cog": cog, "reloaded": True})`.
-  3. **Endpoint `POST /api/ip_action`**:
-     - Enforces `_is_bot_owner(bot, user_id)` (`403` for non-owners).
-     - Validates `action in {"ban", "unban"}` and `ip` (`isinstance(ip, str)`, parsed and normalized via `ipaddress.ip_address(ip.strip())`).
-     - On `"ban"`:
-       - Refuses (`400 Bad Request`) if `parsed_ip` equals the requester's current trusted client IP (`ipaddress.ip_address(get_client_ip(request))`), or if `parsed_ip.is_loopback` / `parsed_ip.is_unspecified`.
-       - Upserts `await db.ip_bans.update_one({"ip": normalized_ip}, {"$set": {"banned_at": time.time()}}, upsert=True)` (`cogs/dashboard.py:2024-2028`).
-     - On `"unban"`:
-       - Deletes `await db.ip_bans.delete_one({"ip": normalized_ip})` (`cogs/dashboard.py:2030`).
-     - Immediately updates/refreshes `IpBanCache` and records `AuditLogger.record(..., guild_id=0, action=f"owner.ip_{action}", before=..., after=...)`.
-  4. **Template & JS Wiring (`owner_panel.html`)**:
-     - Enable reload buttons, IP ban form, and IP unban buttons using `addEventListener` in `{% block extra_scripts %}` with inline status banners.
-  5. **Post-3C `quart` / `quart-cors` Audit**:
-     - Inspect the entire repository for any imports/usages of `quart` or `quart-cors` and report before touching `requirements.txt`.
-- **Tests (`tests/test_webdash_routes.py` & `tests/test_webdash_core.py`)**:
-  - `IpBanCache` unit & integration tests: 60s caching (verifying zero per-request Mongo queries when cache is warm), fail-open when DB errors, banned trusted IP gets `403`, spoofed `X-Forwarded-For` from untrusted peer cannot trigger or bypass ban, `GET /health` and unauthenticated `GET /` are **never** blocked even for a banned IP, authenticated `GET /` or `/servers` is blocked for a banned IP.
-  - Owner endpoints: non-owner admin rejected (`403`), missing CSRF (`403`), valid `reload_cog` calls `bot.reload_extension("cogs.sports")`, invalid/unloaded cog rejected (`400`), path traversal `"../bot"` rejected (`400`), banning own current IP rejected (`400`), invalid IP string rejected (`400`), `ban`/`unban` updates `db.ip_bans` and refreshes `IpBanCache` immediately.
+- **Decision 1: Separate Permission Checks per Toggle Module in `POST /api/settings/{guild_id}`**
+  - *Chosen Approach*: Dispatch `type == "toggle"` on `module`:
+    - `"toggleMisc"` → requires `settings.edit`, writes `{"misc_enabled": enabled}`, audit `module="misc"`, `action="toggle_misc"`.
+    - `"toggleAiChat"` → requires `ai.edit`, writes `{"ai_enabled": enabled}`, audit `module="ai"`, `action="toggle_ai_chat"`.
+    - `"toggleAutomod"` → requires `automod.edit`, writes `{"automod_enabled": enabled}`, audit `module="automod"`, `action="toggle_automod"`.
+  - *Why*: Enforces least-privilege RBAC so a user granted only `automod.edit` cannot toggle `ai_enabled` or `misc_enabled`, and a user granted only `ai.edit` cannot toggle `automod_enabled` or `misc_enabled`.
+- **Decision 2: Strict Single-Key Delta Writes & Immediate AI Cog Cache Invalidation**
+  - *Chosen Approach*: Reuse `_apply_guild_settings_mutation` so only the single target key (`{"ai_enabled": enabled}` or `{"automod_enabled": enabled}`) is `$set` alongside `$inc: {"dashboard_rev": 1}`, followed by `_invalidate_guild_caches(request, guild_id)` which invalidates `GuildConfigCache` and calls `ai_cog._invalidate_guild_cfg(guild_id)`.
+  - *Why*: `cogs/ai.py` caches `guild_settings` in `self._guild_cfg[guild_id]` (`cogs/ai.py:249-263`) and reads both `ai_enabled` (`line 607`) and `automod_enabled` (`line 591`) from that cache on every message; calling `_invalidate_guild_cfg(guild_id)` makes both toggles take effect on the very next Discord message.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     Browser (wizard.html / automod.html)                 │
+│  • #toggleAiChat  ──► POST /api/settings/{gid} {type:"toggle",           │
+│                       module:"toggleAiChat", enabled:bool, dashboard_rev}│
+│  • #toggleAutomod ──► POST /api/settings/{gid} {type:"toggle",           │
+│                       module:"toggleAutomod", enabled:bool,dashboard_rev}│
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │ X-CSRF-Token + Session Cookie
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                  handle_api_settings (webdash/router.py)                 │
+│  1. Validate body keys: {"type","module","enabled","dashboard_rev",...}  │
+│  2. Validate module in {"toggleMisc", "toggleAiChat", "toggleAutomod"}   │
+│  3. Strict bool check: isinstance(enabled, bool) (reject "true", 1, None)│
+│  4. resolve_guild_access(..., perm, fresh_settings=True,                 │
+│                          strict_settings_read=True) -> 403 / 404 / 503   │
+│  5. _apply_guild_settings_mutation:                                      │
+│     • Conditional update_one on dashboard_rev (409 on mismatch)          │
+│     • $set ONLY {"ai_enabled": enabled} or {"automod_enabled": enabled}  │
+│     • _invalidate_guild_caches -> GuildConfigCache + AI._invalidate_...  │
+│     • AuditLogger.record (non-empty changes: {key: {old, new}})          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Interactive Component & State Mapping**:
+  - `wizard.html`: `#toggleAiChat` (`input[type="checkbox"]`) + `#aiChatStatusBadge` (`span`). Shares `data-dashboard-rev` on `#wizardRoot` with `#saveBtn` (`update_ai_model`), so toggling AI Chat and saving the default AI model in any order stays in sync without page reloads.
+  - `automod.html`: `#toggleAutomod` (`input[type="checkbox"]`) + `#automodStatusBadge` (`span`). Shares `data-dashboard-rev` on `#automodRoot` with `#saveWordsBtn` (`update_automod`), and remains usable by users with `automod.edit` (`can_toggle_automod`) even when `over_display_cap` locks the `banned_words` textarea.
+- **Verification & Test Plan (Python 3.14)**:
+  - Add comprehensive tests covering:
+    - RBAC permission matrix for `toggleAiChat` (`ai.edit` allowed `200`; `*.view` only `403`; `automod.edit` only `403`; `settings.edit` only `403`; non-member outsider `403`) and `toggleAutomod` (`automod.edit` allowed `200`; `*.view` only `403`; `ai.edit` only `403`; non-member `403`).
+    - Strict boolean validation (`"true"`, `1`, `0`, `None`, `{}` all rejected with `400`).
+    - Optimistic concurrency (`409` on stale `dashboard_rev`; sequential `toggleAiChat` + `update_ai_model` incrementing `dashboard_rev` `0 -> 1 -> 2`).
+    - Strict pre-write read (`503` when `db.guild_settings.find_one` fails, leaving stored document untouched).
+    - Single-key isolation (only `ai_enabled` or `automod_enabled` + `dashboard_rev` changes in `db.guild_settings`), non-empty `dashboard_audit` row (`changes["ai_enabled"] == {"old": True, "new": False}` even when `ai_enabled` was initially absent or unchanged), and `ai_cog._invalidate_guild_cfg(guild_id)` invocation.
+    - End-to-end verification with real `AI` cog (`cogs/ai.py`) confirming `_invalidate_guild_cfg` evicts `_guild_cfg[guild_id]` and `AI.on_message` stops replying to `@bot` mentions when `ai_enabled` is toggled to `False` while `/choose_ai` and `/clear_memory` still execute.
+  - Run the complete test suite on Python 3.14.10 and report the `python --version` output and final summary.

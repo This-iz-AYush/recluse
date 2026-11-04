@@ -1286,7 +1286,39 @@ async def handle_guild_automod(request: web.Request) -> web.Response:
     displayed_words = all_banned_words[:MAX_BANNED_WORDS_DISPLAY]
     extra_count = max(0, total_banned_words - MAX_BANNED_WORDS_DISPLAY)
     over_display_cap = extra_count > 0
-    can_edit_automod = ("automod.edit" in access.granted_permissions) and not over_display_cap
+    has_automod_edit = "automod.edit" in access.granted_permissions
+    can_toggle_automod = has_automod_edit
+    can_edit_automod = has_automod_edit and not over_display_cap
+
+    # Anti-spam effective settings (bot.py:219-222, configured via /antispam in cogs/admin.py:529-571):
+    # - antispam_threshold defaults to 5 messages (bot.py:219)
+    # - antispam_window defaults to 5 seconds (bot.py:220)
+    # - antispam_action defaults to "mute" (bot.py:221)
+    # - antispam_mute_mins defaults to 10 minutes (bot.py:222)
+    raw_threshold = settings.get("antispam_threshold", 5)
+    antispam_threshold = (
+        int(raw_threshold)
+        if isinstance(raw_threshold, int) and not isinstance(raw_threshold, bool) and raw_threshold > 0
+        else 5
+    )
+    raw_window = settings.get("antispam_window", 5)
+    antispam_window = (
+        int(raw_window)
+        if isinstance(raw_window, int) and not isinstance(raw_window, bool) and raw_window > 0
+        else 5
+    )
+    raw_action = str(settings.get("antispam_action") or "mute").strip().lower()
+    antispam_action = raw_action if raw_action in ("warn", "mute", "kick", "ban") else "mute"
+    raw_mute_mins = settings.get("antispam_mute_mins", 10)
+    antispam_mute_mins = (
+        int(raw_mute_mins)
+        if isinstance(raw_mute_mins, int) and not isinstance(raw_mute_mins, bool) and raw_mute_mins > 0
+        else 10
+    )
+    if antispam_action == "mute":
+        antispam_summary = f"{antispam_threshold} messages in {antispam_window} s -> mute {antispam_mute_mins} min"
+    else:
+        antispam_summary = f"{antispam_threshold} messages in {antispam_window} s -> {antispam_action}"
 
     context.update(
         {
@@ -1295,7 +1327,13 @@ async def handle_guild_automod(request: web.Request) -> web.Response:
             "total_banned_words": total_banned_words,
             "extra_banned_words_count": extra_count,
             "over_display_cap": over_display_cap,
+            "can_toggle_automod": can_toggle_automod,
             "can_edit_automod": can_edit_automod,
+            "antispam_threshold": antispam_threshold,
+            "antispam_window": antispam_window,
+            "antispam_action": antispam_action,
+            "antispam_mute_mins": antispam_mute_mins,
+            "antispam_summary": antispam_summary,
             "dashboard_rev": _extract_dashboard_rev(settings),
             "words_string": ", ".join(displayed_words),
         }
@@ -2366,12 +2404,16 @@ async def _apply_guild_settings_mutation(
     updates: dict[str, Any],
     audit_module: str,
     audit_action: str,
+    effective_defaults: dict[str, Any] | None = None,
 ) -> web.Response:
     """
     Execute a conditional optimistic-concurrency write on `db.guild_settings` using
     `dashboard_rev` (missing = 0), `$set` only whitelisted keys, `$inc` `dashboard_rev` by 1,
     invalidate `GuildConfigCache` + `ai_cog._invalidate_guild_cfg`, and record an
     `AuditLogger` entry with a non-empty `changes` map.
+    If the requested `updates` equal the current effective values (applying `effective_defaults`
+    when a key is absent), returns 200 `{"status": "noop", "dashboard_rev": current_rev}`
+    with NO DB write, NO revision bump, and NO audit row.
     """
     bot = request.app.get(BOT_KEY)
     db = get_ready_db(bot)
@@ -2386,6 +2428,27 @@ async def _apply_guild_settings_mutation(
         return web.json_response(
             {"error": "Someone else changed these settings, please reload the page."},
             status=409,
+        )
+
+    before_raw = copy.deepcopy(before_doc) if isinstance(before_doc, dict) else {}
+    before_effective = copy.deepcopy(before_raw)
+    if effective_defaults:
+        for def_key, def_val in effective_defaults.items():
+            if def_key not in before_effective or before_effective[def_key] is None:
+                before_effective[def_key] = copy.deepcopy(def_val)
+
+    if effective_defaults is not None and updates and all(
+        k in before_effective
+        and type(before_effective[k]) is type(v)
+        and before_effective[k] == v
+        for k, v in updates.items()
+    ):
+        return web.json_response(
+            {
+                "status": "noop",
+                "dashboard_rev": current_rev,
+            },
+            status=200,
         )
 
     if expected_rev == 0:
@@ -2443,14 +2506,13 @@ async def _apply_guild_settings_mutation(
 
     audit_logger: AuditLogger | None = request.app.get(AUDIT_LOGGER_KEY)
     if audit_logger is not None:
-        before_map = copy.deepcopy(before_doc) if isinstance(before_doc, dict) else {}
-        after_map = copy.deepcopy(before_map)
+        after_map = copy.deepcopy(before_effective)
         after_map.update(copy.deepcopy(updates))
-        changes = compute_diff(before_map, after_map, keys=list(updates.keys()))
+        changes = compute_diff(before_effective, after_map, keys=list(updates.keys()))
         if not changes:
             changes = {
                 k: {
-                    "old": copy.deepcopy(before_map.get(k)),
+                    "old": copy.deepcopy(before_effective.get(k)),
                     "new": copy.deepcopy(v),
                 }
                 for k, v in updates.items()
@@ -2462,7 +2524,7 @@ async def _apply_guild_settings_mutation(
             module=audit_module,
             action=audit_action,
             changes=changes,
-            before_snapshot=before_map,
+            before_snapshot=before_raw,
             client_ip=request.get(CLIENT_IP_KEY, "invalid"),
         )
 
@@ -2486,8 +2548,13 @@ async def handle_api_settings(request: web.Request) -> web.Response:
     2. `type == "update_ai_model"` (requires `ai.edit`, webdash/permissions.py:47):
        writes `default_ai_model` (`str` in {"auto", "deepseek", "groq", "gemini"},
        read at cogs/ai.py:77-91, 291-299, 401-411, 657, cogs/admin.py:256, 842).
-    3. `type == "toggle"` with `module == "toggleMisc"` (requires `settings.edit`, webdash/permissions.py:17):
-       writes `misc_enabled` (`bool`, read at cogs/misc.py:174, 538, cogs/admin.py:246).
+    3. `type == "toggle"`:
+       - `module == "toggleMisc"` (requires `settings.edit`, webdash/permissions.py:17):
+         writes `misc_enabled` (`bool`, default True, read at cogs/misc.py:174, 538, cogs/admin.py:246).
+       - `module == "toggleAiChat"` (requires `ai.edit`, webdash/permissions.py:47):
+         writes `ai_enabled` (`bool`, default True, read at cogs/ai.py:607, cogs/admin.py:240, 841).
+       - `module == "toggleAutomod"` (requires `automod.edit`, webdash/permissions.py:34):
+         writes `automod_enabled` (`bool`, default False, read at bot.py:189, cogs/ai.py:591, cogs/admin.py:247, 843).
     4. `type == "toggle_lockdown"` (requires `lockdown.execute`, webdash/permissions.py:38):
        returns HTTP 501 Not Implemented with zero DB writes.
     """
@@ -2656,6 +2723,7 @@ async def handle_api_settings(request: web.Request) -> web.Response:
             updates={"banned_words": cleaned_words},
             audit_module="automod",
             audit_action="update_banned_words",
+            effective_defaults={"banned_words": []},
         )
 
     # 3. Default AI Model
@@ -2706,22 +2774,31 @@ async def handle_api_settings(request: web.Request) -> web.Response:
             updates={"default_ai_model": model_val},
             audit_module="ai",
             audit_action="update_ai_model",
+            effective_defaults={"default_ai_model": "auto"},
         )
 
-    # 4. Toggle Misc (`module == "toggleMisc"`)
+    # 4. Toggle (`module` in {"toggleMisc", "toggleAiChat", "toggleAutomod"})
     allowed_keys = {"type", "module", "enabled", "dashboard_rev", "csrf_token"}
     if any(k not in allowed_keys for k in body):
         return web.json_response({"error": "Unexpected fields in toggle payload."}, status=400)
 
+    toggle_specs: dict[str, tuple[str, str, bool, str, str]] = {
+        "toggleMisc": ("settings.edit", "misc_enabled", True, "misc", "toggle_misc"),
+        "toggleAiChat": ("ai.edit", "ai_enabled", True, "ai", "toggle_ai_chat"),
+        "toggleAutomod": ("automod.edit", "automod_enabled", False, "automod", "toggle_automod"),
+    }
+
     module_name = body.get("module")
-    if not isinstance(module_name, str) or module_name != "toggleMisc":
+    if not isinstance(module_name, str) or module_name not in toggle_specs:
         return web.json_response({"error": "Unsupported toggle module."}, status=400)
+
+    required_perm, db_key, effective_default, audit_module, audit_action = toggle_specs[module_name]
 
     access = await resolve_guild_access(
         request,
         guild_id,
         user_id,
-        "settings.edit",
+        required_perm,
         fresh_settings=True,
         strict_settings_read=True,
     )
@@ -2734,7 +2811,7 @@ async def handle_api_settings(request: web.Request) -> web.Response:
         )
     if not access.allowed:
         return web.json_response(
-            {"error": "Forbidden: Missing settings.edit permission."},
+            {"error": f"Forbidden: Missing {required_perm} permission."},
             status=403,
         )
 
@@ -2750,9 +2827,10 @@ async def handle_api_settings(request: web.Request) -> web.Response:
         actor_name=actor_name,
         expected_rev=expected_rev,
         before_doc=before_doc,
-        updates={"misc_enabled": enabled_val},
-        audit_module="misc",
-        audit_action="toggle_misc",
+        updates={db_key: enabled_val},
+        audit_module=audit_module,
+        audit_action=audit_action,
+        effective_defaults={db_key: effective_default},
     )
 
 

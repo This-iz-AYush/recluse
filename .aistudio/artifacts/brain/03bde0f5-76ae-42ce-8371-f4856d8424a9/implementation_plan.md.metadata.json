@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for the Pre-3C exact-case disabled_cogs fix and Checkpoint 3C mutation endpoints in 4 small reviewable batches (Batch 0, Batch 3C-1, Batch 3C-2, Batch 3C-3), incorporating dashboard_rev optimistic concurrency and 60s cached IP ban enforcement.",
-  "updatedAt":  "2026-10-28T06:09:43.416811535Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Implementation plan for adding the AI Chat toggle (toggleAiChat -> ai_enabled) on the Setup Wizard page and the AutoMod toggle (toggleAutomod -> automod_enabled) on the AutoMod page, with exact cog file:line citations, strict validation, optimistic concurrency, cache invalidation, audit logging, and Python 3.14 test coverage.",
+  "updatedAt": "2026-11-02T15:27:35.846249340Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

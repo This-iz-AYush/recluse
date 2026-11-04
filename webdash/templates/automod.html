@@ -16,12 +16,32 @@
                     <i class="fa-solid fa-filter text-blue-400"></i>Banned Lexicon
                 </h2>
                 <p class="text-sm text-zinc-400 mt-1">
-                    Exact words or phrases filtered automatically when AutoMod is active. Separate items with commas (max 500 words, 64 chars each).
+                    Case-insensitive substring patterns filtered automatically when AutoMod is active (a short entry also matches inside longer words). Separate items with commas (max 500 entries, 64 chars each).
                 </p>
             </div>
-            <span class="px-3.5 py-1.5 rounded-xl text-xs font-bold border self-start sm:self-auto {% if automod_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
-                <i class="fa-solid fa-shield-halved mr-1.5"></i>AutoMod: {% if automod_enabled %}Active{% else %}Disabled{% endif %}
-            </span>
+            <div class="flex items-center gap-3 self-start sm:self-auto">
+                <span id="automodStatusBadge"
+                      class="px-3.5 py-1.5 rounded-xl text-xs font-bold border {% if automod_enabled %}bg-emerald-500/20 border-emerald-500/40 text-emerald-300{% else %}bg-zinc-800/80 border-white/10 text-zinc-400{% endif %}">
+                    <i class="fa-solid fa-shield-halved mr-1.5"></i>AutoMod: {% if automod_enabled %}Active{% else %}Disabled{% endif %}
+                </span>
+                <label for="toggleAutomod"
+                       class="relative inline-flex items-center {% if can_toggle_automod %}cursor-pointer{% else %}cursor-not-allowed opacity-70{% endif %}">
+                    <span class="sr-only">Toggle AutoMod</span>
+                    <input type="checkbox"
+                           id="toggleAutomod"
+                           {% if not can_toggle_automod %}disabled{% endif %}
+                           {% if automod_enabled %}checked{% endif %}
+                           class="sr-only peer">
+                    <div class="w-12 h-6 bg-black/60 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-400 peer-checked:after:bg-white after:border-zinc-500 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 border border-white/15 shadow-inner"></div>
+                </label>
+            </div>
+        </div>
+
+        <div id="antispamNotice" class="mb-4 px-4 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed flex items-start gap-2.5">
+            <i class="fa-solid fa-bolt text-amber-400 mt-0.5 shrink-0"></i>
+            <div>
+                <span class="font-bold">Enabling AutoMod (<code class="font-mono">automod_enabled</code>) also turns on anti-spam</span>, which applies to all non-bot members with no administrator or moderator exemption. Current anti-spam rule (read-only): <code id="antispamEffectiveSummary" class="font-mono font-bold text-amber-100 bg-black/40 px-2 py-0.5 rounded border border-amber-400/20">{{ antispam_summary }}</code>. Change anti-spam thresholds or actions in Discord with the <code class="font-mono text-amber-100">/antispam</code> command.
+            </div>
         </div>
 
         {% if over_display_cap %}
@@ -45,15 +65,15 @@
             <div class="space-y-1">
                 {% if over_display_cap %}
                 <p class="text-xs text-amber-300 font-semibold">
-                    Showing first {{ banned_words|length }} of {{ total_banned_words }} entries (+{{ extra_banned_words_count }} more).
+                    Showing first {{ banned_words|length }} of {{ total_banned_words }} entries (+{{ extra_banned_words_count }} more). Matched as case-insensitive substrings (short entries also match inside longer words).
                 </p>
                 {% elif can_edit_automod %}
                 <p class="text-xs text-zinc-400">
-                    <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Entries are trimmed, lowercased, and deduplicated on save.
+                    <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>Entries are trimmed, lowercased, and deduplicated on save, and matched as case-insensitive substrings (a short entry also matches inside longer words).
                 </p>
                 {% else %}
                 <p class="text-xs text-zinc-400">
-                    <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">automod.edit</code> required to modify filters).
+                    <i class="fa-solid fa-lock mr-1.5 text-zinc-500"></i>Read-only view (<code class="font-mono">automod.edit</code> required to toggle AutoMod or modify filters; entries use case-insensitive substring matching).
                 </p>
                 {% endif %}
             </div>
@@ -99,6 +119,95 @@
 {% endblock %}
 
 {% block scripts %}
+{% if can_toggle_automod %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var rootEl = document.getElementById("automodRoot");
+    var toggleEl = document.getElementById("toggleAutomod");
+    var badgeEl = document.getElementById("automodStatusBadge");
+    var statusBox = document.getElementById("automodStatus");
+    if (!rootEl || !toggleEl || !statusBox) {
+        return;
+    }
+
+    function showToggleStatus(msg, isError) {
+        statusBox.textContent = msg;
+        statusBox.className = "mt-4 px-4 py-3 rounded-xl text-xs font-bold border " + (
+            isError
+                ? "bg-red-500/15 border-red-500/40 text-red-300"
+                : "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+        );
+    }
+
+    function renderAutomodBadge(enabled) {
+        if (!badgeEl) {
+            return;
+        }
+        badgeEl.className = "px-3.5 py-1.5 rounded-xl text-xs font-bold border " + (
+            enabled
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                : "bg-zinc-800/80 border-white/10 text-zinc-400"
+        );
+        badgeEl.textContent = "";
+        var icon = document.createElement("i");
+        icon.className = "fa-solid fa-shield-halved mr-1.5";
+        badgeEl.appendChild(icon);
+        badgeEl.appendChild(document.createTextNode("AutoMod: " + (enabled ? "Active" : "Disabled")));
+    }
+
+    toggleEl.addEventListener("change", function () {
+        if (toggleEl.disabled) {
+            return;
+        }
+        var desiredState = Boolean(toggleEl.checked);
+        var previousState = !desiredState;
+        var rev = parseInt(rootEl.getAttribute("data-dashboard-rev") || "0", 10);
+        if (isNaN(rev) || rev < 0) {
+            rev = 0;
+        }
+
+        toggleEl.disabled = true;
+        fetch("/api/settings/{{ guild_id }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": getCsrfToken()
+            },
+            body: JSON.stringify({
+                type: "toggle",
+                module: "toggleAutomod",
+                enabled: desiredState,
+                dashboard_rev: rev
+            })
+        })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { status: resp.status, ok: resp.ok, data: data };
+            });
+        })
+        .then(function (res) {
+            toggleEl.disabled = false;
+            if (res.ok && res.data && (res.data.status === "ok" || res.data.status === "noop")) {
+                if (typeof res.data.dashboard_rev === "number") {
+                    rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
+                }
+                renderAutomodBadge(desiredState);
+                showToggleStatus("AutoMod " + (desiredState ? "enabled." : "disabled."), false);
+            } else {
+                toggleEl.checked = previousState;
+                var errMsg = (res.data && res.data.error) ? res.data.error : "Failed to update AutoMod toggle.";
+                showToggleStatus(errMsg, true);
+            }
+        })
+        .catch(function () {
+            toggleEl.disabled = false;
+            toggleEl.checked = previousState;
+            showToggleStatus("Network error while updating AutoMod toggle.", true);
+        });
+    });
+});
+</script>
+{% endif %}
 {% if can_edit_automod %}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
@@ -170,7 +279,7 @@ document.addEventListener("DOMContentLoaded", function () {
         })
         .then(function (res) {
             saveBtn.disabled = false;
-            if (res.ok && res.data && res.data.status === "ok") {
+            if (res.ok && res.data && (res.data.status === "ok" || res.data.status === "noop")) {
                 if (typeof res.data.dashboard_rev === "number") {
                     rootEl.setAttribute("data-dashboard-rev", String(res.data.dashboard_rev));
                 }

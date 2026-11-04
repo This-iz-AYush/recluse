@@ -1050,6 +1050,111 @@ class TestRealDiscordBotAndTelemetryFixes(AioHTTPTestCase):
         owner_body = await r_owner.text()
         self.assertIn("Guilds: 2 | Cogs: 2", owner_body)
 
+    async def test_real_bot_toggle_ai_chat_and_automod_with_ai_cog_cache_invalidation(self):
+        """
+        Verify `toggleAiChat` and `toggleAutomod` against a REAL `commands.Bot` with a
+        real `commands.Cog` named `AI` loaded into `bot.cogs` (`mappingproxy`) that exposes
+        `_invalidate_guild_cfg(guild_id)` with a call counter and an in-memory `_guild_cfg` dict:
+        - Absent `ai_enabled` (effective True) + `enabled: True` -> 200 `{"status": "noop"}`,
+          zero DB writes, zero rev bump, zero audit rows, `_invalidate_guild_cfg` not called.
+        - Absent `ai_enabled` (effective True) + `enabled: False` -> 200 `{"status": "ok", "dashboard_rev": 1}`,
+          writes only `{"ai_enabled": False}`, pops `guild_id` from `ai_cog._guild_cfg` and increments
+          `ai_cog.invalidate_calls`, records audit row with `old: True, new: False`.
+        - Absent `automod_enabled` (effective False) + `enabled: False` -> 200 `{"status": "noop", "dashboard_rev": 1}`.
+        - Absent `automod_enabled` (effective False) + `enabled: True` -> 200 `{"status": "ok", "dashboard_rev": 2}`,
+          writes only `{"automod_enabled": True}`, calls `ai_cog._invalidate_guild_cfg`, records audit row
+          with `old: False, new: True`.
+        """
+        class StubAICog(commands.Cog, name="AI"):
+            def __init__(self, bot: commands.Bot):
+                self.bot = bot
+                self._guild_cfg: dict[int, dict[str, Any]] = {}
+                self.invalidate_calls: list[int] = []
+
+            def _invalidate_guild_cfg(self, guild_id: int) -> None:
+                self.invalidate_calls.append(guild_id)
+                self._guild_cfg.pop(guild_id, None)
+
+        ai_cog = StubAICog(self.real_bot)
+        await self.real_bot.add_cog(ai_cog)
+        self.assertIs(self.real_bot.get_cog("AI"), ai_cog)
+
+        # Start with a guild_settings doc where ai_enabled and automod_enabled are absent
+        self.guild_settings_doc = {
+            "guild_id": self.guild_id,
+            "default_ai_model": "auto",
+            "banned_words": ["badsub"],
+        }
+        ai_cog._guild_cfg[self.guild_id] = dict(self.guild_settings_doc)
+        self.audit_rows.clear()
+
+        admin_sid, admin_doc = await self._make_session(self.admin_user_id, "RealBotAdmin")
+        headers = {"X-CSRF-Token": admin_doc["csrf_token"]}
+
+        # 1. No-op when ai_enabled is absent (effective True) and enabled=True is requested
+        r_noop_ai = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": True, "dashboard_rev": 0},
+            headers=headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_noop_ai.status, 200)
+        self.assertEqual(await r_noop_ai.json(), {"status": "noop", "dashboard_rev": 0})
+        self.assertEqual(ai_cog.invalidate_calls, [])
+        self.assertIn(self.guild_id, ai_cog._guild_cfg)
+        self.assertEqual(len(self.audit_rows), 0)
+
+        # 2. Real change: toggleAiChat -> False (rev 0 -> 1)
+        r_ai_off = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAiChat", "enabled": False, "dashboard_rev": 0},
+            headers=headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_ai_off.status, 200)
+        self.assertEqual(await r_ai_off.json(), {"status": "ok", "dashboard_rev": 1})
+        self.assertIs(self.guild_settings_doc.get("ai_enabled"), False)
+        self.assertEqual(self.guild_settings_doc.get("dashboard_rev"), 1)
+        self.assertEqual(ai_cog.invalidate_calls, [self.guild_id])
+        self.assertNotIn(self.guild_id, ai_cog._guild_cfg)
+        self.assertEqual(len(self.audit_rows), 1)
+        self.assertEqual(
+            self.audit_rows[-1]["changes"],
+            {"ai_enabled": {"old": True, "new": False}},
+        )
+
+        # 3. No-op when automod_enabled is absent (effective False) and enabled=False is requested
+        r_noop_auto = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAutomod", "enabled": False, "dashboard_rev": 1},
+            headers=headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_noop_auto.status, 200)
+        self.assertEqual(await r_noop_auto.json(), {"status": "noop", "dashboard_rev": 1})
+        self.assertEqual(len(ai_cog.invalidate_calls), 1)
+        self.assertEqual(len(self.audit_rows), 1)
+
+        # 4. Real change: toggleAutomod -> True (rev 1 -> 2)
+        ai_cog._guild_cfg[self.guild_id] = dict(self.guild_settings_doc)
+        r_auto_on = await self.client.post(
+            f"/api/settings/{self.guild_id}",
+            json={"type": "toggle", "module": "toggleAutomod", "enabled": True, "dashboard_rev": 1},
+            headers=headers,
+            cookies={SESSION_COOKIE_NAME: admin_sid},
+        )
+        self.assertEqual(r_auto_on.status, 200)
+        self.assertEqual(await r_auto_on.json(), {"status": "ok", "dashboard_rev": 2})
+        self.assertIs(self.guild_settings_doc.get("automod_enabled"), True)
+        self.assertEqual(self.guild_settings_doc.get("dashboard_rev"), 2)
+        self.assertEqual(ai_cog.invalidate_calls, [self.guild_id, self.guild_id])
+        self.assertNotIn(self.guild_id, ai_cog._guild_cfg)
+        self.assertEqual(len(self.audit_rows), 2)
+        self.assertEqual(
+            self.audit_rows[-1]["changes"],
+            {"automod_enabled": {"old": False, "new": True}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
